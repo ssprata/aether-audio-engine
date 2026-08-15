@@ -31,8 +31,15 @@ jobs:
 
     - name: Build with Gradle
       run: |
-        # Generate gradle wrapper locally inside action
+        # Generate Gradle 8.2 wrapper in a temp directory to bypass Gradle 9.x configuration errors
+        mkdir temp_gradle
+        cd temp_gradle
         gradle wrapper --gradle-version 8.2
+        cp -r gradlew gradlew.bat gradle ../
+        cd ..
+        rm -rf temp_gradle
+        
+        # Build using the correct Gradle 8.2 wrapper
         chmod +x gradlew
         ./gradlew assembleDebug
       working-directory: android
