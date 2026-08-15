@@ -8,10 +8,30 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from ytmusicapi import YTMusic
 
 PORT = 3000
+
+# Check if running on Android (Chaquopy)
+IS_ANDROID = False
+try:
+    from android.os import Build
+    IS_ANDROID = True
+except ImportError:
+    pass
+
 PUBLIC_DIR = os.path.join(os.path.dirname(__file__), 'public')
-UPLOADS_DIR = os.path.join(PUBLIC_DIR, 'uploads')
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'config.json')
-BACKUP_FILE = os.path.join(os.path.dirname(__file__), 'playlists_backup.json')
+
+if IS_ANDROID:
+    # Under Chaquopy, redirect config and writeable uploads to application files storage
+    from com.chaquo.python import Python
+    context = Python.getPlatform().getApplication()
+    android_files_dir = context.getFilesDir().getAbsolutePath()
+    
+    CONFIG_FILE = os.path.join(android_files_dir, 'config.json')
+    BACKUP_FILE = os.path.join(android_files_dir, 'playlists_backup.json')
+    UPLOADS_DIR = os.path.join(android_files_dir, 'uploads')
+else:
+    CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'config.json')
+    BACKUP_FILE = os.path.join(os.path.dirname(__file__), 'playlists_backup.json')
+    UPLOADS_DIR = os.path.join(PUBLIC_DIR, 'uploads')
 
 # Initialize YouTube Music API client
 ytmusic = YTMusic()
@@ -709,6 +729,27 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
         url_parsed = urllib.parse.urlparse(self.path)
         query_params = urllib.parse.parse_qs(url_parsed.query)
         path = url_parsed.path
+
+        # Intercept and serve uploaded assets manually (safeguards writeable directory paths on Android)
+        if path.startswith('/uploads/'):
+            filename = os.path.basename(path.split('/uploads/', 1)[1])
+            filepath = os.path.join(UPLOADS_DIR, filename)
+            if os.path.exists(filepath):
+                self.send_response(200)
+                self.send_header('Access-Control-Allow-Origin', '*')
+                if filepath.lower().endswith('.png'):
+                    self.send_header('Content-Type', 'image/png')
+                elif filepath.lower().endswith(('.jpg', '.jpeg')):
+                    self.send_header('Content-Type', 'image/jpeg')
+                else:
+                    self.send_header('Content-Type', 'application/octet-stream')
+                self.send_header('Content-Length', os.path.getsize(filepath))
+                self.end_headers()
+                with open(filepath, 'rb') as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_error(404, "File not found")
+            return
 
         # API Endpoints
         if path == '/api/settings':
@@ -1655,6 +1696,12 @@ def get_local_ip():
         return ip
     except Exception:
         return "127.0.0.1"
+
+def start_android_server():
+    server_address = ('127.0.0.1', PORT)
+    httpd = HTTPServer(server_address, AetherPlayerHandler)
+    print("AetherPlayer Android server is running!")
+    httpd.serve_forever()
 
 def run_server():
     server_address = ('', PORT)
