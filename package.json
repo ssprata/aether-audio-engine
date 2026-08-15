@@ -1,0 +1,15 @@
+{
+  "name": "multi-music-tool",
+  "version": "1.0.0",
+  "description": "Multi-Source Music Player with Customization and Backup",
+  "main": "server.js",
+  "scripts": {
+    "start": "python server.py"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "yt-search": "^2.10.4"
+  }
+}

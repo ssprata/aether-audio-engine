@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AetherPlayer - Premium Multi-Source Music Hub</title>
+  <!-- Google Fonts: Outfit & Space Grotesk -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0d0b18">
+  <link rel="apple-touch-icon" href="icon-512.png">
+  <!-- YouTube IFrame Player API -->
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <!-- Application Core -->
+  <script src="app.js" defer></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/service-worker.js')
+          .then(reg => console.log('ServiceWorker registered:', reg.scope))
+          .catch(err => console.log('ServiceWorker registration failed:', err));
+      });
+    }
+  </script>
+</head>
+<body>
+  <!-- Dynamic Background Wrapper -->
+  <div class="app-bg-wrapper" id="appBgWrapper"></div>
+  <!-- Floating background orbs -->
+  <div class="bg-orbs-container">
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+    <div class="bg-orb orb-3"></div>
+  </div>
+  <div class="app-bg-overlay" id="appBgOverlay"></div>
+
+  <!-- Main Grid Container -->
+  <div class="app-container" id="appContainer">
+    
+    <!-- TOP HEADER: Brand, Search & User Profile -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="brand">
+          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M9 18V5l12-2v13"></path>
+            <circle cx="6" cy="18" r="3"></circle>
+            <circle cx="18" cy="16" r="3"></circle>
+          </svg>
+          <span class="brand-name">AetherPlayer</span>
+        </div>
+      </div>
+
+      <div class="header-center">
+        <div class="search-bar-wrapper">
+          <div class="search-input-wrapper">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="searchInput" placeholder="Search track, artist, album, playlist..." autocomplete="off">
+            <button class="btn btn-primary" id="btnSearch">Search</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <button class="icon-btn header-nav-btn" id="btnHeaderTheme" title="Theme Creator" data-tab="customizer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
+        </button>
+        <div class="header-profile-btn" id="btnHeaderProfile" title="User Profile" data-tab="profile">
+          <img src="" id="headerAvatar" alt="Profile" class="header-avatar-img">
+          <span class="header-username" id="headerUsername">Enthusiast</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- LEFT SIDEBAR: Playlists (renamed to act as playlists tab-content on mobile) -->
+    <aside class="app-sidebar tab-content" id="tab-playlists">
+
+      <!-- PLAYLISTS HEADER -->
+      <div class="playlists-header">
+        <h3>Playlists</h3>
+        <div style="display: flex; gap: 8px;">
+          <button class="icon-btn" id="btnImportPlaylistUrl" title="Import Playlist from Link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+            </svg>
+          </button>
+          <button class="icon-btn" id="btnCreatePlaylist" title="Create Playlist">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- PLAYLISTS LIST -->
+      <div class="sidebar-scroll">
+        <ul class="playlists-list" id="playlistsList">
+          <!-- Dynamic rendering -->
+        </ul>
+      </div>
+
+      <!-- IMPORT/EXPORT BAR -->
+      <div class="sidebar-footer">
+        <button class="btn btn-outline btn-sm" id="btnExportPlaylists" title="Export Playlists to File">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+          <span>Export</span>
+        </button>
+        <button class="btn btn-outline btn-sm" id="btnImportPlaylists" title="Import Playlists from File">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          <span>Import</span>
+        </button>
+        <input type="file" id="importFileInput" accept=".json" style="display: none;">
+      </div>
+    </aside>
+
+    <!-- MAIN VIEW AREA -->
+    <main class="app-main-content">
+      
+      <!-- TAB 1: SEARCH & DISCOVERY -->
+      <section class="tab-content active" id="tab-search">
+        <div class="search-hero">
+          <h1>Explore Music Everywhere</h1>
+          <p>Instantly search across YouTube, Spotify, and SoundCloud.</p>
+        </div>
+
+        <!-- SEARCH FILTERS CONTAINER -->
+        <div class="search-filters-container">
+          <!-- SOURCE FILTERS -->
+          <div class="source-filters">
+            <span class="filter-label">Search on:</span>
+            <button class="filter-chip active" data-platform="youtube">
+              <span class="dot yt-dot"></span> YouTube
+            </button>
+            <button class="filter-chip active" data-platform="spotify">
+              <span class="dot sp-dot"></span> Spotify
+            </button>
+            <button class="filter-chip active" data-platform="soundcloud">
+              <span class="dot sc-dot"></span> SoundCloud
+            </button>
+          </div>
+        </div>
+
+        <!-- SEARCH RESULTS SUB-TABS -->
+        <div class="search-results-tabs" id="searchResultsTabs" style="display: none;">
+          <button class="search-tab-btn active" data-search-tab="tracks">Songs</button>
+          <button class="search-tab-btn" data-search-tab="albums">Albums</button>
+          <button class="search-tab-btn" data-search-tab="artists">Artists</button>
+        </div>
+
+        <!-- SEARCH RESULTS & LOADER -->
+        <div class="results-container">
+          <div class="loader" id="searchLoader" style="display: none;">
+            <div class="spinner"></div>
+            <p>Scanning the airwaves...</p>
+          </div>
+          <div class="empty-state" id="searchEmptyState">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"></circle><path d="M8 12h8"></path></svg>
+            <h3>No searches yet</h3>
+            <p>Type above to query songs simultaneously from all 3 music platforms.</p>
+          </div>
+          <div class="playlist-banner" id="searchPlaylistBanner" style="display: none; margin-bottom: 20px; padding: 16px; border-radius: 12px; background: rgba(255, 255, 255, 0.08); border: 1px solid var(--glass-border); justify-content: space-between; align-items: center; gap: 16px; width: 100%;">
+            <div>
+              <h4 id="searchPlaylistBannerTitle" style="margin: 0; font-size: 1.1rem; color: var(--text-color);">Found Playlist</h4>
+              <p id="searchPlaylistBannerSubtitle" style="margin: 4px 0 0 0; font-size: 0.85rem; color: var(--text-secondary);">Contains tracks. Click import to save as a new playlist.</p>
+            </div>
+            <button class="btn btn-primary" id="btnImportSearchPlaylist" style="white-space: nowrap;">Import Playlist</button>
+          </div>
+          <div class="songs-grid" id="searchResultsGrid" style="display: none;">
+            <!-- Dynamic song cards render here -->
+          </div>
+          <div class="songs-grid" id="searchAlbumsGrid" style="display: none;">
+            <!-- Dynamic album cards render here -->
+          </div>
+          <div class="songs-grid" id="searchArtistsGrid" style="display: none;">
+            <!-- Dynamic artist cards render here -->
+          </div>
+
+          <!-- RECOMMENDATIONS SECTION -->
+          <div class="recommendations-section" id="recommendationsSection" style="display: none; margin-top: 40px; border-top: 1px solid var(--glass-border); padding-top: 24px; width: 100%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+              <h3 style="margin: 0; font-size: 1.3rem; color: var(--text-color);">Similar Vibes (Recommended)</h3>
+              <span style="font-size: 0.85rem; color: var(--text-secondary);">Inspired by: <strong id="recommendationSeedText" style="color: var(--accent-color);">Song Title</strong></span>
+            </div>
+            <div class="songs-grid" id="recommendationsGrid">
+              <!-- Recommended song cards render here -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: PLAYLIST DETAIL VIEW (Toggled when a playlist is clicked) -->
+      <section class="tab-content" id="tab-playlist-detail">
+        <input type="file" id="playlistCoverFileInput" accept="image/*" style="display: none;">
+        <div class="playlist-banner">
+          <div class="playlist-img-placeholder" id="detailPlaylistImg" style="cursor: pointer; position: relative; overflow: hidden;" title="Click to change cover image">
+            <div class="cover-overlay" style="position: absolute; top:0; left:0; right:0; bottom:0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s ease; z-index: 2;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" style="width: 24px; height: 24px;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+            </div>
+            <div id="detailPlaylistImgContent" style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+            </div>
+          </div>
+          <div class="playlist-info">
+            <span class="badge">Playlist</span>
+            <h1 id="detailPlaylistName" contenteditable="true" title="Click to rename">My Playlist</h1>
+            <p id="detailPlaylistStats">0 songs • Created recently</p>
+            <div class="playlist-actions">
+              <button class="btn btn-primary" id="btnPlayPlaylist">
+                <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                Play All
+              </button>
+              <button class="btn btn-danger btn-outline" id="btnDeletePlaylist">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                Delete Playlist
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="playlist-songs-list">
+          <div class="songs-table-header">
+            <div class="col-num">#</div>
+            <div class="col-title">Title</div>
+            <div class="col-artist">Artist</div>
+            <div class="col-source">Source</div>
+            <div class="col-duration">Duration</div>
+            <div class="col-actions"></div>
+          </div>
+          <div id="playlistSongsContainer">
+            <!-- Playlist items go here -->
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: THEME CUSTOMIZER -->
+      <section class="tab-content" id="tab-customizer">
+        <div class="customizer-hero">
+          <h1>Theme Creator</h1>
+          <p>Personalize every corner of your media experience. Custom colors, glowing neon, layouts, and filters.</p>
+        </div>
+
+        <div class="customizer-grid">
+          <!-- Column 1: Presets & Backgrounds -->
+          <div class="card customization-card">
+            <h3>Presets & Backgrounds</h3>
+            
+            <div class="form-group">
+              <label>Select Preset Theme</label>
+              <div class="presets-grid" id="presetsGrid">
+                <!-- Theme buttons like 'Cyberpunk', 'Ocean', 'Glass' -->
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Background Type</label>
+              <div class="bg-type-selector">
+                <button class="btn btn-outline active" data-bgtype="gradient">Gradients</button>
+                <button class="btn btn-outline" data-bgtype="solid">Solid Colors</button>
+                <button class="btn btn-outline" data-bgtype="image">Custom Image</button>
+              </div>
+            </div>
+
+            <!-- Gradient presets -->
+            <div id="bgGradientPicker" class="picker-section">
+              <label>Choose Gradient</label>
+              <div class="gradients-grid" id="gradientsGrid">
+                <!-- Predefined gorgeous gradients -->
+              </div>
+            </div>
+
+            <!-- Solid colors -->
+            <div id="bgSolidPicker" class="picker-section" style="display: none;">
+              <label>Solid Color</label>
+              <div class="color-picker-wrapper">
+                <input type="color" id="pickerBgSolid" value="#0f0f13">
+                <span class="value-display" id="valBgSolid">#0f0f13</span>
+              </div>
+            </div>
+
+            <!-- Custom background image upload -->
+            <div id="bgImagePicker" class="picker-section" style="display: none;">
+              <label>Upload Background Image</label>
+              <div class="upload-area" id="bgUploadArea">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                <p>Drag image here or click to browse</p>
+                <input type="file" id="bgFileInput" accept="image/*" style="display: none;">
+              </div>
+              <div class="url-input-wrapper">
+                <span class="divider-text">OR ENTER IMAGE URL</span>
+                <input type="text" id="bgUrlInput" placeholder="https://example.com/image.jpg">
+                <button class="btn btn-sm btn-primary" id="btnApplyBgUrl">Apply URL</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Column 2: Layout & Aesthetics -->
+          <div class="card customization-card">
+            <h3>Visual Style Controls</h3>
+            
+            <div class="sliders-list">
+              <div class="form-group-slider">
+                <div class="slider-header">
+                  <span>Border Roundness</span>
+                  <span class="slider-val" id="valBorderRadius">16px</span>
+                </div>
+                <input type="range" id="slideBorderRadius" min="0" max="40" value="16">
+              </div>
+
+              <div class="form-group-slider">
+                <div class="slider-header">
+                  <span>Backdrop Glass Blur</span>
+                  <span class="slider-val" id="valGlassBlur">16px</span>
+                </div>
+                <input type="range" id="slideGlassBlur" min="0" max="40" value="16">
+              </div>
+
+              <div class="form-group-slider">
+                <div class="slider-header">
+                  <span>Neon Glow Intensity</span>
+                  <span class="slider-val" id="valGlowIntensity">12px</span>
+                </div>
+                <input type="range" id="slideGlowIntensity" min="0" max="30" value="12">
+              </div>
+
+              <div class="form-group-slider">
+                <div class="slider-header">
+                  <span>Screen Brightness</span>
+                  <span class="slider-val" id="valBrightness">100%</span>
+                </div>
+                <input type="range" id="slideBrightness" min="50" max="150" value="100">
+              </div>
+
+              <div class="form-group-slider">
+                <div class="slider-header">
+                  <span>Screen Contrast</span>
+                  <span class="slider-val" id="valContrast">100%</span>
+                </div>
+                <input type="range" id="slideContrast" min="50" max="150" value="100">
+              </div>
+            </div>
+
+            <div class="colors-grid">
+              <div class="color-picker-item">
+                <label>Accent Color</label>
+                <input type="color" id="pickerAccent" value="#7c3aed">
+              </div>
+              <div class="color-picker-item">
+                <label>Text Color</label>
+                <input type="color" id="pickerText" value="#ffffff">
+              </div>
+              <div class="color-picker-item">
+                <label>Neon Edge Color</label>
+                <input type="color" id="pickerNeon" value="#a78bfa">
+              </div>
+              <div class="color-picker-item">
+                <label>Glass Color</label>
+                <input type="color" id="pickerGlassBg" value="#ffffff">
+              </div>
+            </div>
+          </div>
+
+          <!-- Column 3: Layouts & Saving Themes -->
+          <div class="card customization-card">
+            <h3>Layout Options</h3>
+
+            <div class="form-group">
+              <label>Sidebar Position</label>
+              <div class="layout-toggle-group">
+                <button class="btn btn-outline active" data-layout="sidebar-left">Left</button>
+                <button class="btn btn-outline" data-layout="sidebar-right">Right</button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Music Player Position</label>
+              <div class="layout-toggle-group">
+                <button class="btn btn-outline active" data-layout="player-bottom">Bottom</button>
+                <button class="btn btn-outline" data-layout="player-top">Top</button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Sidebar Playlist Layout</label>
+              <div class="layout-toggle-group" id="playlistStyleSelector">
+                <button class="btn btn-outline active" data-playliststyle="image-name">Image + Name</button>
+                <button class="btn btn-outline" data-playliststyle="image-only">Just Image</button>
+                <button class="btn btn-outline" data-playliststyle="name-only">Just Name</button>
+              </div>
+            </div>
+
+            <div class="sidebar-divider"></div>
+            
+            <h3>Live Lyrics Settings</h3>
+            
+            <div class="form-group">
+              <label>Lyrics Text Size: <span id="valLyricsSize">18px</span></label>
+              <div class="slider-wrapper">
+                <input type="range" id="slideLyricsSize" min="14" max="32" value="18">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Lyrics Font Family</label>
+              <select class="select-control" id="selectLyricsFont" style="width: 100%; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); color: var(--text-color); padding: 8px; border-radius: 8px; margin-bottom: 8px;">
+                <option value="Outfit">Outfit (Default)</option>
+                <option value="Space Grotesk">Space Grotesk</option>
+                <option value="Inter">Inter</option>
+                <option value="Poppins">Poppins</option>
+                <option value="Roboto">Roboto</option>
+                <option value="Lexend">Lexend</option>
+                <option value="custom">Custom Font...</option>
+              </select>
+              <input type="text" id="inputCustomLyricsFont" placeholder="Enter custom Font Name (e.g. Montserrat)" style="display: none; width: 100%; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); color: var(--text-color); padding: 8px; border-radius: 8px;">
+            </div>
+
+            <div class="sidebar-divider"></div>
+
+            <h3>Save Theme Preset</h3>
+            <div class="theme-save-wrapper">
+              <input type="text" id="customThemeNameInput" placeholder="My Cool Theme">
+              <button class="btn btn-primary" id="btnSaveCustomTheme">Save Custom Theme</button>
+            </div>
+
+            <div class="custom-themes-section">
+              <label>My Saved Custom Themes</label>
+              <ul class="custom-themes-list" id="customThemesList">
+                <!-- User saved custom themes rendered dynamically -->
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: USER PROFILE & INTEGRATION SETTINGS -->
+      <section class="tab-content" id="tab-profile">
+        <div class="profile-hero">
+          <h1>User Profile & Settings</h1>
+          <p>Customize your look, import Spotify API Keys, and restore daily backups.</p>
+        </div>
+
+        <div class="profile-grid">
+          <!-- Profile Card -->
+          <div class="card profile-card">
+            <div class="avatar-container">
+              <img src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200&auto=format&fit=crop" id="profileAvatar" alt="User Avatar">
+              <div class="avatar-overlay" id="avatarUploadTrigger">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+              </div>
+              <input type="file" id="avatarFileInput" accept="image/*" style="display: none;">
+            </div>
+
+            <div class="profile-edit-name">
+              <input type="text" id="profileUsernameInput" value="Music Enthusiast">
+              <button class="btn btn-sm btn-outline" id="btnSaveUsername">Save Name</button>
+            </div>
+
+            <div class="sidebar-divider" style="width: 100%;"></div>
+
+            <!-- BACKUP ACTIONS -->
+            <div class="backup-actions-container">
+              <h3>Playlist Backups</h3>
+              <p>Your playlists are automatically backed up to our server. If you clear your browser's data, you can instantly recover them here.</p>
+              
+              <div class="backup-buttons">
+                <button class="btn btn-primary" id="btnForceBackup">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                  Sync Backup File
+                </button>
+                <button class="btn btn-success" id="btnRestoreBackup">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  Restore From Backup
+                </button>
+              </div>
+              <div class="backup-status-text" id="backupStatusText">Daily backup is automatically synchronized.</div>
+            </div>
+          </div>
+
+          <!-- Spotify Settings Card -->
+          <div class="card spotify-settings-card">
+            <div class="spotify-header">
+              <span class="spotify-logo"></span>
+              <h3>Spotify API Configuration</h3>
+            </div>
+            <p>To enable real Spotify track search (instead of using the YouTube search fallback proxy), enter your Spotify Developer credentials below.</p>
+            
+            <div class="help-box">
+              <p><strong>How to get these?</strong></p>
+              <ol>
+                <li>Go to the <a href="https://developer.spotify.com/dashboard" target="_blank">Spotify Developer Dashboard</a>.</li>
+                <li>Create an App named "AetherPlayer".</li>
+                <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong>.</li>
+              </ol>
+            </div>
+
+            <div class="form-group">
+              <label>Spotify Client ID</label>
+              <input type="text" id="spotifyClientId" placeholder="Paste your Client ID here">
+            </div>
+
+            <div class="form-group">
+              <label>Spotify Client Secret</label>
+              <input type="password" id="spotifyClientSecret" placeholder="Paste your Client Secret here">
+            </div>
+
+            <button class="btn btn-primary" id="btnSaveSpotifySettings">Save Credentials</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 5: ALBUM DETAIL VIEW -->
+      <section class="tab-content" id="tab-album-detail">
+        <div class="playlist-banner">
+          <div class="playlist-img-placeholder" id="detailAlbumImg" style="width: 180px; height: 180px;">
+            <div id="detailAlbumImgContent" style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:48px; height:48px;"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+            </div>
+          </div>
+          <div class="playlist-info">
+            <span class="badge" id="detailAlbumPlatform">Spotify Album</span>
+            <h1 id="detailAlbumName">Album Name</h1>
+            <p id="detailAlbumStats">Artist Name • Year • 0 songs</p>
+            <div class="playlist-actions">
+              <button class="btn btn-primary" id="btnPlayAlbum">
+                <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                Play All
+              </button>
+              <button class="btn btn-outline" id="btnAddAlbumToPlaylist">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                Add to Playlist
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="playlist-songs-list">
+          <div class="songs-table-header">
+            <div class="col-num">#</div>
+            <div class="col-title">Title</div>
+            <div class="col-artist">Artist</div>
+            <div class="col-duration">Duration</div>
+            <div class="col-actions"></div>
+          </div>
+          <div id="albumSongsContainer">
+            <!-- Album songs render here -->
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 6: ARTIST PROFILE VIEW -->
+      <section class="tab-content" id="tab-artist-profile">
+        <div class="artist-banner">
+          <div class="artist-avatar-wrapper">
+            <div id="detailArtistAvatarContent" class="artist-avatar-placeholder">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+            </div>
+          </div>
+          <div class="artist-profile-info">
+            <h1 id="detailArtistName">Artist Name</h1>
+            <p id="detailArtistStats" class="artist-stats">Followers</p>
+            <p id="detailArtistDesc" class="artist-description">Artist bio details go here</p>
+          </div>
+        </div>
+
+        <!-- PLATFORM SELECTION BAR FOR ARTIST PROFILE -->
+        <div class="artist-platform-bar">
+          <span class="platform-bar-label">View profile from:</span>
+          <div class="platform-chips" id="artistPlatformChips">
+            <button class="filter-chip active" data-artist-platform="spotify">Spotify</button>
+            <button class="filter-chip" data-artist-platform="youtube">YouTube</button>
+            <button class="filter-chip" data-artist-platform="soundcloud">SoundCloud</button>
+          </div>
+        </div>
+
+        <!-- ARTIST CONTENT SECTIONS -->
+        <div class="artist-sections">
+          <!-- Top Tracks Section -->
+          <div class="artist-section-header">
+            <h3>Popular Tracks</h3>
+          </div>
+          <div class="songs-grid" id="artistTracksGrid">
+            <!-- Popular tracks render here -->
+          </div>
+
+          <!-- Albums Section -->
+          <div class="artist-section-header" id="artistAlbumsHeader" style="margin-top: 32px;">
+            <h3>Albums & Singles</h3>
+          </div>
+          <div class="songs-grid" id="artistAlbumsGrid">
+            <!-- Albums render here -->
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- FLOATING LIVE LYRICS WIDGET (Cycles with mic button clicks) -->
+    <div class="live-lyrics-widget" id="liveLyricsWidget" style="display: none;">
+      <div class="live-lyrics-scroll-container" id="liveLyricsScrollContainer">
+        <div class="live-line current" id="liveLinePlaceholder">No Song Playing</div>
+      </div>
+    </div>
+
+    <!-- FLOATING INTEGRATED MUSIC PLAYER (BOTTOM/TOP BAR) -->
+    <footer class="app-player-bar" id="appPlayerBar">
+      <!-- Media Info (Left) -->
+      <div class="player-left">
+        <div class="player-album-art" id="playerAlbumArt">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+        </div>
+        <div class="player-song-details">
+          <div class="song-title" id="playerSongTitle">No Song Playing</div>
+          <div class="song-artist" id="playerSongArtist" style="cursor: pointer; text-decoration: none;">Choose a song to begin</div>
+        </div>
+        <button class="icon-btn" id="btnAddToFavorites" title="Add to current playlist">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+        </button>
+      </div>
+
+      <!-- Playback Controls (Center) -->
+      <div class="player-center">
+        <div class="control-buttons">
+          <button class="control-btn" id="btnShuffle" title="Shuffle Playback">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="4" y1="4" x2="9" y2="9"></line></svg>
+          </button>
+          <button class="control-btn" id="btnPrev" title="Previous Song">
+            <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2"></line></svg>
+          </button>
+          <button class="control-btn play-btn" id="btnPlayPause" title="Play / Pause">
+            <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            <svg id="pauseIcon" viewBox="0 0 24 24" fill="currentColor" style="display: none;"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+          </button>
+          <button class="control-btn" id="btnNext" title="Next Song">
+            <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2"></line></svg>
+          </button>
+          <button class="control-btn" id="btnRepeat" title="Repeat Playback">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14M7 23 3 19 7 15"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>
+          </button>
+          <button class="control-btn" id="btnToggleLyrics" title="Toggle Synced Lyrics">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v1a7 7 0 0 1-14 0v-1"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+          </button>
+        </div>
+
+        <div class="playback-timeline">
+          <span class="time-stamp" id="playerCurrentTime">0:00</span>
+          <input type="range" class="timeline-slider" id="playerTimeline" min="0" max="100" value="0">
+          <span class="time-stamp" id="playerTotalDuration">0:00</span>
+        </div>
+      </div>
+
+      <!-- Utilities & Volume (Right) -->
+      <div class="player-right">
+        <!-- Platform badge indicator -->
+        <span class="player-platform-badge" id="playerPlatformBadge" style="display: none;">youtube</span>
+        
+        <div class="volume-container">
+          <button class="control-btn" id="btnMute" title="Mute/Unmute">
+            <svg id="volumeOnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+            <svg id="volumeOffIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;"><path d="M11 5L6 9H2v6h4l5 4V5z"></path><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>
+          </button>
+          <input type="range" class="volume-slider" id="playerVolume" min="0" max="100" value="70">
+        </div>
+      </div>
+
+      <!-- EMBED HIDDEN CONTAINERS (IFRAMES) FOR APIs -->
+      <div class="hidden-players-container">
+        <!-- YouTube video iframe container -->
+        <div id="ytPlayerContainer"></div>
+        <!-- SoundCloud widget wrapper (loaded dynamically) -->
+        <div id="scPlayerContainer"></div>
+        <!-- Spotify preview/embed wrapper (loaded dynamically) -->
+        <div id="spotifyPlayerContainer"></div>
+      </div>
+    </footer>
+
+    <!-- MOBILE BOTTOM NAVIGATION BAR -->
+    <nav class="mobile-bottom-nav" id="mobileBottomNav">
+      <button class="mobile-nav-btn active" data-tab="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <span>Search</span>
+      </button>
+      <button class="mobile-nav-btn" data-tab="playlists">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+        <span>Playlists</span>
+      </button>
+      <button class="mobile-nav-btn" data-tab="customizer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
+        <span>Themes</span>
+      </button>
+      <button class="mobile-nav-btn" data-tab="profile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+        <span>Profile</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- LYRICS PANEL DRAWER -->
+  <div class="lyrics-drawer" id="lyricsDrawer">
+    <div class="lyrics-drawer-header">
+      <h3>Synced Lyrics</h3>
+      <button class="icon-btn" id="btnCloseLyrics" title="Close Lyrics">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+    <div class="lyrics-drawer-body" id="lyricsDrawerBody">
+      <div class="lyrics-placeholder">Start playing a song to view lyrics</div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION POPUP -->
+  <div class="toast" id="appToast">Saved successfully!</div>
+
+  <!-- ADD TO PLAYLIST MODAL -->
+  <div class="modal-overlay" id="playlistModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Add to Playlist</h3>
+        <button class="icon-btn" id="btnCloseModal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <ul class="modal-playlist-select" id="modalPlaylistSelect">
+          <!-- Render playlists here to select -->
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- CUSTOM ASYNC PROMPT MODAL -->
+  <div class="modal-overlay" id="promptModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="promptModalTitle">Input Required</h3>
+      </div>
+      <div class="modal-body">
+        <p id="promptModalMessage" style="margin-bottom: 12px; font-size: 0.9rem; color: var(--text-secondary);"></p>
+        <input type="text" id="promptModalInput" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.2); color: var(--text-color); outline: none; font-size: 0.95rem; margin-bottom: 16px;">
+        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+          <button class="btn btn-outline btn-sm" id="btnPromptCancel">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="btnPromptConfirm">Submit</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CUSTOM ASYNC CONFIRM MODAL -->
+  <div class="modal-overlay" id="confirmModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="confirmModalTitle">Are you sure?</h3>
+      </div>
+      <div class="modal-body">
+        <p id="confirmModalMessage" style="margin-bottom: 16px; font-size: 0.95rem; line-height: 1.4; color: var(--text-secondary);"></p>
+        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+          <button class="btn btn-outline btn-sm" id="btnConfirmCancel">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="btnConfirmConfirm">Confirm</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
