@@ -1,6 +1,6 @@
 // AetherPlayer Frontend Application State
 let state = {
-  activeTab: 'search',
+  activeTab: 'home',
   playlists: [],
   currentPlaylistId: null,
   currentSong: null,
@@ -124,6 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderPlaylists();
   loadServerSettings();
   loadServerPlaylists();
+  switchTab('home');
 
   // Create first playlist if none exist
   setTimeout(() => {
@@ -1238,9 +1239,12 @@ function switchTab(tabName) {
     tc.classList.remove('active');
   });
 
-  if (['search', 'customizer', 'profile', 'playlists', 'album-detail', 'artist-profile'].includes(tabName)) {
+  if (['home', 'search', 'customizer', 'profile', 'playlists', 'album-detail', 'artist-profile'].includes(tabName)) {
     document.getElementById(`tab-${tabName}`).classList.add('active');
-    if (tabName !== 'album-detail' && tabName !== 'artist-profile') {
+    if (tabName === 'home') {
+      loadHomeDashboard();
+    }
+    if (tabName !== 'album-detail' && tabName !== 'artist-profile' && tabName !== 'home') {
       // de-highlight lists active states
       document.querySelectorAll('#playlistsList li').forEach(li => li.classList.remove('active'));
       state.currentPlaylistId = null;
@@ -1804,6 +1808,12 @@ function playSong(song, index) {
   setTimeout(() => {
     state.isTransitioning = false;
   }, 1500);
+
+  // Log listening history
+  logPlayHistory(song);
+
+  // Sync right-side detail sidebar
+  updateRightSidebar(song);
 
   // Update UI Player Details
   document.getElementById('playerSongTitle').textContent = song.title;
@@ -2840,5 +2850,259 @@ async function fetchArtistProfileDetails(artistName, platform, artistId) {
     if (platform !== 'soundcloud') {
       albumsGrid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;"><h3>Error fetching albums</h3></div>`;
     }
+  }
+}
+
+// --- LISTEN HISTORY LOGGING ---
+function logPlayHistory(song) {
+  if (!song || !song.id) return;
+  fetch('/api/history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(song)
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.success && state.activeTab === 'home') {
+      loadHomeDashboard();
+    }
+  })
+  .catch(err => console.error("Failed to log play history:", err));
+}
+
+// --- RIGHT-SIDE PANEL SYNCHRONIZATION ---
+async function updateRightSidebar(song) {
+  if (!song) {
+    document.getElementById('rightNowPlayingSection').style.display = 'none';
+    document.getElementById('relatedVideosSection').style.display = 'none';
+    document.getElementById('aboutArtistSection').style.display = 'none';
+    return;
+  }
+
+  // 1. Show Now Playing Details
+  document.getElementById('rightNowPlayingSection').style.display = 'block';
+  document.getElementById('rightSongTitleText').textContent = song.title;
+  document.getElementById('rightSongArtistText').textContent = song.artist || 'Unknown Artist';
+  if (song.thumbnail) {
+    document.getElementById('rightAlbumArtImg').src = song.thumbnail;
+    document.getElementById('rightAlbumArtImg').style.display = 'block';
+  } else {
+    document.getElementById('rightAlbumArtImg').style.display = 'none';
+  }
+
+  // 2. Fetch Related Music Videos
+  const relatedList = document.getElementById('relatedVideosList');
+  const relatedSec = document.getElementById('relatedVideosSection');
+  relatedList.innerHTML = '<div class="spinner"></div>';
+  relatedSec.style.display = 'block';
+
+  try {
+    const res = await fetch(`/api/related-videos?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || '')}`);
+    if (res.ok) {
+      const videos = await res.json();
+      relatedList.innerHTML = '';
+      if (videos && videos.length > 0) {
+        videos.forEach(v => {
+          const row = document.createElement('div');
+          row.className = 'related-video-row';
+          row.innerHTML = `
+            <div class="related-video-thumb">
+              <img src="${v.thumbnail || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=150&auto=format&fit=crop'}" alt="Thumb">
+            </div>
+            <div class="related-video-info">
+              <div class="related-video-title">${v.title}</div>
+              <div class="related-video-channel">${v.artist} • ${v.duration}</div>
+            </div>
+          `;
+          row.addEventListener('click', () => {
+            const track = {
+              id: v.id,
+              title: v.title,
+              artist: v.artist,
+              thumbnail: v.thumbnail,
+              duration: v.duration,
+              url: `https://music.youtube.com/watch?v=${v.id}`,
+              platform: 'youtube'
+            };
+            playSong(track, -1);
+          });
+          relatedList.appendChild(row);
+        });
+      } else {
+        relatedList.innerHTML = '<div class="empty-state">No related videos found</div>';
+      }
+    } else {
+      relatedList.innerHTML = '<div class="empty-state">Error loading videos</div>';
+    }
+  } catch (e) {
+    console.error("Failed to load related videos:", e);
+    relatedList.innerHTML = '<div class="empty-state">Error loading videos</div>';
+  }
+
+  // 3. Fetch Artist Details for About the Artist Section
+  const artistSec = document.getElementById('aboutArtistSection');
+  if (song.artist) {
+    artistSec.style.display = 'block';
+    document.getElementById('aboutArtistNameText').textContent = song.artist;
+    document.getElementById('aboutArtistFollowersText').textContent = 'Fetching profile...';
+    document.getElementById('aboutArtistBioText').textContent = '';
+    document.getElementById('aboutArtistAvatarImg').src = '';
+    
+    try {
+      const artistRes = await fetch(`/api/artist?name=${encodeURIComponent(song.artist)}&platform=${song.platform || 'youtube'}`);
+      if (artistRes.ok) {
+        const artist = await artistRes.json();
+        document.getElementById('aboutArtistFollowersText').textContent = artist.followers || 'Artist Profile';
+        document.getElementById('aboutArtistBioText').textContent = artist.description || 'No biography details available.';
+        if (artist.thumbnail) {
+          document.getElementById('aboutArtistAvatarImg').src = artist.thumbnail;
+          document.getElementById('aboutArtistAvatarImg').style.display = 'block';
+        } else {
+          document.getElementById('aboutArtistAvatarImg').style.display = 'none';
+        }
+      } else {
+        document.getElementById('aboutArtistFollowersText').textContent = 'Artist Profile';
+      }
+    } catch (err) {
+      console.error("Error loading sidebar artist details:", err);
+    }
+  } else {
+    artistSec.style.display = 'none';
+  }
+}
+
+// --- HOME DASHBOARD LOAD & RENDER ---
+async function loadHomeDashboard() {
+  const hours = new Date().getHours();
+  let greeting = "Good evening";
+  if (hours < 12) greeting = "Good morning";
+  else if (hours < 18) greeting = "Good afternoon";
+  document.getElementById('homeGreetingText').textContent = greeting;
+
+  const quickGrid = document.getElementById('quickRecentsGrid');
+  const madeGrid = document.getElementById('madeForYouGrid');
+  const recGrid = document.getElementById('recommendedTodayGrid');
+
+  quickGrid.innerHTML = '<div class="spinner" style="grid-column:1/-1; margin:20px auto;"></div>';
+  madeGrid.innerHTML = '<div class="spinner" style="grid-column:1/-1; margin:20px auto;"></div>';
+  recGrid.innerHTML = '<div class="spinner" style="grid-column:1/-1; margin:20px auto;"></div>';
+
+  // 1. Fetch History
+  try {
+    const res = await fetch('/api/history');
+    if (res.ok) {
+      const history = await res.json();
+      quickGrid.innerHTML = '';
+      
+      if (history && history.length > 0) {
+        const uniqueRecents = [];
+        const seen = new Set();
+        for (const item of history) {
+          if (!seen.has(item.id)) {
+            seen.add(item.id);
+            uniqueRecents.push(item);
+          }
+          if (uniqueRecents.length === 8) break;
+        }
+
+        uniqueRecents.forEach(song => {
+          const card = document.createElement('div');
+          card.className = 'quick-recent-card';
+          card.innerHTML = `
+            <img src="${song.thumbnail || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=150&auto=format&fit=crop'}" class="quick-recent-art" alt="Art">
+            <div class="quick-recent-info">
+              <div class="quick-recent-title">${song.title}</div>
+              <div class="quick-recent-subtitle">${song.artist || 'Unknown'}</div>
+            </div>
+            <div class="quick-recent-play-btn">
+              <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            </div>
+          `;
+          card.addEventListener('click', () => {
+            playSong(song, -1);
+          });
+          quickGrid.appendChild(card);
+        });
+      } else {
+        quickGrid.innerHTML = `
+          <div class="empty-state" style="grid-column: 1/-1; text-align: center; padding: 20px;">
+            <p>Your listening history will appear here. Start playing songs!</p>
+          </div>
+        `;
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load history:", e);
+    quickGrid.innerHTML = '<div class="empty-state" style="grid-column:1/-1;">Error loading history</div>';
+  }
+
+  // 2. Fetch Made For You Mixes
+  try {
+    const res = await fetch('/api/mixes');
+    if (res.ok) {
+      const mixes = await res.json();
+      madeGrid.innerHTML = '';
+      if (mixes && mixes.length > 0) {
+        mixes.forEach(mix => {
+          const card = document.createElement('div');
+          card.className = 'home-card';
+          card.innerHTML = `
+            <div class="home-card-art-wrapper">
+              <img src="${mix.thumbnail}" class="home-card-art" alt="Art">
+              <div class="home-card-play-btn" title="Play Vibe Mix">
+                <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              </div>
+            </div>
+            <div class="home-card-title">${mix.name}</div>
+            <div class="home-card-desc">${mix.description}</div>
+          `;
+          card.addEventListener('click', () => {
+            if (mix.tracks && mix.tracks.length > 0) {
+              playSongList(mix.tracks, 0);
+            } else {
+              showToast('Fetching mix tracks...');
+            }
+          });
+          madeGrid.appendChild(card);
+        });
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load mixes:", e);
+    madeGrid.innerHTML = '<div class="empty-state" style="grid-column:1/-1;">Error loading mixes</div>';
+  }
+
+  // 3. Fetch Recommendations
+  try {
+    const res = await fetch('/api/dashboard-recommendations');
+    if (res.ok) {
+      const tracks = await res.json();
+      recGrid.innerHTML = '';
+      if (tracks && tracks.length > 0) {
+        tracks.slice(0, 10).forEach(song => {
+          const card = document.createElement('div');
+          card.className = 'home-card';
+          card.innerHTML = `
+            <div class="home-card-art-wrapper">
+              <img src="${song.thumbnail || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=200&auto=format&fit=crop'}" class="home-card-art" alt="Art">
+              <div class="home-card-play-btn">
+                <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              </div>
+            </div>
+            <div class="home-card-title">${song.title}</div>
+            <div class="home-card-desc">${song.artist}</div>
+          `;
+          card.addEventListener('click', () => {
+            playSong(song, -1);
+          });
+          recGrid.appendChild(card);
+        });
+      } else {
+        recGrid.innerHTML = '<div class="empty-state" style="grid-column:1/-1;">No recommendations available</div>';
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load recommendations:", e);
+    recGrid.innerHTML = '<div class="empty-state" style="grid-column:1/-1;">Error loading recommendations</div>';
   }
 }

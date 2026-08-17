@@ -116,9 +116,56 @@
 
     <!-- MAIN VIEW AREA -->
     <main class="app-main-content">
+
+      <!-- TAB 0: HOME DASHBOARD -->
+      <section class="tab-content active" id="tab-home">
+        <div class="home-header">
+          <div class="home-greeting">
+            <h1 id="homeGreetingText">Good evening</h1>
+            <div class="home-category-chips">
+              <button class="category-chip active">All</button>
+              <button class="category-chip">Music</button>
+              <button class="category-chip">Podcasts</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Grid: 8 Recents Items -->
+        <div class="quick-recents-section">
+          <div class="quick-recents-grid" id="quickRecentsGrid">
+            <!-- Dynamic 8 cards render here -->
+          </div>
+        </div>
+
+        <!-- Made For You Section -->
+        <div class="home-section">
+          <div class="home-section-header">
+            <h2>Made For You</h2>
+            <span class="show-all-btn">Show all</span>
+          </div>
+          <div class="home-carousel-container">
+            <div class="home-carousel-grid" id="madeForYouGrid">
+              <!-- Dynamic mixes render here (Daily Mix 1-3, Discover Weekly) -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Recommended for Today -->
+        <div class="home-section">
+          <div class="home-section-header">
+            <h2>Recommended for Today</h2>
+            <span class="show-all-btn">Show all</span>
+          </div>
+          <div class="home-carousel-container">
+            <div class="home-carousel-grid" id="recommendedTodayGrid">
+              <!-- Dynamic recommendations based on recent activity -->
+            </div>
+          </div>
+        </div>
+      </section>
       
       <!-- TAB 1: SEARCH & DISCOVERY -->
-      <section class="tab-content active" id="tab-search">
+      <section class="tab-content" id="tab-search">
         <div class="search-hero">
           <h1>Explore Music Everywhere</h1>
           <p>Instantly search across YouTube, Spotify, and SoundCloud.</p>
@@ -594,6 +641,52 @@
 
     </main>
 
+    <!-- RIGHT SIDEBAR: Currently Playing, Related Videos, and About the Artist -->
+    <aside class="app-right-sidebar" id="rightSidebar">
+      <div class="right-sidebar-header">
+        <h3 id="rightSidebarTitle">Track Details</h3>
+        <button class="icon-btn" id="btnCloseRightSidebar" title="Close Panel" style="display: none;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+
+      <div class="right-sidebar-scroll">
+        <!-- Currently Playing Song Details -->
+        <div class="right-now-playing" id="rightNowPlayingSection" style="display: none;">
+          <div class="right-album-art-wrapper">
+            <img src="" id="rightAlbumArtImg" alt="Album Cover">
+          </div>
+          <div class="right-song-info">
+            <h2 id="rightSongTitleText">Song Title</h2>
+            <p id="rightSongArtistText">Artist Name</p>
+          </div>
+        </div>
+
+        <!-- Related Music Videos -->
+        <div class="right-section" id="relatedVideosSection" style="display: none;">
+          <h4>Related Music Videos</h4>
+          <div class="related-videos-list" id="relatedVideosList">
+            <!-- Dynamic video items serve here -->
+          </div>
+        </div>
+
+        <!-- About the Artist -->
+        <div class="right-section" id="aboutArtistSection" style="display: none;">
+          <h4>About the Artist</h4>
+          <div class="about-artist-card">
+            <div class="about-artist-avatar-wrapper">
+              <img src="" id="aboutArtistAvatarImg" alt="Artist Avatar">
+            </div>
+            <div class="about-artist-details">
+              <h5 id="aboutArtistNameText">Artist Name</h5>
+              <p class="about-artist-followers" id="aboutArtistFollowersText">Subscribers</p>
+              <p class="about-artist-bio" id="aboutArtistBioText">Artist Bio</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
     <!-- FLOATING LIVE LYRICS WIDGET (Cycles with mic button clicks) -->
     <div class="live-lyrics-widget" id="liveLyricsWidget" style="display: none;">
       <div class="live-lyrics-scroll-container" id="liveLyricsScrollContainer">
@@ -675,7 +768,11 @@
 
     <!-- MOBILE BOTTOM NAVIGATION BAR -->
     <nav class="mobile-bottom-nav" id="mobileBottomNav">
-      <button class="mobile-nav-btn active" data-tab="search">
+      <button class="mobile-nav-btn active" data-tab="home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+        <span>Home</span>
+      </button>
+      <button class="mobile-nav-btn" data-tab="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
         <span>Search</span>
       </button>

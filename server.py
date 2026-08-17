@@ -28,10 +28,33 @@ if IS_ANDROID:
     CONFIG_FILE = os.path.join(android_files_dir, 'config.json')
     BACKUP_FILE = os.path.join(android_files_dir, 'playlists_backup.json')
     UPLOADS_DIR = os.path.join(android_files_dir, 'uploads')
+    HISTORY_FILE = os.path.join(android_files_dir, 'history.json')
 else:
     CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'config.json')
     BACKUP_FILE = os.path.join(os.path.dirname(__file__), 'playlists_backup.json')
     UPLOADS_DIR = os.path.join(PUBLIC_DIR, 'uploads')
+    HISTORY_FILE = os.path.join(os.path.dirname(__file__), 'history.json')
+
+def read_history():
+    print("Reading history from:", HISTORY_FILE)
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                print("History loaded successfully, count:", len(data))
+                return data
+        except Exception as e:
+            print("Failed to read history:", e)
+            return []
+    print("History file does not exist at path")
+    return []
+
+def write_history(history):
+    try:
+        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(history, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print("Failed to write history:", e)
 
 # Initialize YouTube Music API client
 ytmusic = YTMusic()
@@ -1217,6 +1240,227 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(json.dumps(res_payload).encode('utf-8'))
                 return
 
+        elif path == '/api/history':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            history = read_history()
+            self.wfile.write(json.dumps(history).encode('utf-8'))
+            return
+
+        elif path == '/api/dashboard-recommendations':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            
+            history = read_history()
+            tracks = []
+            
+            # Get Spotify token if credentials exist
+            config = read_config()
+            client_id = config.get('spotifyClientId')
+            client_secret = config.get('spotifyClientSecret')
+            token = get_spotify_access_token(client_id, client_secret) if (client_id and client_secret) else None
+            
+            # Extract recently played tracks/artists
+            recent_spotify_tracks = [t for t in history if t.get('platform') == 'spotify'][:3]
+            recent_yt_tracks = [t for t in history if t.get('platform') == 'youtube'][:3]
+            recent_artists = list(set([t.get('artist') for t in history if t.get('artist')]))[:3]
+            
+            print(f"Recommendations request: recent_spotify={len(recent_spotify_tracks)}, recent_yt={len(recent_yt_tracks)}, token={token is not None}")
+            
+            if token and recent_spotify_tracks:
+                try:
+                    seed_tracks = ",".join([t['id'] for t in recent_spotify_tracks])
+                    url = f"https://api.spotify.com/v1/recommendations?seed_tracks={seed_tracks}&limit=20"
+                    req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
+                    with urllib.request.urlopen(req) as res:
+                        rec_data = json.loads(res.read().decode('utf-8'))
+                    for t in rec_data.get('tracks', []):
+                        artists_str = ", ".join([a['name'] for a in t['artists']])
+                        thumbnail = t['album']['images'][0]['url'] if t['album']['images'] else ''
+                        tracks.append({
+                            'id': t['id'],
+                            'title': t['name'],
+                            'artist': artists_str,
+                            'duration': format_duration_ms(t['duration_ms']),
+                            'thumbnail': thumbnail,
+                            'url': t['external_urls']['spotify'],
+                            'platform': 'spotify',
+                            'previewUrl': t.get('preview_url'),
+                            'albumId': t['album']['id'],
+                            'albumName': t['album']['name']
+                        })
+                except Exception as e:
+                    print("Spotify recommendations failed, falling back:", e)
+            
+            if not tracks and recent_yt_tracks:
+                print("Running YouTube Music recommendations for:", recent_yt_tracks[0]['id'])
+                try:
+                    recent_vid = recent_yt_tracks[0]['id']
+                    watch_list = ytmusic.get_watch_playlist(videoId=recent_vid, limit=15)
+                    print("Watch playlist returned tracks count:", len(watch_list.get('tracks', [])))
+                    for t in watch_list.get('tracks', []):
+                        if t.get('videoId') == recent_vid:
+                            continue
+                        t_thumb = ''
+                        t_thumbs = t.get('thumbnail', [])
+                        if isinstance(t_thumbs, list) and t_thumbs:
+                            t_thumb = t_thumbs[-1].get('url', '')
+                        elif isinstance(t_thumbs, dict):
+                            t_thumb = t_thumbs.get('url', '')
+                            
+                        t_artists = t.get('artists', [])
+                        t_artist = ", ".join([a['name'] for a in t_artists]) if isinstance(t_artists, list) else t.get('author', 'Unknown')
+                        
+                        t_dur = t.get('length', '3:00')
+                        
+                        t_album = t.get('album', {})
+                        t_album_id = t_album.get('id') if isinstance(t_album, dict) else None
+                        t_album_name = t_album.get('name') if isinstance(t_album, dict) else None
+                        
+                        tracks.append({
+                            'id': t.get('videoId'),
+                            'title': t.get('title', 'Unknown Track'),
+                            'artist': t_artist,
+                            'duration': t_dur,
+                            'thumbnail': t_thumb,
+                            'url': f"https://music.youtube.com/watch?v={t.get('videoId')}",
+                            'platform': 'youtube',
+                            'albumId': t_album_id,
+                            'albumName': t_album_name
+                        })
+                except Exception as e:
+                    print("YouTube Music related watch playlist recommendations failed:", e)
+                    
+            if not tracks:
+                try:
+                    query_term = recent_artists[0] + " songs" if recent_artists else "popular songs hits"
+                    trending = search_youtube(query_term, limit=15)
+                    tracks.extend(trending)
+                except Exception as e:
+                    print("Trending fallback recommendations failed:", e)
+                    
+            self.wfile.write(json.dumps(tracks).encode('utf-8'))
+            return
+
+        elif path == '/api/mixes':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            
+            history = read_history()
+            
+            artists = [t.get('artist', '') for t in history if t.get('artist')]
+            from collections import Counter
+            artist_counts = Counter(artists)
+            top_artists = [item[0] for item in artist_counts.most_common(5)]
+            
+            seed_artists_1 = ["Daft Punk", "Disclosure", "Fred again.."]
+            seed_artists_2 = ["Kendrick Lamar", "Drake", "Travis Scott"]
+            seed_artists_3 = ["Coldplay", "The Neighbourhood", "Arctic Monkeys"]
+            
+            if top_artists:
+                if len(top_artists) > 0: seed_artists_1 = [top_artists[0]]
+                if len(top_artists) > 1: seed_artists_2 = [top_artists[1]]
+                if len(top_artists) > 2: seed_artists_3 = [top_artists[2]]
+                
+            mix1_tracks = []
+            mix2_tracks = []
+            mix3_tracks = []
+            discover_tracks = []
+            
+            try:
+                mix1_tracks = search_youtube(f"{seed_artists_1[0]} mix", limit=10)
+            except Exception:
+                pass
+            try:
+                mix2_tracks = search_youtube(f"{seed_artists_2[0]} mix", limit=10)
+            except Exception:
+                pass
+            try:
+                mix3_tracks = search_youtube(f"{seed_artists_3[0]} mix", limit=10)
+            except Exception:
+                pass
+                
+            if not mix1_tracks: mix1_tracks = search_youtube("Electronic mix", limit=10)
+            if not mix2_tracks: mix2_tracks = search_youtube("Rap mix", limit=10)
+            if not mix3_tracks: mix3_tracks = search_youtube("Indie Pop mix", limit=10)
+            
+            try:
+                discover_query = f"{top_artists[0] if top_artists else 'Daft Punk'} recommendations"
+                discover_tracks = search_youtube(discover_query, limit=12)
+            except Exception:
+                discover_tracks = search_youtube("new discover music weekly", limit=12)
+                
+            mixes = [
+                {
+                    'id': 'daily-mix-1',
+                    'name': 'Daily Mix 1',
+                    'description': f"Featuring {', '.join(seed_artists_1[:2]) if len(seed_artists_1) > 1 else seed_artists_1[0]} and more.",
+                    'thumbnail': 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=250&auto=format&fit=crop',
+                    'tracks': mix1_tracks
+                },
+                {
+                    'id': 'daily-mix-2',
+                     'name': 'Daily Mix 2',
+                     'description': f"Featuring {', '.join(seed_artists_2[:2]) if len(seed_artists_2) > 1 else seed_artists_2[0]} and more.",
+                     'thumbnail': 'https://images.unsplash.com/photo-1571172703734-4322a669acf9?q=80&w=250&auto=format&fit=crop',
+                     'tracks': mix2_tracks
+                },
+                {
+                     'id': 'daily-mix-3',
+                     'name': 'Daily Mix 3',
+                     'description': f"Featuring {', '.join(seed_artists_3[:2]) if len(seed_artists_3) > 1 else seed_artists_3[0]} and more.",
+                     'thumbnail': 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?q=80&w=250&auto=format&fit=crop',
+                     'tracks': mix3_tracks
+                },
+                {
+                     'id': 'discover-weekly',
+                     'name': 'Discover Weekly',
+                     'description': "Your weekly mixtape of fresh vibes and hidden gems.",
+                     'thumbnail': 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?q=80&w=250&auto=format&fit=crop',
+                     'tracks': discover_tracks
+                }
+            ]
+            
+            self.wfile.write(json.dumps(mixes).encode('utf-8'))
+            return
+
+        elif path == '/api/related-videos':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            
+            title = query_params.get('title', [''])[0].strip()
+            artist = query_params.get('artist', [''])[0].strip()
+            
+            videos = []
+            if title:
+                try:
+                    search_query = f"{title} {artist} official music video"
+                    yt_videos = ytmusic.search(search_query, filter="videos", limit=5)
+                    for v in yt_videos:
+                        v_artists = ", ".join([a['name'] for a in v.get('artists', [])]) if v.get('artists') else 'YouTube'
+                        v_thumb = v.get('thumbnails', [{}])[-1].get('url', '') if v.get('thumbnails') else ''
+                        videos.append({
+                            'id': v.get('videoId'),
+                            'title': v.get('title'),
+                            'artist': v_artists,
+                            'thumbnail': v_thumb,
+                            'duration': v.get('duration') or '4:00',
+                            'views': v.get('views', '1M views')
+                        })
+                except Exception as e:
+                    print("Failed to fetch related videos:", e)
+            
+            self.wfile.write(json.dumps(videos).encode('utf-8'))
+            return
+
         elif path == '/api/album':
             album_id = query_params.get('id', [''])[0].strip()
             platform = query_params.get('platform', [''])[0].strip()
@@ -1634,7 +1878,31 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
 
-        if path == '/api/settings':
+        if path == '/api/history':
+            try:
+                data = json.loads(post_data)
+                history = read_history()
+                
+                # Remove prior entries of the same item ID to bubble it to the top of recents
+                item_id = data.get('id')
+                if item_id:
+                    history = [h for h in history if h.get('id') != item_id]
+                
+                import time
+                data['timestamp'] = int(time.time())
+                history.insert(0, data)
+                
+                # Cap history log length
+                history = history[:200]
+                
+                write_history(history)
+                self.wfile.write(b'{"success": true}')
+            except Exception as e:
+                print("Failed to save history:", e)
+                self.wfile.write(f'{{"success": false, "error": "{str(e)}"}}'.encode('utf-8'))
+            return
+
+        elif path == '/api/settings':
             try:
                 data = json.loads(post_data)
                 config = read_config()
