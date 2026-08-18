@@ -35,6 +35,9 @@ class MainActivity : AppCompatActivity() {
             e.printStackTrace()
         }
 
+        // Start Android foreground playback service
+        MediaPlaybackService.start(this)
+
         // Initialize Python runtime inside Android context
         if (!Python.isStarted()) {
             Python.start(AndroidPlatform(this))
@@ -106,6 +109,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onPause() {
+        super.onPause()
+        // Prevent WebView from freezing audio/timers when minimized
+        webView.resumeTimers()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Prevent WebView from freezing audio/timers when screen turns off
+        webView.resumeTimers()
+    }
+
     override fun onBackPressed() {
         if (webView.canGoBack()) {
             webView.goBack()
@@ -120,6 +135,7 @@ class MainActivity : AppCompatActivity() {
             if (wakeLock?.isHeld == true) {
                 wakeLock?.release()
             }
+            MediaPlaybackService.stop(this)
         } catch (e: Exception) {
             e.printStackTrace()
         }

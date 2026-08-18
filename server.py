@@ -1643,8 +1643,8 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                                     'albumName': t.get('album', {}).get('name')
                                 })
                                 
-                            # Get Albums
-                            albums_url = f"https://api.spotify.com/v1/artists/{artist_id}/albums?limit=10&include_groups=album,single"
+                            # Get Albums (up to 50 albums & singles)
+                            albums_url = f"https://api.spotify.com/v1/artists/{artist_id}/albums?limit=50&include_groups=album,single"
                             req_al = urllib.request.Request(albums_url, headers={'Authorization': f'Bearer {token}'})
                             with urllib.request.urlopen(req_al) as res_al:
                                 albums_data = json.loads(res_al.read().decode('utf-8'))
@@ -1751,7 +1751,8 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             # 2. YOUTUBE MUSIC
             elif platform == 'youtube':
                 try:
-                    if not artist_id and name:
+                    is_yt_id = artist_id and (artist_id.startswith('UC') or artist_id.startswith('FE') or artist_id.startswith('MP'))
+                    if not is_yt_id and name:
                         # Search for artist first
                         search_results = ytmusic.search(name, filter="artists", limit=1)
                         if search_results:
@@ -1843,11 +1844,12 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                         song['title'] = re.sub(r'soundcloud|official audio|remix', '', song['title'], flags=re.I).strip()
                         tracks.append(song)
                         
+                    thumb = tracks[0].get('thumbnail', '') if tracks else ''
                     res_obj = {
                         'name': name,
-                        'thumbnail': '',
+                        'thumbnail': thumb,
                         'platform': 'soundcloud',
-                        'followers': '',
+                        'followers': 'SoundCloud Artist',
                         'description': 'SoundCloud proxy tracks via YouTube search',
                         'tracks': tracks,
                         'albums': []

@@ -1803,9 +1803,9 @@ input[type="range"]::-webkit-slider-thumb:hover {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(8px);
-  z-index: 100;
+  z-index: 2500 !important; /* Higher than full screen sheets (1000) and lyrics (1050) */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1817,6 +1817,26 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .modal-overlay.active {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* Active Control Buttons (Shuffle, Repeat, Favorite) */
+.control-btn.active,
+.mobile-np-controls .control-btn.active {
+  color: var(--accent-color) !important;
+  filter: drop-shadow(0 0 8px var(--neon-glow-color, rgba(var(--accent-rgb), 0.6))) !important;
+}
+
+.control-btn.repeat-one svg,
+.mobile-np-controls .control-btn.repeat-one svg {
+  color: var(--accent-color) !important;
+}
+
+#btnMobileNpFavorite.active svg,
+#btnAddToFavorites.active svg {
+  fill: var(--accent-color) !important;
+  color: var(--accent-color) !important;
+  stroke: var(--accent-color) !important;
+  filter: drop-shadow(0 0 8px var(--neon-glow-color, rgba(var(--accent-rgb), 0.6))) !important;
 }
 
 .modal-card {

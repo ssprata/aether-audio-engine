@@ -938,22 +938,29 @@ function setupEventListeners() {
     showToast(state.shuffle ? 'Shuffle enabled' : 'Shuffle disabled');
   });
 
-  document.getElementById('btnRepeat').addEventListener('click', (e) => {
-    const btn = e.currentTarget;
+  document.getElementById('btnRepeat').addEventListener('click', () => {
     if (state.repeat === 'none') {
       state.repeat = 'all';
-      btn.classList.add('active');
       showToast('Repeat all');
     } else if (state.repeat === 'all') {
       state.repeat = 'one';
-      btn.style.color = 'var(--accent-color)';
       showToast('Repeat one');
     } else {
       state.repeat = 'none';
-      btn.classList.remove('active');
-      btn.style.color = '';
       showToast('Repeat disabled');
     }
+    updateRepeatUI();
+  });
+
+  // Artist Platform chips click handler
+  document.querySelectorAll('[data-artist-platform]').forEach(chip => {
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const targetPlatform = chip.getAttribute('data-artist-platform');
+      if (state.tempArtist && state.tempArtist.name) {
+        openArtistProfile(state.tempArtist.name, targetPlatform, null);
+      }
+    });
   });
 
   // Volume slider control
@@ -1990,6 +1997,8 @@ function playSong(song, index) {
 
   // Sync right-side detail sidebar
   updateRightSidebar(song);
+  updateFavoriteUI(song);
+  updateRepeatUI();
 
   // Update UI Player Details
   document.getElementById('playerSongTitle').textContent = song.title;
@@ -2379,6 +2388,47 @@ function updatePlayButtonUI(isPlaying) {
       navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
     } catch (e) { }
   }
+}
+
+function updateRepeatUI() {
+  const desktopBtn = document.getElementById('btnRepeat');
+  const mobileBtn = document.getElementById('btnMobileNpRepeat');
+  
+  if (state.repeat === 'none') {
+    if (desktopBtn) {
+      desktopBtn.classList.remove('active');
+      desktopBtn.style.color = '';
+    }
+    if (mobileBtn) {
+      mobileBtn.classList.remove('active', 'repeat-one');
+    }
+  } else if (state.repeat === 'all') {
+    if (desktopBtn) {
+      desktopBtn.classList.add('active');
+      desktopBtn.style.color = 'var(--accent-color)';
+    }
+    if (mobileBtn) {
+      mobileBtn.classList.add('active');
+      mobileBtn.classList.remove('repeat-one');
+    }
+  } else if (state.repeat === 'one') {
+    if (desktopBtn) {
+      desktopBtn.classList.add('active');
+      desktopBtn.style.color = 'var(--accent-color)';
+    }
+    if (mobileBtn) {
+      mobileBtn.classList.add('active', 'repeat-one');
+    }
+  }
+}
+
+function updateFavoriteUI(song) {
+  if (!song) return;
+  const isFav = state.playlists.some(p => p.songs && p.songs.some(s => s.id === song.id));
+  const favBtn = document.getElementById('btnAddToFavorites');
+  const mobileFavBtn = document.getElementById('btnMobileNpFavorite');
+  if (favBtn) favBtn.classList.toggle('active', isFav);
+  if (mobileFavBtn) mobileFavBtn.classList.toggle('active', isFav);
 }
 
 function openMobileNowPlaying() {
