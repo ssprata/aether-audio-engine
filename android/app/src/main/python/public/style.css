@@ -2410,13 +2410,19 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 @media (max-width: 768px) {
-  .app-container {
+  .app-container,
+  .app-container.sidebar-left.player-bottom,
+  .app-container.sidebar-right.player-bottom,
+  .app-container.sidebar-left.player-top,
+  .app-container.sidebar-right.player-top {
     grid-template-areas: 
       "header"
       "main"
       "player" !important;
     grid-template-columns: 1fr !important;
     grid-template-rows: 70px 1fr 95px !important;
+    width: 100vw !important;
+    max-width: 100vw !important;
   }
   
   .app-sidebar {
@@ -2444,7 +2450,21 @@ input[type="range"]::-webkit-slider-thumb:hover {
   }
   
   .app-main-content {
-    padding: 20px 16px 80px 16px !important;
+    padding: 20px 16px 100px 16px !important;
+    width: 100% !important;
+  }
+
+  .quick-recents-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  
+  .home-card {
+    width: 140px;
+    padding: 8px;
+  }
+  
+  .home-card-title {
+    font-size: 0.8rem;
   }
   
   .header-center {
@@ -2981,10 +3001,8 @@ input[type="range"]::-webkit-slider-thumb:hover {
   transform: scale(0.96);
 }
 
-/* ==========================================================================
-   MOBILE & TABLET RESPONSIVE OVERRIDES
-   ========================================================================== */
-@media (max-width: 1024px) {
+/* Tablet overrides strictly between 769px and 1024px */
+@media (min-width: 769px) and (max-width: 1024px) {
   /* Collapse right sidebar and span layout main area over it */
   .app-container.sidebar-left.player-bottom,
   .app-container.sidebar-right.player-bottom {
@@ -3006,29 +3024,6 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
   .app-right-sidebar {
     display: none !important;
-  }
-}
-
-@media (max-width: 768px) {
-  .app-container {
-    grid-template-columns: 1fr !important;
-    grid-template-areas: 
-      "header"
-      "main"
-      "player" !important;
-  }
-
-  .quick-recents-grid {
-    grid-template-columns: repeat(2, 1fr) !important;
-  }
-  
-  .home-card {
-    width: 140px;
-    padding: 8px;
-  }
-  
-  .home-card-title {
-    font-size: 0.8rem;
   }
 }
 
