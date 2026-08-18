@@ -865,12 +865,18 @@
         </button>
       </div>
 
-      <!-- Action Chips Row: Lyrics -->
-      <div class="mobile-np-actions-row">
-        <button class="mobile-np-pill-btn" id="btnMobileNpLyrics">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v1a7 7 0 0 1-14 0v-1"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
-          <span>Lyrics</span>
-        </button>
+      <!-- Spotify-Style Embedded Lyrics Card -->
+      <div class="mobile-np-lyrics-card" id="mobileNpLyricsCard">
+        <div class="mobile-np-lyrics-header">
+          <span class="mobile-np-lyrics-title">Lyrics</span>
+          <button class="mobile-np-lyrics-expand-btn" id="btnExpandLyricsModal" title="Full screen lyrics">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+          </button>
+        </div>
+        <div class="mobile-np-lyrics-preview" id="mobileNpLyricsPreview">
+          <div class="mobile-np-lyrics-line current" id="mobileNpLyricsCurrentLine">Start playing a song to view lyrics</div>
+          <div class="mobile-np-lyrics-line next" id="mobileNpLyricsNextLine"></div>
+        </div>
       </div>
 
       <!-- About the Artist Spotify Card on Mobile -->

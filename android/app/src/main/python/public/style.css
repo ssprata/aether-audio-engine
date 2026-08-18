@@ -2533,6 +2533,223 @@ input[type="range"]::-webkit-slider-thumb:hover {
     font-size: 0.8rem;
   }
 
+  /* Compact Spotify-style Search Results on Mobile */
+  #searchResultsGrid {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 6px !important;
+  }
+
+  #searchResultsGrid .song-card {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    padding: 8px 10px !important;
+    gap: 12px !important;
+    border-radius: 8px !important;
+    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid rgba(255, 255, 255, 0.04) !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    height: auto !important;
+  }
+
+  #searchResultsGrid .song-card:hover {
+    background: rgba(255, 255, 255, 0.07) !important;
+    transform: none !important;
+  }
+
+  #searchResultsGrid .song-card-img-wrapper {
+    width: 48px !important;
+    height: 48px !important;
+    min-width: 48px !important;
+    max-width: 48px !important;
+    aspect-ratio: 1 / 1 !important;
+    border-radius: 6px !important;
+    overflow: hidden !important;
+    margin-bottom: 0 !important;
+    flex-shrink: 0 !important;
+  }
+
+  #searchResultsGrid .song-card-img-wrapper img {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+  }
+
+  #searchResultsGrid .song-card-play-btn {
+    display: none !important;
+  }
+
+  #searchResultsGrid .song-card-info {
+    flex: 1 !important;
+    overflow: hidden !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+    text-align: left !important;
+  }
+
+  #searchResultsGrid .song-card-title {
+    font-size: 0.9rem !important;
+    font-weight: 600 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    margin: 0 !important;
+  }
+
+  #searchResultsGrid .song-card-artist {
+    font-size: 0.75rem !important;
+    color: var(--text-secondary) !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    margin: 0 !important;
+  }
+
+  #searchResultsGrid .song-card-footer {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+    border-top: none !important;
+    flex-shrink: 0 !important;
+  }
+
+  #searchResultsGrid .song-card-badge {
+    font-size: 0.65rem !important;
+    padding: 2px 6px !important;
+  }
+
+  #searchResultsGrid .song-card-add-btn {
+    width: 32px !important;
+    height: 32px !important;
+    padding: 6px !important;
+  }
+
+  #searchAlbumsGrid,
+  #searchArtistsGrid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px !important;
+  }
+
+  /* Compact Playlist Detail & Album Detail View on Mobile */
+  .playlist-banner {
+    flex-direction: column !important;
+    align-items: center !important;
+    text-align: center !important;
+    gap: 16px !important;
+    margin-bottom: 20px !important;
+  }
+
+  .playlist-img-placeholder {
+    width: 130px !important;
+    height: 130px !important;
+    border-radius: 12px !important;
+  }
+
+  .playlist-info h1 {
+    font-size: 1.6rem !important;
+    text-align: center !important;
+  }
+
+  .playlist-info p {
+    font-size: 0.85rem !important;
+    margin-bottom: 14px !important;
+  }
+
+  .playlist-actions {
+    justify-content: center !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+
+  .playlist-actions .btn {
+    padding: 8px 16px !important;
+    font-size: 0.85rem !important;
+  }
+
+  .songs-table-header {
+    display: none !important;
+  }
+
+  .song-row {
+    display: flex !important;
+    align-items: center !important;
+    padding: 10px 8px !important;
+    gap: 10px !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04) !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .col-num {
+    display: none !important;
+  }
+
+  .col-title {
+    flex: 1 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+  }
+
+  .col-title img {
+    width: 42px !important;
+    height: 42px !important;
+    min-width: 42px !important;
+    border-radius: 6px !important;
+    object-fit: cover !important;
+  }
+
+  .song-col-text {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+    overflow: hidden !important;
+    text-align: left !important;
+  }
+
+  .song-col-title {
+    font-size: 0.88rem !important;
+    font-weight: 600 !important;
+    color: var(--text-color) !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .song-col-artist {
+    font-size: 0.75rem !important;
+    color: var(--text-secondary) !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .col-artist {
+    display: none !important;
+  }
+
+  .col-source {
+    display: none !important;
+  }
+
+  .col-duration {
+    font-size: 0.75rem !important;
+    color: var(--text-secondary) !important;
+    margin-right: 4px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .col-actions {
+    flex-shrink: 0 !important;
+  }
+
   /* Fixed Mobile Bottom Navigation Bar (5 Icons) */
   .mobile-bottom-nav {
     display: flex !important;
@@ -2675,6 +2892,20 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
   .mobile-now-playing-modal.active {
     transform: translateY(0);
+  }
+
+  .mobile-now-playing-modal button,
+  .mobile-now-playing-modal .icon-btn,
+  .mobile-now-playing-modal .control-btn,
+  .mobile-now-playing-modal .play-btn,
+  .mobile-now-playing-modal .mobile-np-cover-wrapper,
+  .mobile-now-playing-modal .mobile-np-lyrics-card,
+  .mobile-now-playing-modal .timeline-slider {
+    pointer-events: auto !important;
+    position: relative !important;
+    z-index: 10 !important;
+    cursor: pointer !important;
+    -webkit-tap-highlight-color: transparent !important;
   }
 
   .mobile-np-header {
@@ -2821,37 +3052,70 @@ input[type="range"]::-webkit-slider-thumb:hover {
     height: 26px !important;
   }
 
-  .mobile-np-actions-row {
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 12px;
-    margin-top: 2px;
+  /* Spotify-Style Lyrics Card */
+  .mobile-np-lyrics-card {
+    background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.28) 0%, rgba(20, 16, 32, 0.7) 100%) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-radius: 16px !important;
+    padding: 16px 18px !important;
+    margin-top: 6px !important;
+    cursor: pointer !important;
+    transition: transform 0.2s ease, background 0.2s ease !important;
   }
 
-  .mobile-np-pill-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid var(--glass-border);
-    border-radius: 500px;
-    padding: 8px 16px;
-    color: var(--text-color);
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
+  .mobile-np-lyrics-card:hover {
+    transform: scale(1.01) !important;
+    background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.35) 0%, rgba(20, 16, 32, 0.8) 100%) !important;
   }
 
-  .mobile-np-pill-btn:hover {
-    background: rgba(255, 255, 255, 0.15);
-    transform: scale(1.03);
+  .mobile-np-lyrics-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    margin-bottom: 8px !important;
   }
 
-  .mobile-np-pill-btn svg {
-    width: 16px;
-    height: 16px;
+  .mobile-np-lyrics-title {
+    font-size: 0.95rem !important;
+    font-weight: 700 !important;
+    color: var(--text-color) !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+  }
+
+  .mobile-np-lyrics-expand-btn {
+    background: transparent !important;
+    border: none !important;
+    color: var(--text-secondary) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+  }
+
+  .mobile-np-lyrics-expand-btn svg {
+    width: 16px !important;
+    height: 16px !important;
+  }
+
+  .mobile-np-lyrics-preview {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 6px !important;
+  }
+
+  .mobile-np-lyrics-line.current {
+    font-size: 1.15rem !important;
+    font-weight: 700 !important;
+    color: #ffffff !important;
+    line-height: 1.35 !important;
+  }
+
+  .mobile-np-lyrics-line.next {
+    font-size: 0.95rem !important;
+    font-weight: 500 !important;
+    color: rgba(255, 255, 255, 0.5) !important;
+    line-height: 1.35 !important;
   }
 
   .mobile-np-artist-card {

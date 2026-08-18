@@ -1006,37 +1006,69 @@ function setupEventListeners() {
   // Mobile Now Playing Sheet close button
   const btnCloseNp = document.getElementById('btnCloseMobileNowPlaying');
   if (btnCloseNp) {
-    btnCloseNp.addEventListener('click', closeMobileNowPlaying);
+    btnCloseNp.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeMobileNowPlaying();
+    });
   }
 
   // Mobile Now Playing Controls
-  document.getElementById('btnMobileNpPlayPause')?.addEventListener('click', togglePlayPause);
-  document.getElementById('btnMobileNpNext')?.addEventListener('click', playNext);
-  document.getElementById('btnMobileNpPrev')?.addEventListener('click', playPrev);
-  document.getElementById('btnMobileNpShuffle')?.addEventListener('click', () => {
-    document.getElementById('btnShuffle')?.click();
-    document.getElementById('btnMobileNpShuffle')?.classList.toggle('active', state.shuffle);
+  document.getElementById('btnMobileNpPlayPause')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    togglePlayPause();
   });
-  document.getElementById('btnMobileNpRepeat')?.addEventListener('click', () => {
+  document.getElementById('btnMobileNpNext')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    playNext();
+  });
+  document.getElementById('btnMobileNpPrev')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    playPrev();
+  });
+  document.getElementById('btnMobileNpShuffle')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    state.shuffle = !state.shuffle;
+    document.getElementById('btnShuffle')?.classList.toggle('active', state.shuffle);
+    document.getElementById('btnMobileNpShuffle')?.classList.toggle('active', state.shuffle);
+    showToast(state.shuffle ? 'Shuffle enabled' : 'Shuffle disabled');
+  });
+  document.getElementById('btnMobileNpRepeat')?.addEventListener('click', (e) => {
+    e.stopPropagation();
     document.getElementById('btnRepeat')?.click();
   });
-  document.getElementById('btnMobileNpFavorite')?.addEventListener('click', () => {
-    document.getElementById('btnAddToFavorites')?.click();
+  document.getElementById('btnMobileNpFavorite')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (state.currentSong) openPlaylistSelectModal(state.currentSong);
   });
-  document.getElementById('btnMobileNpLyrics')?.addEventListener('click', () => {
-    document.getElementById('btnToggleLyrics')?.click();
+  document.getElementById('mobileNpLyricsCard')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    state.lyricsMode = 1;
+    const drawer = document.getElementById('lyricsDrawer');
+    if (drawer) drawer.classList.add('active');
+    if (state.currentSong) fetchLyricsForTrack(state.currentSong);
     closeMobileNowPlaying();
   });
-  document.getElementById('btnMobileNpFollowArtist')?.addEventListener('click', () => {
+  document.getElementById('btnExpandLyricsModal')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    state.lyricsMode = 1;
+    const drawer = document.getElementById('lyricsDrawer');
+    if (drawer) drawer.classList.add('active');
+    if (state.currentSong) fetchLyricsForTrack(state.currentSong);
+    closeMobileNowPlaying();
+  });
+  document.getElementById('btnMobileNpFollowArtist')?.addEventListener('click', (e) => {
+    e.stopPropagation();
     document.getElementById('btnFollowArtist')?.click();
   });
-  document.getElementById('mobileNpCoverWrapper')?.addEventListener('click', () => {
+  document.getElementById('mobileNpCoverWrapper')?.addEventListener('click', (e) => {
+    e.stopPropagation();
     if (state.currentSong) {
       goToAlbumOfSong(state.currentSong);
       closeMobileNowPlaying();
     }
   });
-  document.getElementById('mobileNpArtist')?.addEventListener('click', () => {
+  document.getElementById('mobileNpArtist')?.addEventListener('click', (e) => {
+    e.stopPropagation();
     if (state.currentSong && state.currentSong.artist) {
       openArtistProfile(state.currentSong.artist, state.currentSong.platform || 'youtube');
       closeMobileNowPlaying();
@@ -1045,6 +1077,7 @@ function setupEventListeners() {
 
   // Mobile timeline scrubber
   document.getElementById('mobileNpTimeline')?.addEventListener('input', (e) => {
+    e.stopPropagation();
     const pct = parseFloat(e.target.value) / 100;
     const seekSecs = pct * state.duration;
     document.getElementById('mobileNpCurrentTime').textContent = formatSeconds(seekSecs);
@@ -1052,6 +1085,7 @@ function setupEventListeners() {
     updateLyricsHighlight(seekSecs);
   });
   document.getElementById('mobileNpTimeline')?.addEventListener('change', (e) => {
+    e.stopPropagation();
     const pct = parseFloat(e.target.value) / 100;
     seekToPercentage(pct);
   });
@@ -1808,7 +1842,10 @@ function openPlaylistDetails(playlistId) {
     colTitle.className = 'col-title';
     colTitle.innerHTML = `
       <img src="${song.thumbnail || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=200&auto=format&fit=crop'}" alt="Thumb">
-      <span title="${song.title}">${song.title}</span>
+      <div class="song-col-text">
+        <div class="song-col-title" title="${song.title}">${song.title}</div>
+        <div class="song-col-artist clickable-artist">${song.artist || 'Unknown'}</div>
+      </div>
     `;
 
     const colArtist = document.createElement('div');
@@ -1999,15 +2036,9 @@ function playSong(song, index) {
     }
   }
 
-  // Reset lyrics index and trigger fetch if lyrics panel is open
+  // Reset lyrics index and trigger fetch for lyrics box
   activeLyricIndex = -1;
-  if (state.lyricsOpen) {
-    fetchLyricsForTrack(song);
-  } else {
-    document.getElementById('lyricsDrawerBody').innerHTML = '<div class="lyrics-placeholder">Start playing a song to view lyrics</div>';
-    state.lyrics = null;
-    state.lyricsSynced = false;
-  }
+  fetchLyricsForTrack(song);
 
   // Initialize playback depending on platform source
   if (song.platform === 'youtube' || song.isFallback) {
@@ -2445,6 +2476,41 @@ function renderSyncedLyrics(lyricsArray) {
 
 let activeLyricIndex = -1;
 function updateLyricsHighlight(currentTime) {
+  // 1. Update Mobile Embedded Spotify Lyrics Card
+  const mobileCurrent = document.getElementById('mobileNpLyricsCurrentLine');
+  const mobileNext = document.getElementById('mobileNpLyricsNextLine');
+  if (mobileCurrent) {
+    if (state.lyrics && state.lyricsSynced && Array.isArray(state.lyrics)) {
+      const lines = state.lyrics;
+      let activeIndex = -1;
+      const adjustedTime = currentTime + 0.35;
+      for (let i = 0; i < lines.length; i++) {
+        if (adjustedTime >= lines[i].time) {
+          activeIndex = i;
+        } else {
+          break;
+        }
+      }
+      if (activeIndex !== -1) {
+        mobileCurrent.textContent = lines[activeIndex].text || '• • •';
+        if (mobileNext) {
+          mobileNext.textContent = (lines[activeIndex + 1] ? lines[activeIndex + 1].text : '');
+        }
+      } else {
+        mobileCurrent.textContent = lines[0] ? lines[0].text : '• • •';
+        if (mobileNext) mobileNext.textContent = lines[1] ? lines[1].text : '';
+      }
+    } else if (state.lyrics && typeof state.lyrics === 'string') {
+      const firstLine = state.lyrics.split('\n').filter(l => l.trim())[0];
+      mobileCurrent.textContent = firstLine || 'Plain lyrics available';
+      if (mobileNext) mobileNext.textContent = 'Tap card to expand full lyrics';
+    } else {
+      mobileCurrent.textContent = state.currentSong ? "Lyrics aren't available for this song" : "Start playing a song to view lyrics";
+      if (mobileNext) mobileNext.textContent = '';
+    }
+  }
+
+  // 2. Update Synced Lyrics Drawer if open
   if (state.lyricsOpen && state.lyricsSynced && state.lyrics) {
     const lines = state.lyrics;
     let activeIndex = -1;
@@ -2474,7 +2540,7 @@ function updateLyricsHighlight(currentTime) {
         }
       });
 
-      // 2. Slide live widget scroll container
+      // 2. Scroll live lyrics widget
       const liveContainer = document.getElementById('liveLyricsScrollContainer');
       if (liveContainer && liveContainer.children.length > 2) {
         // Reset classes on all children
@@ -2902,7 +2968,10 @@ async function openAlbumDetails(albumId, platform) {
         const colTitle = document.createElement('div');
         colTitle.className = 'col-title';
         colTitle.innerHTML = `
-          <span title="${song.title}" style="margin-left: 0;">${song.title}</span>
+          <div class="song-col-text">
+            <div class="song-col-title" title="${song.title}">${song.title}</div>
+            <div class="song-col-artist clickable-artist">${song.artist || 'Unknown'}</div>
+          </div>
         `;
         
         const colArtist = document.createElement('div');
