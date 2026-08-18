@@ -31,20 +31,7 @@ jobs:
 
     - name: Build with Gradle
       run: |
-        # Create a temp directory completely outside the workspace to avoid settings.gradle lookup
-        mkdir -p ${{ github.workspace }}/../temp_gradle
-        cd ${{ github.workspace }}/../temp_gradle
-        gradle wrapper --gradle-version 8.2
-        
-        # Copy wrapper files into the android directory
-        cp -r gradlew gradlew.bat gradle ${{ github.workspace }}/android/
-        
-        # Clean up temp directory
-        cd ${{ github.workspace }}
-        rm -rf ${{ github.workspace }}/../temp_gradle
-        
-        # Build using the Gradle wrapper
-        cd ${{ github.workspace }}/android
+        cd android
         chmod +x gradlew
         ./gradlew assembleDebug
 
