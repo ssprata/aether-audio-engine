@@ -13,16 +13,6 @@
         "platform": "youtube"
       },
       {
-        "id": "7McUjhQct1w",
-        "title": "Tren Twins x Lexx Little x Stef Meyers - Agony By ANIZYZ - We go Gym - Tren Twins (Hardstyle)",
-        "artist": "AlexTheLegacy",
-        "duration": "2:39",
-        "thumbnail": "https://i.ytimg.com/vi/7McUjhQct1w/hq720.jpg?sqp=-oaymwE2COgCEMoBSFXyq4qpAygIARUAAIhCGAFwAcABBvABAfgB_gmAAtAFigIMCAAQARhlIEooQzAP&rs=AOn4CLDnpjjFpSluirOquR6pwga5uRoMlw",
-        "url": "https://www.youtube.com/watch?v=7McUjhQct1w",
-        "platform": "soundcloud",
-        "isFallback": true
-      },
-      {
         "id": "ykTOOB1kKP4",
         "title": "lielessx - ᅠ",
         "artist": "Remory",
@@ -79,6 +69,28 @@
         "url": "https://open.spotify.com/track/6IZvVAP7VPPnsGX6bvgkqg",
         "platform": "spotify",
         "previewUrl": null
+      },
+      {
+        "id": "UodMXdT4VwQ",
+        "title": "teeth (you)",
+        "artist": "re6ce",
+        "duration": "2:03",
+        "thumbnail": "https://i.ytimg.com/vi/UodMXdT4VwQ/hq720.jpg?sqp=-oaymwEKCNUGEN8DIABIWg&rs=AMzJL3lA3Xv59b9zRQmZWs50q78v3HvfSQ",
+        "url": "https://music.youtube.com/watch?v=UodMXdT4VwQ",
+        "platform": "youtube",
+        "albumId": null,
+        "albumName": null
+      },
+      {
+        "id": "QRGdl3bw0LE",
+        "title": "let me go",
+        "artist": "otuka",
+        "duration": "2:22",
+        "thumbnail": "https://i.ytimg.com/vi/QRGdl3bw0LE/hq720.jpg?sqp=-oaymwEKCNUGEN8DIABIWg&rs=AMzJL3lr8aOO3Z-Y3WY0C0FWYgJvXqSpuQ",
+        "url": "https://music.youtube.com/watch?v=QRGdl3bw0LE",
+        "platform": "youtube",
+        "albumId": null,
+        "albumName": null
       }
     ],
     "createdAt": "8/8/2026",

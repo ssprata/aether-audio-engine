@@ -43,7 +43,7 @@
     <!-- TOP HEADER: Brand, Search & User Profile -->
     <header class="app-header">
       <div class="header-left">
-        <div class="brand">
+        <div class="brand" id="brandLogoBtn" role="button" tabindex="0" title="Go to Home" style="cursor: pointer;">
           <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
             <path d="M9 18V5l12-2v13"></path>
             <circle cx="6" cy="18" r="3"></circle>
@@ -662,25 +662,24 @@
           </div>
         </div>
 
-        <!-- Related Music Videos -->
-        <div class="right-section" id="relatedVideosSection" style="display: none;">
-          <h4>Related Music Videos</h4>
-          <div class="related-videos-list" id="relatedVideosList">
-            <!-- Dynamic video items serve here -->
-          </div>
-        </div>
-
         <!-- About the Artist -->
         <div class="right-section" id="aboutArtistSection" style="display: none;">
-          <h4>About the Artist</h4>
           <div class="about-artist-card">
-            <div class="about-artist-avatar-wrapper">
+            <div class="about-artist-avatar-wrapper" style="position: relative;">
               <img src="" id="aboutArtistAvatarImg" alt="Artist Avatar">
+              <span class="about-artist-overlay-title">About the artist</span>
             </div>
             <div class="about-artist-details">
-              <h5 id="aboutArtistNameText">Artist Name</h5>
-              <p class="about-artist-followers" id="aboutArtistFollowersText">Subscribers</p>
-              <p class="about-artist-bio" id="aboutArtistBioText">Artist Bio</p>
+              <div class="about-artist-name-row" style="display: flex; align-items: center; gap: 6px;">
+                <h5 id="aboutArtistNameText" style="margin: 0;">Artist Name</h5>
+                <svg class="verified-badge" viewBox="0 0 24 24" fill="currentColor" style="width: 16px; height: 16px; color: #3d91f4;" id="artistVerifiedBadge">
+                  <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                </svg>
+              </div>
+              <div class="about-artist-stats-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+                <p class="about-artist-followers" id="aboutArtistFollowersText" style="margin: 0;">Subscribers</p>
+                <button class="about-artist-follow-btn" id="btnFollowArtist">Follow</button>
+              </div>
             </div>
           </div>
         </div>
@@ -746,6 +745,13 @@
         <!-- Platform badge indicator -->
         <span class="player-platform-badge" id="playerPlatformBadge" style="display: none;">youtube</span>
         
+        <button class="control-btn" id="btnToggleRightSidebar" title="Toggle Track Details">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="15" y1="3" x2="15" y2="21"></line>
+          </svg>
+        </button>
+
         <div class="volume-container">
           <button class="control-btn" id="btnMute" title="Mute/Unmute">
             <svg id="volumeOnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>

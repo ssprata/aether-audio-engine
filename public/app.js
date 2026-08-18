@@ -1068,12 +1068,74 @@ function setupEventListeners() {
 
   // Click current playing song title in player bar to go to the album
   document.getElementById('playerSongTitle').addEventListener('click', () => {
-    if (state.currentSong && state.currentSong.albumId) {
-      openAlbumDetails(state.currentSong.albumId, state.currentSong.platform);
-    } else {
-      showToast('Album information not available for this song');
+    if (state.currentSong) {
+      goToAlbumOfSong(state.currentSong);
     }
   });
+
+  // Click AetherPlayer brand logo to go back to Home
+  const brandLogo = document.getElementById('brandLogoBtn');
+  if (brandLogo) {
+    brandLogo.addEventListener('click', () => {
+      switchTab('home');
+    });
+  }
+
+  // Click player album art to go to the album
+  const playerArt = document.getElementById('playerAlbumArt');
+  if (playerArt) {
+    playerArt.addEventListener('click', () => {
+      if (state.currentSong) {
+        goToAlbumOfSong(state.currentSong);
+      }
+    });
+  }
+
+  // Click right panel album art to go to the album
+  const rightArt = document.getElementById('rightAlbumArtImg');
+  if (rightArt) {
+    rightArt.addEventListener('click', () => {
+      if (state.currentSong) {
+        goToAlbumOfSong(state.currentSong);
+      }
+    });
+  }
+
+  // Toggle Right Sidebar (Track Details) panel
+  const toggleRightSidebarBtn = document.getElementById('btnToggleRightSidebar');
+  const closeRightSidebarBtn = document.getElementById('btnCloseRightSidebar');
+  
+  if (toggleRightSidebarBtn) {
+    // Initial active state setup
+    const isCollapsed = localStorage.getItem('rightSidebarCollapsed') === 'true';
+    const container = document.getElementById('appContainer');
+    if (isCollapsed) {
+      container.classList.add('right-sidebar-collapsed');
+      toggleRightSidebarBtn.classList.remove('active');
+    } else {
+      container.classList.remove('right-sidebar-collapsed');
+      toggleRightSidebarBtn.classList.add('active');
+    }
+
+    toggleRightSidebarBtn.addEventListener('click', () => {
+      container.classList.toggle('right-sidebar-collapsed');
+      const collapsedNow = container.classList.contains('right-sidebar-collapsed');
+      localStorage.setItem('rightSidebarCollapsed', collapsedNow);
+      toggleRightSidebarBtn.classList.toggle('active', !collapsedNow);
+    });
+  }
+
+  if (closeRightSidebarBtn) {
+    closeRightSidebarBtn.style.display = 'block'; // Make close button visible on panel header
+    closeRightSidebarBtn.addEventListener('click', () => {
+      const container = document.getElementById('appContainer');
+      container.classList.add('right-sidebar-collapsed');
+      localStorage.setItem('rightSidebarCollapsed', 'true');
+      if (toggleRightSidebarBtn) {
+        toggleRightSidebarBtn.classList.remove('active');
+      }
+    });
+  }
 }
 
 // --- DYNAMIC THEME SYSTEM IMPLEMENTATION ---
@@ -1097,10 +1159,14 @@ function applyCurrentTheme() {
 
   // Layout Styles
   const container = document.getElementById('appContainer');
+  const wasCollapsed = container.classList.contains('right-sidebar-collapsed') || localStorage.getItem('rightSidebarCollapsed') === 'true';
   // clear previous layouts
   container.className = 'app-container';
   container.classList.add(theme.sidebarLayout || 'sidebar-left');
   container.classList.add(theme.playerLayout || 'player-bottom');
+  if (wasCollapsed) {
+    container.classList.add('right-sidebar-collapsed');
+  }
 
   // Background
   const wrapper = document.getElementById('appBgWrapper');
@@ -2593,6 +2659,60 @@ function renderArtistsSearchResults(artists) {
   });
 }
 
+// --- ALBUM RESOLUTION HELPER ---
+async function goToAlbumOfSong(song) {
+  if (!song) return;
+  const albumId = song.albumId;
+  const platform = song.platform || 'youtube';
+
+  if (albumId) {
+    openAlbumDetails(albumId, platform);
+    return;
+  }
+
+  // Fallback: search for the track to retrieve its metadata (including albumId)
+  showToast("Finding album...");
+  try {
+    const q = `${song.title} ${song.artist || ''}`;
+    const response = await fetch(`/api/search?q=${encodeURIComponent(q)}&platform=${platform}&type=all`);
+    if (response.ok) {
+      const data = await response.json();
+      
+      // 1. Look in the tracks search results first
+      const tracks = data.tracks || [];
+      const matchingTrack = tracks.find(t => 
+        t.title.toLowerCase().includes(song.title.toLowerCase()) || 
+        song.title.toLowerCase().includes(t.title.toLowerCase())
+      ) || tracks[0];
+      
+      if (matchingTrack && matchingTrack.albumId) {
+        openAlbumDetails(matchingTrack.albumId, matchingTrack.platform || platform);
+        return;
+      }
+      
+      // 2. Fallback to albums matches, checking that the artist matches to avoid random albums
+      const albums = data.albums || [];
+      if (albums.length > 0) {
+        const artistMatch = albums.find(al => {
+          if (!song.artist) return true;
+          return al.artist.toLowerCase().includes(song.artist.toLowerCase()) || 
+                 song.artist.toLowerCase().includes(al.artist.toLowerCase());
+        });
+        const finalAlbum = artistMatch || albums[0];
+        openAlbumDetails(finalAlbum.id, finalAlbum.platform || platform);
+        return;
+      }
+      
+      showToast("No album found for this track");
+    } else {
+      showToast("Could not find album");
+    }
+  } catch (err) {
+    console.error("Failed to find album for song:", err);
+    showToast("Error searching for album");
+  }
+}
+
 // --- ALBUM DETAILS PAGE ---
 async function openAlbumDetails(albumId, platform) {
   switchTab('album-detail');
@@ -2874,7 +2994,6 @@ function logPlayHistory(song) {
 async function updateRightSidebar(song) {
   if (!song) {
     document.getElementById('rightNowPlayingSection').style.display = 'none';
-    document.getElementById('relatedVideosSection').style.display = 'none';
     document.getElementById('aboutArtistSection').style.display = 'none';
     return;
   }
@@ -2890,70 +3009,48 @@ async function updateRightSidebar(song) {
     document.getElementById('rightAlbumArtImg').style.display = 'none';
   }
 
-  // 2. Fetch Related Music Videos
-  const relatedList = document.getElementById('relatedVideosList');
-  const relatedSec = document.getElementById('relatedVideosSection');
-  relatedList.innerHTML = '<div class="spinner"></div>';
-  relatedSec.style.display = 'block';
-
-  try {
-    const res = await fetch(`/api/related-videos?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || '')}`);
-    if (res.ok) {
-      const videos = await res.json();
-      relatedList.innerHTML = '';
-      if (videos && videos.length > 0) {
-        videos.forEach(v => {
-          const row = document.createElement('div');
-          row.className = 'related-video-row';
-          row.innerHTML = `
-            <div class="related-video-thumb">
-              <img src="${v.thumbnail || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=150&auto=format&fit=crop'}" alt="Thumb">
-            </div>
-            <div class="related-video-info">
-              <div class="related-video-title">${v.title}</div>
-              <div class="related-video-channel">${v.artist} • ${v.duration}</div>
-            </div>
-          `;
-          row.addEventListener('click', () => {
-            const track = {
-              id: v.id,
-              title: v.title,
-              artist: v.artist,
-              thumbnail: v.thumbnail,
-              duration: v.duration,
-              url: `https://music.youtube.com/watch?v=${v.id}`,
-              platform: 'youtube'
-            };
-            playSong(track, -1);
-          });
-          relatedList.appendChild(row);
-        });
-      } else {
-        relatedList.innerHTML = '<div class="empty-state">No related videos found</div>';
-      }
-    } else {
-      relatedList.innerHTML = '<div class="empty-state">Error loading videos</div>';
-    }
-  } catch (e) {
-    console.error("Failed to load related videos:", e);
-    relatedList.innerHTML = '<div class="empty-state">Error loading videos</div>';
-  }
-
-  // 3. Fetch Artist Details for About the Artist Section
+  // 2. Fetch Artist Details for About the Artist Section
   const artistSec = document.getElementById('aboutArtistSection');
   if (song.artist) {
     artistSec.style.display = 'block';
     document.getElementById('aboutArtistNameText').textContent = song.artist;
     document.getElementById('aboutArtistFollowersText').textContent = 'Fetching profile...';
-    document.getElementById('aboutArtistBioText').textContent = '';
     document.getElementById('aboutArtistAvatarImg').src = '';
     
+    // Set follow button to initial state
+    const followBtn = document.getElementById('btnFollowArtist');
+    if (followBtn) {
+      followBtn.textContent = 'Follow';
+      followBtn.style.background = 'transparent';
+      followBtn.style.color = 'var(--text-color)';
+      
+      followBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (followBtn.textContent === 'Follow') {
+          followBtn.textContent = 'Following';
+          followBtn.style.background = 'var(--accent-color)';
+          followBtn.style.color = '#fff';
+          showToast(`Following ${song.artist || 'Artist'}`);
+        } else {
+          followBtn.textContent = 'Follow';
+          followBtn.style.background = 'transparent';
+          followBtn.style.color = 'var(--text-color)';
+        }
+      };
+    }
+
     try {
       const artistRes = await fetch(`/api/artist?name=${encodeURIComponent(song.artist)}&platform=${song.platform || 'youtube'}`);
       if (artistRes.ok) {
         const artist = await artistRes.json();
         document.getElementById('aboutArtistFollowersText').textContent = artist.followers || 'Artist Profile';
-        document.getElementById('aboutArtistBioText').textContent = artist.description || 'No biography details available.';
+        
+        // Show verified badge for Spotify platform
+        const badge = document.getElementById('artistVerifiedBadge');
+        if (badge) {
+          badge.style.display = (artist.platform === 'spotify' || song.platform === 'spotify') ? 'inline-block' : 'none';
+        }
+
         if (artist.thumbnail) {
           document.getElementById('aboutArtistAvatarImg').src = artist.thumbnail;
           document.getElementById('aboutArtistAvatarImg').style.display = 'block';
