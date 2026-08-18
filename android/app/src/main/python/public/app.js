@@ -989,6 +989,73 @@ function setupEventListeners() {
     document.getElementById('playlistModal').classList.remove('active');
   });
 
+  // Mobile Mini Player click -> Open Full Now Playing Sheet
+  const playerBar = document.getElementById('appPlayerBar');
+  if (playerBar) {
+    playerBar.addEventListener('click', (e) => {
+      // Don't open sheet if user clicked on a control button
+      if (e.target.closest('.control-btn') || e.target.closest('.play-btn') || e.target.closest('button') || e.target.closest('input')) {
+        return;
+      }
+      if (window.innerWidth <= 768) {
+        openMobileNowPlaying();
+      }
+    });
+  }
+
+  // Mobile Now Playing Sheet close button
+  const btnCloseNp = document.getElementById('btnCloseMobileNowPlaying');
+  if (btnCloseNp) {
+    btnCloseNp.addEventListener('click', closeMobileNowPlaying);
+  }
+
+  // Mobile Now Playing Controls
+  document.getElementById('btnMobileNpPlayPause')?.addEventListener('click', togglePlayPause);
+  document.getElementById('btnMobileNpNext')?.addEventListener('click', playNext);
+  document.getElementById('btnMobileNpPrev')?.addEventListener('click', playPrev);
+  document.getElementById('btnMobileNpShuffle')?.addEventListener('click', () => {
+    document.getElementById('btnShuffle')?.click();
+    document.getElementById('btnMobileNpShuffle')?.classList.toggle('active', state.shuffle);
+  });
+  document.getElementById('btnMobileNpRepeat')?.addEventListener('click', () => {
+    document.getElementById('btnRepeat')?.click();
+  });
+  document.getElementById('btnMobileNpFavorite')?.addEventListener('click', () => {
+    document.getElementById('btnAddToFavorites')?.click();
+  });
+  document.getElementById('btnMobileNpLyrics')?.addEventListener('click', () => {
+    document.getElementById('btnToggleLyrics')?.click();
+    closeMobileNowPlaying();
+  });
+  document.getElementById('btnMobileNpFollowArtist')?.addEventListener('click', () => {
+    document.getElementById('btnFollowArtist')?.click();
+  });
+  document.getElementById('mobileNpCoverWrapper')?.addEventListener('click', () => {
+    if (state.currentSong) {
+      goToAlbumOfSong(state.currentSong);
+      closeMobileNowPlaying();
+    }
+  });
+  document.getElementById('mobileNpArtist')?.addEventListener('click', () => {
+    if (state.currentSong && state.currentSong.artist) {
+      openArtistProfile(state.currentSong.artist, state.currentSong.platform || 'youtube');
+      closeMobileNowPlaying();
+    }
+  });
+
+  // Mobile timeline scrubber
+  document.getElementById('mobileNpTimeline')?.addEventListener('input', (e) => {
+    const pct = parseFloat(e.target.value) / 100;
+    const seekSecs = pct * state.duration;
+    document.getElementById('mobileNpCurrentTime').textContent = formatSeconds(seekSecs);
+    document.getElementById('playerCurrentTime').textContent = formatSeconds(seekSecs);
+    updateLyricsHighlight(seekSecs);
+  });
+  document.getElementById('mobileNpTimeline')?.addEventListener('change', (e) => {
+    const pct = parseFloat(e.target.value) / 100;
+    seekToPercentage(pct);
+  });
+
   // Lyrics drawer toggle controls (Three-state toggle: Off -> Drawer -> Live Widget -> Off)
   document.getElementById('btnToggleLyrics').addEventListener('click', () => {
     state.lyricsMode = (state.lyricsMode + 1) % 3;
@@ -1904,6 +1971,34 @@ function playSong(song, index) {
   document.getElementById('playerCurrentTime').textContent = '0:00';
   document.getElementById('playerTimeline').value = 0;
 
+  // Sync Mobile Now Playing Modal
+  const mobileNpTitle = document.getElementById('mobileNpTitle');
+  const mobileNpArtist = document.getElementById('mobileNpArtist');
+  const mobileNpSource = document.getElementById('mobileNpSource');
+  const mobileNpCoverImg = document.getElementById('mobileNpCoverImg');
+  const mobileNpCoverPlaceholder = document.getElementById('mobileNpCoverPlaceholder');
+  const mobileNpTotalDuration = document.getElementById('mobileNpTotalDuration');
+  const mobileNpCurrentTime = document.getElementById('mobileNpCurrentTime');
+  const mobileNpTimeline = document.getElementById('mobileNpTimeline');
+
+  if (mobileNpTitle) mobileNpTitle.textContent = song.title;
+  if (mobileNpArtist) mobileNpArtist.textContent = song.artist || 'Unknown Artist';
+  if (mobileNpSource) mobileNpSource.textContent = (song.platform ? song.platform.toUpperCase() : 'AETHER MUSIC');
+  if (mobileNpTotalDuration) mobileNpTotalDuration.textContent = song.duration || '3:00';
+  if (mobileNpCurrentTime) mobileNpCurrentTime.textContent = '0:00';
+  if (mobileNpTimeline) mobileNpTimeline.value = 0;
+
+  if (mobileNpCoverImg && mobileNpCoverPlaceholder) {
+    if (song.thumbnail) {
+      mobileNpCoverImg.src = song.thumbnail;
+      mobileNpCoverImg.style.display = 'block';
+      mobileNpCoverPlaceholder.style.display = 'none';
+    } else {
+      mobileNpCoverImg.style.display = 'none';
+      mobileNpCoverPlaceholder.style.display = 'flex';
+    }
+  }
+
   // Reset lyrics index and trigger fetch if lyrics panel is open
   activeLyricIndex = -1;
   if (state.lyricsOpen) {
@@ -2165,10 +2260,21 @@ function startProgressTimer(type) {
     state.playbackPosition = currentSec;
     updateLyricsHighlight(currentSec);
 
-    // Update UI Progress slider
+    // Update UI Progress slider & timestamps
     const pct = (currentSec / state.duration) * 100;
-    document.getElementById('playerTimeline').value = Math.min(100, Math.max(0, pct));
-    document.getElementById('playerCurrentTime').textContent = formatSeconds(currentSec);
+    const boundedPct = Math.min(100, Math.max(0, pct));
+    const timeFormatted = formatSeconds(currentSec);
+
+    document.getElementById('playerTimeline').value = boundedPct;
+    document.getElementById('playerCurrentTime').textContent = timeFormatted;
+
+    // Update Mobile Scrubber & Mini progress bar
+    const mobileTimeline = document.getElementById('mobileNpTimeline');
+    if (mobileTimeline) mobileTimeline.value = boundedPct;
+    const mobileTime = document.getElementById('mobileNpCurrentTime');
+    if (mobileTime) mobileTime.textContent = timeFormatted;
+    const miniProg = document.getElementById('miniPlayerProgress');
+    if (miniProg) miniProg.style.width = `${boundedPct}%`;
   }, 500);
 }
 
@@ -2192,6 +2298,27 @@ function onPlayerError(event) {
 function updatePlayButtonUI(isPlaying) {
   document.getElementById('playIcon').style.display = isPlaying ? 'none' : 'block';
   document.getElementById('pauseIcon').style.display = isPlaying ? 'block' : 'none';
+
+  const mobilePlayIcon = document.getElementById('mobileNpPlayIcon');
+  const mobilePauseIcon = document.getElementById('mobileNpPauseIcon');
+  if (mobilePlayIcon) mobilePlayIcon.style.display = isPlaying ? 'none' : 'block';
+  if (mobilePauseIcon) mobilePauseIcon.style.display = isPlaying ? 'block' : 'none';
+}
+
+function openMobileNowPlaying() {
+  const modal = document.getElementById('mobileNowPlayingModal');
+  if (modal) {
+    modal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+}
+
+function closeMobileNowPlaying() {
+  const modal = document.getElementById('mobileNowPlayingModal');
+  if (modal) {
+    modal.classList.remove('active');
+    document.body.style.overflow = '';
+  }
 }
 
 // --- UTILITY SERVICES ---
@@ -3011,14 +3138,25 @@ async function updateRightSidebar(song) {
 
   // 2. Fetch Artist Details for About the Artist Section
   const artistSec = document.getElementById('aboutArtistSection');
+  const mobileArtistSec = document.getElementById('mobileNpArtistSection');
   if (song.artist) {
     artistSec.style.display = 'block';
+    if (mobileArtistSec) mobileArtistSec.style.display = 'block';
+
     document.getElementById('aboutArtistNameText').textContent = song.artist;
     document.getElementById('aboutArtistFollowersText').textContent = 'Fetching profile...';
     document.getElementById('aboutArtistAvatarImg').src = '';
+
+    const mobileArtistName = document.getElementById('mobileNpArtistNameText');
+    if (mobileArtistName) mobileArtistName.textContent = song.artist;
+    const mobileFollowers = document.getElementById('mobileNpArtistFollowersText');
+    if (mobileFollowers) mobileFollowers.textContent = 'Fetching profile...';
+    const mobileAvatar = document.getElementById('mobileNpArtistAvatarImg');
+    if (mobileAvatar) mobileAvatar.src = '';
     
     // Set follow button to initial state
     const followBtn = document.getElementById('btnFollowArtist');
+    const mobileFollowBtn = document.getElementById('btnMobileNpFollowArtist');
     if (followBtn) {
       followBtn.textContent = 'Follow';
       followBtn.style.background = 'transparent';
@@ -3030,11 +3168,21 @@ async function updateRightSidebar(song) {
           followBtn.textContent = 'Following';
           followBtn.style.background = 'var(--accent-color)';
           followBtn.style.color = '#fff';
+          if (mobileFollowBtn) {
+            mobileFollowBtn.textContent = 'Following';
+            mobileFollowBtn.style.background = 'var(--accent-color)';
+            mobileFollowBtn.style.color = '#fff';
+          }
           showToast(`Following ${song.artist || 'Artist'}`);
         } else {
           followBtn.textContent = 'Follow';
           followBtn.style.background = 'transparent';
           followBtn.style.color = 'var(--text-color)';
+          if (mobileFollowBtn) {
+            mobileFollowBtn.textContent = 'Follow';
+            mobileFollowBtn.style.background = 'transparent';
+            mobileFollowBtn.style.color = 'var(--text-color)';
+          }
         }
       };
     }
@@ -3043,28 +3191,38 @@ async function updateRightSidebar(song) {
       const artistRes = await fetch(`/api/artist?name=${encodeURIComponent(song.artist)}&platform=${song.platform || 'youtube'}`);
       if (artistRes.ok) {
         const artist = await artistRes.json();
-        document.getElementById('aboutArtistFollowersText').textContent = artist.followers || 'Artist Profile';
+        const followersText = artist.followers || 'Artist Profile';
+        document.getElementById('aboutArtistFollowersText').textContent = followersText;
+        if (mobileFollowers) mobileFollowers.textContent = followersText;
         
         // Show verified badge for Spotify platform
         const badge = document.getElementById('artistVerifiedBadge');
-        if (badge) {
-          badge.style.display = (artist.platform === 'spotify' || song.platform === 'spotify') ? 'inline-block' : 'none';
-        }
+        const mobileBadge = document.getElementById('mobileNpArtistVerifiedBadge');
+        const showBadge = (artist.platform === 'spotify' || song.platform === 'spotify');
+        if (badge) badge.style.display = showBadge ? 'inline-block' : 'none';
+        if (mobileBadge) mobileBadge.style.display = showBadge ? 'inline-block' : 'none';
 
         if (artist.thumbnail) {
           document.getElementById('aboutArtistAvatarImg').src = artist.thumbnail;
           document.getElementById('aboutArtistAvatarImg').style.display = 'block';
+          if (mobileAvatar) {
+            mobileAvatar.src = artist.thumbnail;
+            mobileAvatar.style.display = 'block';
+          }
         } else {
           document.getElementById('aboutArtistAvatarImg').style.display = 'none';
+          if (mobileAvatar) mobileAvatar.style.display = 'none';
         }
       } else {
         document.getElementById('aboutArtistFollowersText').textContent = 'Artist Profile';
+        if (mobileFollowers) mobileFollowers.textContent = 'Artist Profile';
       }
     } catch (err) {
       console.error("Error loading sidebar artist details:", err);
     }
   } else {
     artistSec.style.display = 'none';
+    if (mobileArtistSec) mobileArtistSec.style.display = 'none';
   }
 }
 

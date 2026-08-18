@@ -769,6 +769,8 @@
         <div id="scPlayerContainer"></div>
         <!-- Spotify preview/embed wrapper (loaded dynamically) -->
         <div id="spotifyPlayerContainer"></div>
+        <!-- Mini player progress bar line -->
+        <div class="mini-player-progress" id="miniPlayerProgress"></div>
       </div>
     </footer>
 
@@ -795,6 +797,104 @@
         <span>Profile</span>
       </button>
     </nav>
+  </div>
+
+  <!-- MOBILE EXPANDED NOW PLAYING SHEET -->
+  <div class="mobile-now-playing-modal" id="mobileNowPlayingModal">
+    <div class="mobile-np-header">
+      <button class="icon-btn" id="btnCloseMobileNowPlaying" title="Minimize">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </button>
+      <div class="mobile-np-header-title">
+        <span class="mobile-np-subtitle">PLAYING FROM</span>
+        <span class="mobile-np-source" id="mobileNpSource">Aether Music</span>
+      </div>
+      <button class="icon-btn" id="btnMobileNpOptions" title="Options" style="opacity: 0.8;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></svg>
+      </button>
+    </div>
+
+    <div class="mobile-np-content">
+      <!-- Big Album Cover -->
+      <div class="mobile-np-cover-wrapper" id="mobileNpCoverWrapper">
+        <img src="" id="mobileNpCoverImg" alt="Cover" style="display: none;">
+        <div id="mobileNpCoverPlaceholder" class="mobile-np-placeholder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+        </div>
+      </div>
+
+      <!-- Title, Artist & Like Button -->
+      <div class="mobile-np-info-row">
+        <div class="mobile-np-titles">
+          <h2 id="mobileNpTitle">No Song Playing</h2>
+          <p id="mobileNpArtist">Choose a track to begin</p>
+        </div>
+        <button class="icon-btn" id="btnMobileNpFavorite" title="Add to favorites">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+        </button>
+      </div>
+
+      <!-- Timeline & Scrubber -->
+      <div class="mobile-np-timeline-block">
+        <input type="range" class="timeline-slider" id="mobileNpTimeline" min="0" max="100" value="0">
+        <div class="mobile-np-time-labels">
+          <span id="mobileNpCurrentTime">0:00</span>
+          <span id="mobileNpTotalDuration">0:00</span>
+        </div>
+      </div>
+
+      <!-- Controls Row -->
+      <div class="mobile-np-controls">
+        <button class="control-btn" id="btnMobileNpShuffle" title="Shuffle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="4" y1="4" x2="9" y2="9"></line></svg>
+        </button>
+        <button class="control-btn" id="btnMobileNpPrev" title="Previous">
+          <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2"></line></svg>
+        </button>
+        <button class="play-btn mobile-np-play-btn" id="btnMobileNpPlayPause" title="Play/Pause">
+          <svg id="mobileNpPlayIcon" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          <svg id="mobileNpPauseIcon" viewBox="0 0 24 24" fill="currentColor" style="display: none;"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+        </button>
+        <button class="control-btn" id="btnMobileNpNext" title="Next">
+          <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2"></line></svg>
+        </button>
+        <button class="control-btn" id="btnMobileNpRepeat" title="Repeat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14M7 23 3 19 7 15"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>
+        </button>
+      </div>
+
+      <!-- Action Chips Row: Lyrics -->
+      <div class="mobile-np-actions-row">
+        <button class="mobile-np-pill-btn" id="btnMobileNpLyrics">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v1a7 7 0 0 1-14 0v-1"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+          <span>Lyrics</span>
+        </button>
+      </div>
+
+      <!-- About the Artist Spotify Card on Mobile -->
+      <div class="mobile-np-artist-card" id="mobileNpArtistSection" style="display: none;">
+        <div class="about-artist-card">
+          <div class="about-artist-avatar-wrapper" style="position: relative;">
+            <img src="" id="mobileNpArtistAvatarImg" alt="Artist Avatar">
+            <span class="about-artist-overlay-title">About the artist</span>
+          </div>
+          <div class="about-artist-details">
+            <div class="about-artist-name-row" style="display: flex; align-items: center; gap: 6px;">
+              <h5 id="mobileNpArtistNameText" style="margin: 0;">Artist Name</h5>
+              <svg class="verified-badge" viewBox="0 0 24 24" fill="currentColor" style="width: 16px; height: 16px; color: #3d91f4;" id="mobileNpArtistVerifiedBadge">
+                <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+              </svg>
+            </div>
+            <div class="about-artist-stats-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+              <p class="about-artist-followers" id="mobileNpArtistFollowersText" style="margin: 0;">Subscribers</p>
+              <button class="about-artist-follow-btn" id="btnMobileNpFollowArtist">Follow</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- LYRICS PANEL DRAWER -->
