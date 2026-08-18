@@ -2036,6 +2036,39 @@ function playSong(song, index) {
     }
   }
 
+  // Update Native MediaSession Metadata for Android Lockscreen & Notification tray
+  if ('mediaSession' in navigator) {
+    try {
+      const artUrl = song.thumbnail || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=256&auto=format&fit=crop';
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: song.title,
+        artist: song.artist || 'AetherPlayer',
+        album: song.album || 'Aether Music',
+        artwork: [
+          { src: artUrl, sizes: '96x96', type: 'image/png' },
+          { src: artUrl, sizes: '128x128', type: 'image/png' },
+          { src: artUrl, sizes: '256x256', type: 'image/png' },
+          { src: artUrl, sizes: '512x512', type: 'image/png' }
+        ]
+      });
+
+      navigator.mediaSession.playbackState = 'playing';
+
+      // Attach Native notification control handlers
+      navigator.mediaSession.setActionHandler('play', () => togglePlayPause());
+      navigator.mediaSession.setActionHandler('pause', () => togglePlayPause());
+      navigator.mediaSession.setActionHandler('previoustrack', () => playPrev());
+      navigator.mediaSession.setActionHandler('nexttrack', () => playNext());
+      navigator.mediaSession.setActionHandler('seekto', (details) => {
+        if (details.seekTime !== undefined && state.duration) {
+          seekToPercentage(details.seekTime / state.duration);
+        }
+      });
+    } catch (e) {
+      console.warn("MediaSession API error:", e);
+    }
+  }
+
   // Reset lyrics index and trigger fetch for lyrics box
   activeLyricIndex = -1;
   fetchLyricsForTrack(song);
@@ -2334,6 +2367,12 @@ function updatePlayButtonUI(isPlaying) {
   const mobilePauseIcon = document.getElementById('mobileNpPauseIcon');
   if (mobilePlayIcon) mobilePlayIcon.style.display = isPlaying ? 'none' : 'block';
   if (mobilePauseIcon) mobilePauseIcon.style.display = isPlaying ? 'block' : 'none';
+
+  if ('mediaSession' in navigator) {
+    try {
+      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+    } catch (e) { }
+  }
 }
 
 function openMobileNowPlaying() {

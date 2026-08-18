@@ -1,7 +1,10 @@
 package com.aetherplayer.music
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.os.Bundle
+import android.os.PowerManager
+import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -15,10 +18,23 @@ import kotlin.concurrent.thread
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Acquire partial wake lock to keep audio playback running when screen is locked
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "AetherPlayer::AudioPlaybackWakeLock"
+            )
+            wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24 hours max
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         // Initialize Python runtime inside Android context
         if (!Python.isStarted()) {
             Python.start(AndroidPlatform(this))
@@ -77,6 +93,11 @@ class MainActivity : AppCompatActivity() {
         settings.mediaPlaybackRequiresUserGesture = false
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
+        settings.allowFileAccess = true
+        settings.allowContentAccess = true
+
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
@@ -89,7 +110,19 @@ class MainActivity : AppCompatActivity() {
         if (webView.canGoBack()) {
             webView.goBack()
         } else {
-            super.onBackPressed()
+            // Move task to back (minimize) rather than killing the activity, preserving audio playback
+            moveTaskToBack(true)
         }
+    }
+
+    override fun onDestroy() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        super.onDestroy()
     }
 }

@@ -3866,5 +3866,23 @@
       }
     ],
     "createdAt": "8/10/2026"
+  },
+  {
+    "id": "pl-1787030388468",
+    "name": "Random bangers",
+    "songs": [
+      {
+        "id": "FqPDOewbAtY",
+        "title": "Shine",
+        "artist": "Joey Bada$$",
+        "duration": "2:52",
+        "thumbnail": "https://yt3.googleusercontent.com/5WL1otoQL5T_m8ElVYT3-H65IS4Lz1MB0fo-ymM7s7iYSpTC6zC8Hs0MWegGUqcAV8_8VpVbjJfmurmN=w544-h544-l90-rj",
+        "url": "https://music.youtube.com/watch?v=FqPDOewbAtY",
+        "platform": "spotify",
+        "isFallback": true,
+        "isRadio": true
+      }
+    ],
+    "createdAt": "8/18/2026"
   }
 ]
