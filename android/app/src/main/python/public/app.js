@@ -1,3 +1,19 @@
+// Overwrite Page Visibility API so YouTube iframe never auto-pauses in background/when phone is locked
+try {
+  Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+  Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+  Object.defineProperty(document, 'webkitHidden', { get: () => false, configurable: true });
+  Object.defineProperty(document, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
+  window.addEventListener('visibilitychange', (e) => {
+    e.stopImmediatePropagation();
+  }, true);
+  document.addEventListener('visibilitychange', (e) => {
+    e.stopImmediatePropagation();
+  }, true);
+} catch (e) {
+  console.warn("Visibility override failed:", e);
+}
+
 // AetherPlayer Frontend Application State
 let state = {
   activeTab: 'home',
@@ -7,6 +23,7 @@ let state = {
   playQueue: [],
   currentQueueIndex: -1,
   isPlaying: false,
+  isUserPaused: false,
   isTransitioning: false,
   volume: 70,
   isMuted: false,
@@ -2205,15 +2222,15 @@ function stopActivePlayback() {
   }
 
   state.isPlaying = false;
-  updatePlayButtonUI(false);
 }
 
 function togglePlayPause() {
   if (!state.currentSong) return;
 
   if (state.isPlaying) {
-    // Pause
+    // User explicitly paused
     state.isPlaying = false;
+    state.isUserPaused = true;
     if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
       if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
         ytPlayer.pauseVideo();
@@ -2223,8 +2240,9 @@ function togglePlayPause() {
     }
     updatePlayButtonUI(false);
   } else {
-    // Play
+    // User explicitly played
     state.isPlaying = true;
+    state.isUserPaused = false;
     if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
       if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
         ytPlayer.playVideo();
@@ -2243,29 +2261,19 @@ function playNext() {
   }
   if (state.playQueue.length === 0) return;
 
-  if (state.repeat === 'one') {
-    playSong(state.currentSong, state.currentQueueIndex);
-    return;
-  }
-
   let nextIndex = state.currentQueueIndex + 1;
-
   if (state.shuffle) {
     nextIndex = Math.floor(Math.random() * state.playQueue.length);
+  } else if (state.repeat === 'one') {
+    nextIndex = state.currentQueueIndex;
   } else if (nextIndex >= state.playQueue.length) {
     if (state.repeat === 'all') {
       nextIndex = 0;
     } else {
-      const lastSong = state.currentSong;
-      if (lastSong && (lastSong.isRadio || state.playQueue.length > 1)) {
-        showToast('Autoplaying similar vibes...');
-        triggerAutoplayRecommendations(lastSong);
-        return;
-      } else {
-        showToast('Queue completed');
-        stopActivePlayback();
-        return;
-      }
+      showToast('End of queue');
+      state.isPlaying = false;
+      updatePlayButtonUI(false);
+      return;
     }
   }
 
@@ -2274,42 +2282,26 @@ function playNext() {
 
 function playPrev() {
   if (state.playQueue.length === 0) return;
-
   let prevIndex = state.currentQueueIndex - 1;
-
-  if (state.shuffle) {
-    prevIndex = Math.floor(Math.random() * state.playQueue.length);
-  } else if (prevIndex < 0) {
-    if (state.repeat === 'all') {
-      prevIndex = state.playQueue.length - 1;
-    } else {
-      prevIndex = 0; // stay on first track
-    }
+  if (prevIndex < 0) {
+    prevIndex = state.playQueue.length - 1;
   }
-
   playSong(state.playQueue[prevIndex], prevIndex);
 }
 
 function applyVolume() {
-  const finalVolume = state.isMuted ? 0 : state.volume;
-
-  // Set YT volume
+  const vol = state.isMuted ? 0 : state.volume;
   if (ytPlayer && typeof ytPlayer.setVolume === 'function') {
-    try {
-      ytPlayer.setVolume(finalVolume);
-    } catch (e) { }
+    ytPlayer.setVolume(vol);
   }
-
-  // Set HTML5 Audio volume
   if (activeAudio) {
-    activeAudio.volume = finalVolume / 100;
+    activeAudio.volume = vol / 100;
   }
 }
 
 function seekToPercentage(pct) {
   const seekSeconds = pct * state.duration;
-
-  if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
+  if (state.currentSong && (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl)) {
     if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
       ytPlayer.seekTo(seekSeconds, true);
     }
@@ -2318,25 +2310,22 @@ function seekToPercentage(pct) {
   }
 }
 
-function startProgressTimer(type) {
+function startProgressTimer(platform) {
   if (progressInterval) clearInterval(progressInterval);
 
   progressInterval = setInterval(() => {
     if (!state.isPlaying) return;
 
     let currentSec = 0;
-
-    if (type === 'youtube') {
-      if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
-        currentSec = ytPlayer.getCurrentTime();
-      }
-    } else if (type === 'audio') {
-      if (activeAudio) {
-        currentSec = activeAudio.currentTime;
-      }
+    if (platform === 'youtube' && ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+      currentSec = ytPlayer.getCurrentTime();
+    } else if (platform === 'preview' && activeAudio) {
+      currentSec = activeAudio.currentTime;
     }
 
     state.playbackPosition = currentSec;
+
+    // Update synced lyrics line
     updateLyricsHighlight(currentSec);
 
     // Update UI Progress slider & timestamps
@@ -2361,6 +2350,18 @@ function startProgressTimer(type) {
 function onPlayerStateChange(event) {
   if (event.data === YT.PlayerState.PLAYING) {
     state.isTransitioning = false;
+    state.isPlaying = true;
+    updatePlayButtonUI(true);
+  }
+  if (event.data === YT.PlayerState.PAUSED) {
+    // If the user did not click pause, but Android OS or browser tried to pause it in the background:
+    if (state.isPlaying && !state.isUserPaused) {
+      setTimeout(() => {
+        if (state.isPlaying && !state.isUserPaused && ytPlayer && typeof ytPlayer.playVideo === 'function') {
+          ytPlayer.playVideo();
+        }
+      }, 80);
+    }
   }
   if (event.data === YT.PlayerState.ENDED) {
     playNext();

@@ -1,7 +1,10 @@
 package com.aetherplayer.music
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.webkit.CookieManager
@@ -10,6 +13,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import java.net.Socket
@@ -23,6 +28,13 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Request Notification permission on Android 13+ (API 33+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
+            }
+        }
+
         // Acquire partial wake lock to keep audio playback running when screen is locked
         try {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -105,6 +117,24 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
                 return false // load links inside WebView frame
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                // Inject visibility override so background playback is never paused by YouTube or browser visibility listeners
+                val jsSpoof = """
+                    (function() {
+                        try {
+                            Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
+                            Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
+                            Object.defineProperty(document, 'webkitHidden', { get: function() { return false; }, configurable: true });
+                            Object.defineProperty(document, 'webkitVisibilityState', { get: function() { return 'visible'; }, configurable: true });
+                            window.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
+                            document.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
+                        } catch(e) {}
+                    })();
+                """.trimIndent()
+                view?.evaluateJavascript(jsSpoof, null)
             }
         }
     }
