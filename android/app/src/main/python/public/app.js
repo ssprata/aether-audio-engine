@@ -1550,13 +1550,7 @@ function createSongCard(song, queueContext) {
   const img = document.createElement('img');
   img.src = song.thumbnail || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=200&auto=format&fit=crop';
   img.loading = 'lazy';
-
-  const playBtn = document.createElement('div');
-  playBtn.className = 'song-card-play-btn';
-  playBtn.innerHTML = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
-
   imgWrapper.appendChild(img);
-  imgWrapper.appendChild(playBtn);
 
   const info = document.createElement('div');
   info.className = 'song-card-info';
@@ -1577,12 +1571,23 @@ function createSongCard(song, queueContext) {
   info.appendChild(title);
   info.appendChild(artist);
 
-  const footer = document.createElement('div');
-  footer.className = 'song-card-footer';
+  const actions = document.createElement('div');
+  actions.className = 'song-card-actions';
 
   const badge = document.createElement('span');
   badge.className = `song-card-badge badge-${song.platform}`;
   badge.textContent = song.platform;
+
+  const playActionBtn = document.createElement('button');
+  playActionBtn.className = 'song-card-play-action-btn';
+  playActionBtn.title = 'Play Track';
+  playActionBtn.innerHTML = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
+  playActionBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    state.playQueue = queueContext;
+    const index = queueContext.findIndex(s => s.id === song.id);
+    playSong(song, index !== -1 ? index : 0);
+  });
 
   const addBtn = document.createElement('button');
   addBtn.className = 'song-card-add-btn';
@@ -1593,12 +1598,13 @@ function createSongCard(song, queueContext) {
     openPlaylistSelectModal(song);
   });
 
-  footer.appendChild(badge);
-  footer.appendChild(addBtn);
+  actions.appendChild(badge);
+  actions.appendChild(playActionBtn);
+  actions.appendChild(addBtn);
 
   card.appendChild(imgWrapper);
   card.appendChild(info);
-  card.appendChild(footer);
+  card.appendChild(actions);
 
   return card;
 }
