@@ -2105,19 +2105,18 @@ function playSong(song, index) {
   activeLyricIndex = -1;
   fetchLyricsForTrack(song);
 
-  // Initialize playback depending on platform source
-  if (song.platform === 'youtube' || song.isFallback) {
+  // Initialize playback (Native Android player if on phone, otherwise Web player)
+  if (window.AndroidAudio && typeof window.AndroidAudio.play === 'function') {
+    playNativeAndroidTrack(song);
+  } else if (song.platform === 'youtube' || song.isFallback) {
     playYouTubeTrack(song.id);
   } else if (song.platform === 'spotify') {
-    // If Spotify has direct preview URL, play preview
     if (song.previewUrl) {
       playPreviewTrack(song.previewUrl);
     } else {
-      // Fallback: search and play on YouTube background using title + artist query proxy
       playProxyFallback(song);
     }
   } else if (song.platform === 'soundcloud') {
-    // Playback proxy using YouTube since SoundCloud widget needs clean API keys
     playProxyFallback(song);
   }
 
@@ -2131,6 +2130,62 @@ function playSong(song, index) {
 
   // Fetch and display similar song recommendations
   fetchAndRenderRecommendations(song);
+}
+
+async function playNativeAndroidTrack(song) {
+  let targetUrl = '';
+  let videoId = song.id;
+
+  if (song.previewUrl) {
+    targetUrl = song.previewUrl;
+  } else if (song.platform === 'youtube' || song.isFallback) {
+    try {
+      const res = await fetch(`/api/stream-url?id=${videoId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.url) targetUrl = data.url;
+      }
+    } catch (e) {}
+    if (!targetUrl) {
+      targetUrl = `http://localhost:3000/api/stream?id=${videoId}`;
+    }
+  } else {
+    // Spotify / SoundCloud: search YouTube proxy first
+    try {
+      const query = `${song.title} ${song.artist}`;
+      const searchRes = await fetch(`/api/search?q=${encodeURIComponent(query)}&platform=youtube`);
+      if (searchRes.ok) {
+        const results = await searchRes.json();
+        if (results && results.length > 0) {
+          videoId = results[0].id;
+          const streamRes = await fetch(`/api/stream-url?id=${videoId}`);
+          if (streamRes.ok) {
+            const streamData = await streamRes.json();
+            if (streamData.url) targetUrl = streamData.url;
+          }
+          if (!targetUrl) {
+            targetUrl = `http://localhost:3000/api/stream?id=${videoId}`;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Native proxy search error:", e);
+    }
+  }
+
+  if (targetUrl) {
+    window.AndroidAudio.play(
+      targetUrl,
+      song.title || 'Aether Track',
+      song.artist || 'Unknown Artist',
+      song.thumbnail || '',
+      state.duration || 180
+    );
+    updatePlayButtonUI(true);
+  } else {
+    showToast('Could not load audio stream');
+    updatePlayButtonUI(false);
+  }
 }
 
 function playYouTubeTrack(videoId) {
@@ -2202,6 +2257,10 @@ async function playProxyFallback(song) {
 }
 
 function stopActivePlayback() {
+  if (window.AndroidAudio && typeof window.AndroidAudio.stop === 'function') {
+    try { window.AndroidAudio.stop(); } catch(e) {}
+  }
+
   if (progressInterval) {
     clearInterval(progressInterval);
     progressInterval = null;
@@ -2231,7 +2290,10 @@ function togglePlayPause() {
     // User explicitly paused
     state.isPlaying = false;
     state.isUserPaused = true;
-    if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
+
+    if (window.AndroidAudio && typeof window.AndroidAudio.pause === 'function') {
+      window.AndroidAudio.pause();
+    } else if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
       if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
         ytPlayer.pauseVideo();
       }
@@ -2243,7 +2305,10 @@ function togglePlayPause() {
     // User explicitly played
     state.isPlaying = true;
     state.isUserPaused = false;
-    if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
+
+    if (window.AndroidAudio && typeof window.AndroidAudio.resume === 'function') {
+      window.AndroidAudio.resume();
+    } else if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
       if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
         ytPlayer.playVideo();
       }
@@ -2253,6 +2318,40 @@ function togglePlayPause() {
     updatePlayButtonUI(true);
   }
 }
+
+// Native Android Audio Bridge Callbacks
+window.onNativeAudioProgress = function(currentSec, totalSec) {
+  if (!state.isPlaying) return;
+  state.playbackPosition = currentSec;
+  if (totalSec && totalSec > 0) state.duration = totalSec;
+
+  updateLyricsHighlight(currentSec);
+
+  const pct = (currentSec / state.duration) * 100;
+  const boundedPct = Math.min(100, Math.max(0, pct));
+  const timeFormatted = formatSeconds(currentSec);
+
+  const timeline = document.getElementById('playerTimeline');
+  if (timeline) timeline.value = boundedPct;
+  const currTime = document.getElementById('playerCurrentTime');
+  if (currTime) currTime.textContent = timeFormatted;
+
+  const mobileTimeline = document.getElementById('mobileNpTimeline');
+  if (mobileTimeline) mobileTimeline.value = boundedPct;
+  const mobileTime = document.getElementById('mobileNpCurrentTime');
+  if (mobileTime) mobileTime.textContent = timeFormatted;
+  const miniProg = document.getElementById('miniPlayerProgress');
+  if (miniProg) miniProg.style.width = `${boundedPct}%`;
+};
+
+window.onNativeAudioEnded = function() {
+  playNext();
+};
+
+window.onNativeAudioStateChange = function(isPlaying) {
+  state.isPlaying = isPlaying;
+  updatePlayButtonUI(isPlaying);
+};
 
 function playNext() {
   if (state.isTransitioning) {
@@ -2291,6 +2390,9 @@ function playPrev() {
 
 function applyVolume() {
   const vol = state.isMuted ? 0 : state.volume;
+  if (window.AndroidAudio && typeof window.AndroidAudio.setVolume === 'function') {
+    window.AndroidAudio.setVolume(vol / 100);
+  }
   if (ytPlayer && typeof ytPlayer.setVolume === 'function') {
     ytPlayer.setVolume(vol);
   }
@@ -2301,7 +2403,9 @@ function applyVolume() {
 
 function seekToPercentage(pct) {
   const seekSeconds = pct * state.duration;
-  if (state.currentSong && (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl)) {
+  if (window.AndroidAudio && typeof window.AndroidAudio.seekTo === 'function') {
+    window.AndroidAudio.seekTo(seekSeconds);
+  } else if (state.currentSong && (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl)) {
     if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
       ytPlayer.seekTo(seekSeconds, true);
     }

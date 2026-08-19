@@ -22,11 +22,16 @@ import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        var instance: MainActivity? = null
+    }
+
     private lateinit var webView: WebView
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        instance = this
         
         // Request Notification permission on Android 13+ (API 33+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -46,9 +51,6 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
-
-        // Start Android foreground playback service
-        MediaPlaybackService.start(this)
 
         // Initialize Python runtime inside Android context
         if (!Python.isStarted()) {
@@ -114,28 +116,19 @@ class MainActivity : AppCompatActivity() {
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
 
+        // Expose Native Android Audio Bridge to JavaScript as window.AndroidAudio
+        webView.addJavascriptInterface(AudioBridge(this), "AndroidAudio")
+
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
                 return false // load links inside WebView frame
             }
+        }
+    }
 
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                // Inject visibility override so background playback is never paused by YouTube or browser visibility listeners
-                val jsSpoof = """
-                    (function() {
-                        try {
-                            Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
-                            Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
-                            Object.defineProperty(document, 'webkitHidden', { get: function() { return false; }, configurable: true });
-                            Object.defineProperty(document, 'webkitVisibilityState', { get: function() { return 'visible'; }, configurable: true });
-                            window.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
-                            document.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
-                        } catch(e) {}
-                    })();
-                """.trimIndent()
-                view?.evaluateJavascript(jsSpoof, null)
-            }
+    fun evaluateJs(script: String) {
+        runOnUiThread {
+            webView.evaluateJavascript(script, null)
         }
     }
 

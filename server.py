@@ -552,6 +552,68 @@ def resolve_spotify_track(track_id):
         print("Spotify scrape resolve error:", e)
         return None
 
+def get_youtube_audio_url(video_id):
+    try:
+        url = "https://www.youtube.com/youtubei/v1/player"
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "com.google.android.apps.youtube.music/6.20.51 (Linux; U; Android 11; en_US) gzip",
+            "X-YouTube-Client-Name": "67",
+            "X-YouTube-Client-Version": "6.20.51"
+        }
+        payload = {
+            "context": {
+                "client": {
+                    "clientName": "ANDROID_MUSIC",
+                    "clientVersion": "6.20.51",
+                    "androidSdkVersion": 30,
+                    "hl": "en",
+                    "gl": "US"
+                }
+            },
+            "videoId": video_id
+        }
+        req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers)
+        with urllib.request.urlopen(req, timeout=8) as res:
+            data = json.loads(res.read().decode('utf-8'))
+        
+        streaming_data = data.get('streamingData', {})
+        formats = streaming_data.get('adaptiveFormats', []) + streaming_data.get('formats', [])
+        
+        audio_formats = [f for f in formats if f.get('mimeType', '').startswith('audio/')]
+        if audio_formats:
+            audio_formats.sort(key=lambda x: x.get('bitrate', 0), reverse=True)
+            for af in audio_formats:
+                if 'url' in af:
+                    return af['url']
+        
+        # Web client fallback
+        payload_web = {
+            "context": {
+                "client": {
+                    "clientName": "WEB",
+                    "clientVersion": "2.20231201.00.00",
+                    "hl": "en",
+                    "gl": "US"
+                }
+            },
+            "videoId": video_id
+        }
+        req_web = urllib.request.Request(url, data=json.dumps(payload_web).encode('utf-8'), headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req_web, timeout=8) as res_web:
+            data_web = json.loads(res_web.read().decode('utf-8'))
+        streaming_data_web = data_web.get('streamingData', {})
+        formats_web = streaming_data_web.get('adaptiveFormats', []) + streaming_data_web.get('formats', [])
+        audio_formats_web = [f for f in formats_web if f.get('mimeType', '').startswith('audio/')]
+        if audio_formats_web:
+            audio_formats_web.sort(key=lambda x: x.get('bitrate', 0), reverse=True)
+            for af in audio_formats_web:
+                if 'url' in af:
+                    return af['url']
+    except Exception as e:
+        print("YouTube audio stream extraction error:", e)
+    return None
+
 def resolve_spotify_playlist(playlist_id):
     config = read_config()
     client_id = config.get('spotifyClientId')
@@ -1865,6 +1927,36 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                         'tracks': [],
                         'albums': []
                     }).encode('utf-8'))
+                return
+
+        elif path == '/api/stream-url' or path == '/api/stream':
+            video_id = query_params.get('id', [''])[0].strip()
+            if not video_id:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b'{"error": "Video ID required"}')
+                return
+
+            audio_url = get_youtube_audio_url(video_id)
+            if not audio_url:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b'{"error": "Audio stream not found"}')
+                return
+
+            if path == '/api/stream':
+                # Redirect to direct audio stream URL
+                self.send_response(302)
+                self.send_header('Location', audio_url)
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                return
+            else:
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'url': audio_url}).encode('utf-8'))
                 return
 
         # Serve static file using standard class
