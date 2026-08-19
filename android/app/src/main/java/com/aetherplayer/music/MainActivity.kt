@@ -158,7 +158,7 @@ class MainActivity : AppCompatActivity() {
             if (wakeLock?.isHeld == true) {
                 wakeLock?.release()
             }
-            MediaPlaybackService.stop(this)
+            MediaPlaybackService.stopPlayback(this)
         } catch (e: Exception) {
             e.printStackTrace()
         }

@@ -90,6 +90,8 @@ class MediaPlaybackService : Service(), MediaPlayer.OnPreparedListener, MediaPla
             startServiceIntent(context, intent)
         }
 
+        fun stop(context: Context) = stopPlayback(context)
+
         private fun startServiceIntent(context: Context, intent: Intent) {
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
