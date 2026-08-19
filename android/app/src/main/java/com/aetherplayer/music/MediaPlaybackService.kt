@@ -9,8 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.media.AudioAttributes
-import android.media.MediaPlayer
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
@@ -22,65 +20,46 @@ import androidx.core.app.NotificationCompat
 import java.net.URL
 import kotlin.concurrent.thread
 
-class MediaPlaybackService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnCompletionListener, MediaPlayer.OnErrorListener {
+class MediaPlaybackService : Service() {
 
     companion object {
-        const val CHANNEL_ID = "aether_playback_channel_v2"
-        const val NOTIFICATION_ID = 2002
+        const val CHANNEL_ID = "aether_playback_channel_v3"
+        const val NOTIFICATION_ID = 3003
 
-        const val ACTION_PLAY = "com.aetherplayer.action.PLAY"
-        const val ACTION_PAUSE = "com.aetherplayer.action.PAUSE"
-        const val ACTION_RESUME = "com.aetherplayer.action.RESUME"
+        const val ACTION_UPDATE_TRACK = "com.aetherplayer.action.UPDATE_TRACK"
+        const val ACTION_UPDATE_STATE = "com.aetherplayer.action.UPDATE_STATE"
+        const val ACTION_PLAY_PAUSE = "com.aetherplayer.action.PLAY_PAUSE"
         const val ACTION_NEXT = "com.aetherplayer.action.NEXT"
         const val ACTION_PREV = "com.aetherplayer.action.PREV"
-        const val ACTION_SEEK = "com.aetherplayer.action.SEEK"
         const val ACTION_STOP = "com.aetherplayer.action.STOP"
-        const val ACTION_SET_VOLUME = "com.aetherplayer.action.SET_VOLUME"
 
-        const val EXTRA_URL = "extra_url"
         const val EXTRA_TITLE = "extra_title"
         const val EXTRA_ARTIST = "extra_artist"
         const val EXTRA_ART_URL = "extra_art_url"
-        const val EXTRA_DURATION = "extra_duration"
-        const val EXTRA_SEEK_SECS = "extra_seek_secs"
-        const val EXTRA_VOLUME = "extra_volume"
+        const val EXTRA_IS_PLAYING = "extra_is_playing"
 
         var instance: MediaPlaybackService? = null
 
-        fun play(context: Context, url: String, title: String, artist: String, artUrl: String, durationSec: Double) {
+        fun start(context: Context) {
+            val intent = Intent(context, MediaPlaybackService::class.java)
+            startServiceIntent(context, intent)
+        }
+
+        fun updateTrack(context: Context, title: String, artist: String, artUrl: String, isPlaying: Boolean) {
             val intent = Intent(context, MediaPlaybackService::class.java).apply {
-                action = ACTION_PLAY
-                putExtra(EXTRA_URL, url)
+                action = ACTION_UPDATE_TRACK
                 putExtra(EXTRA_TITLE, title)
                 putExtra(EXTRA_ARTIST, artist)
                 putExtra(EXTRA_ART_URL, artUrl)
-                putExtra(EXTRA_DURATION, durationSec)
+                putExtra(EXTRA_IS_PLAYING, isPlaying)
             }
             startServiceIntent(context, intent)
         }
 
-        fun pausePlayback(context: Context) {
-            val intent = Intent(context, MediaPlaybackService::class.java).apply { action = ACTION_PAUSE }
-            startServiceIntent(context, intent)
-        }
-
-        fun resumePlayback(context: Context) {
-            val intent = Intent(context, MediaPlaybackService::class.java).apply { action = ACTION_RESUME }
-            startServiceIntent(context, intent)
-        }
-
-        fun seekTo(context: Context, seconds: Double) {
+        fun updateState(context: Context, isPlaying: Boolean) {
             val intent = Intent(context, MediaPlaybackService::class.java).apply {
-                action = ACTION_SEEK
-                putExtra(EXTRA_SEEK_SECS, seconds)
-            }
-            startServiceIntent(context, intent)
-        }
-
-        fun setVolume(context: Context, volumePct: Float) {
-            val intent = Intent(context, MediaPlaybackService::class.java).apply {
-                action = ACTION_SET_VOLUME
-                putExtra(EXTRA_VOLUME, volumePct)
+                action = ACTION_UPDATE_STATE
+                putExtra(EXTRA_IS_PLAYING, isPlaying)
             }
             startServiceIntent(context, intent)
         }
@@ -105,16 +84,13 @@ class MediaPlaybackService : Service(), MediaPlayer.OnPreparedListener, MediaPla
         }
     }
 
-    private var mediaPlayer: MediaPlayer? = null
     private var mediaSession: MediaSession? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
-    private var progressRunnable: Runnable? = null
 
     private var currentTitle = "AetherPlayer"
     private var currentArtist = "Ready to play"
     private var currentArtBitmap: Bitmap? = null
-    private var currentDurationSec = 0.0
     private var isPlaying = false
 
     override fun onCreate() {
@@ -140,11 +116,15 @@ class MediaPlaybackService : Service(), MediaPlayer.OnPreparedListener, MediaPla
         mediaSession = MediaSession(this, "AetherMediaSession").apply {
             setCallback(object : MediaSession.Callback() {
                 override fun onPlay() {
-                    resumeMedia()
+                    MainActivity.instance?.runOnUiThread {
+                        MainActivity.instance?.evaluateJs("togglePlayPause()")
+                    }
                 }
 
                 override fun onPause() {
-                    pauseMedia()
+                    MainActivity.instance?.runOnUiThread {
+                        MainActivity.instance?.evaluateJs("togglePlayPause()")
+                    }
                 }
 
                 override fun onSkipToNext() {
@@ -157,10 +137,6 @@ class MediaPlaybackService : Service(), MediaPlayer.OnPreparedListener, MediaPla
                     MainActivity.instance?.runOnUiThread {
                         MainActivity.instance?.evaluateJs("playPrev()")
                     }
-                }
-
-                override fun onSeekTo(pos: Long) {
-                    seekMedia((pos / 1000).toDouble())
                 }
             })
             isActive = true
@@ -184,28 +160,30 @@ class MediaPlaybackService : Service(), MediaPlayer.OnPreparedListener, MediaPla
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // ALWAYS ensure startForeground is active on every incoming intent
+        val notification = buildNotification(isPlaying)
+        startForeground(NOTIFICATION_ID, notification)
+
         when (intent?.action) {
-            ACTION_PLAY -> {
-                val url = intent.getStringExtra(EXTRA_URL) ?: ""
+            ACTION_UPDATE_TRACK -> {
                 currentTitle = intent.getStringExtra(EXTRA_TITLE) ?: "Aether Track"
                 currentArtist = intent.getStringExtra(EXTRA_ARTIST) ?: "Unknown Artist"
                 val artUrl = intent.getStringExtra(EXTRA_ART_URL) ?: ""
-                currentDurationSec = intent.getDoubleExtra(EXTRA_DURATION, 0.0)
+                isPlaying = intent.getBooleanExtra(EXTRA_IS_PLAYING, true)
 
                 loadAlbumArt(artUrl)
-                startAudioPlayback(url)
+                updateMediaSessionState(if (isPlaying) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED)
             }
-            ACTION_PAUSE -> pauseMedia()
-            ACTION_RESUME -> resumeMedia()
-            ACTION_SEEK -> {
-                val secs = intent.getDoubleExtra(EXTRA_SEEK_SECS, 0.0)
-                seekMedia(secs)
+            ACTION_UPDATE_STATE -> {
+                isPlaying = intent.getBooleanExtra(EXTRA_IS_PLAYING, false)
+                updateMediaSessionState(if (isPlaying) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED)
+                updateNotification(isPlaying)
             }
-            ACTION_SET_VOLUME -> {
-                val vol = intent.getFloatExtra(EXTRA_VOLUME, 1.0f)
-                mediaPlayer?.setVolume(vol, vol)
+            ACTION_PLAY_PAUSE -> {
+                MainActivity.instance?.runOnUiThread {
+                    MainActivity.instance?.evaluateJs("togglePlayPause()")
+                }
             }
-            ACTION_STOP -> stopAudioPlayback()
             ACTION_NEXT -> {
                 MainActivity.instance?.runOnUiThread {
                     MainActivity.instance?.evaluateJs("playNext()")
@@ -215,6 +193,10 @@ class MediaPlaybackService : Service(), MediaPlayer.OnPreparedListener, MediaPla
                 MainActivity.instance?.runOnUiThread {
                     MainActivity.instance?.evaluateJs("playPrev()")
                 }
+            }
+            ACTION_STOP -> {
+                stopForeground(true)
+                stopSelf()
             }
         }
         return START_STICKY
@@ -239,141 +221,6 @@ class MediaPlaybackService : Service(), MediaPlayer.OnPreparedListener, MediaPla
         }
     }
 
-    private fun startAudioPlayback(streamUrl: String) {
-        if (streamUrl.isBlank()) return
-
-        stopProgressLoop()
-        try {
-            if (mediaPlayer == null) {
-                mediaPlayer = MediaPlayer().apply {
-                    setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .build()
-                    )
-                    setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
-                    setOnPreparedListener(this@MediaPlaybackService)
-                    setOnCompletionListener(this@MediaPlaybackService)
-                    setOnErrorListener(this@MediaPlaybackService)
-                }
-            } else {
-                mediaPlayer?.reset()
-            }
-
-            mediaPlayer?.setDataSource(streamUrl)
-            mediaPlayer?.prepareAsync()
-        } catch (e: Exception) {
-            e.printStackTrace()
-            MainActivity.instance?.runOnUiThread {
-                MainActivity.instance?.evaluateJs("showToast('Stream error: ${e.message}')")
-            }
-        }
-    }
-
-    override fun onPrepared(mp: MediaPlayer?) {
-        mp?.start()
-        isPlaying = true
-        updateMediaSessionState(PlaybackState.STATE_PLAYING)
-        updateNotification(true)
-        startProgressLoop()
-
-        MainActivity.instance?.runOnUiThread {
-            MainActivity.instance?.evaluateJs("window.onNativeAudioStateChange && window.onNativeAudioStateChange(true)")
-        }
-    }
-
-    override fun onCompletion(mp: MediaPlayer?) {
-        isPlaying = false
-        stopProgressLoop()
-        updateMediaSessionState(PlaybackState.STATE_PAUSED)
-        updateNotification(false)
-
-        MainActivity.instance?.runOnUiThread {
-            MainActivity.instance?.evaluateJs("window.onNativeAudioEnded && window.onNativeAudioEnded()")
-        }
-    }
-
-    override fun onError(mp: MediaPlayer?, what: Int, extra: Int): Boolean {
-        isPlaying = false
-        stopProgressLoop()
-        updateNotification(false)
-        MainActivity.instance?.runOnUiThread {
-            MainActivity.instance?.evaluateJs("console.warn('Native MediaPlayer error: $what, extra: $extra');")
-        }
-        return true
-    }
-
-    private fun pauseMedia() {
-        if (mediaPlayer?.isPlaying == true) {
-            mediaPlayer?.pause()
-            isPlaying = false
-            stopProgressLoop()
-            updateMediaSessionState(PlaybackState.STATE_PAUSED)
-            updateNotification(false)
-            MainActivity.instance?.runOnUiThread {
-                MainActivity.instance?.evaluateJs("window.onNativeAudioStateChange && window.onNativeAudioStateChange(false)")
-            }
-        }
-    }
-
-    private fun resumeMedia() {
-        if (mediaPlayer != null && !mediaPlayer!!.isPlaying) {
-            mediaPlayer?.start()
-            isPlaying = true
-            updateMediaSessionState(PlaybackState.STATE_PLAYING)
-            updateNotification(true)
-            startProgressLoop()
-            MainActivity.instance?.runOnUiThread {
-                MainActivity.instance?.evaluateJs("window.onNativeAudioStateChange && window.onNativeAudioStateChange(true)")
-            }
-        }
-    }
-
-    private fun seekMedia(seconds: Double) {
-        mediaPlayer?.let {
-            val targetMs = (seconds * 1000).toInt()
-            it.seekTo(targetMs)
-        }
-    }
-
-    private fun stopAudioPlayback() {
-        stopProgressLoop()
-        mediaPlayer?.stop()
-        mediaPlayer?.release()
-        mediaPlayer = null
-        isPlaying = false
-        updateNotification(false)
-        stopForeground(false)
-    }
-
-    private fun startProgressLoop() {
-        stopProgressLoop()
-        progressRunnable = object : Runnable {
-            override fun run() {
-                mediaPlayer?.let { mp ->
-                    if (mp.isPlaying) {
-                        val currentMs = mp.currentPosition
-                        val totalMs = if (mp.duration > 0) mp.duration else (currentDurationSec * 1000).toInt()
-                        val currentSec = currentMs / 1000.0
-                        val totalSec = totalMs / 1000.0
-
-                        MainActivity.instance?.runOnUiThread {
-                            MainActivity.instance?.evaluateJs("window.onNativeAudioProgress && window.onNativeAudioProgress($currentSec, $totalSec)")
-                        }
-                    }
-                }
-                handler.postDelayed(this, 500)
-            }
-        }
-        handler.post(progressRunnable!!)
-    }
-
-    private fun stopProgressLoop() {
-        progressRunnable?.let { handler.removeCallbacks(it) }
-        progressRunnable = null
-    }
-
     private fun updateMediaSessionState(state: Int) {
         val playbackState = PlaybackState.Builder()
             .setActions(
@@ -381,10 +228,9 @@ class MediaPlaybackService : Service(), MediaPlayer.OnPreparedListener, MediaPla
                 PlaybackState.ACTION_PAUSE or
                 PlaybackState.ACTION_PLAY_PAUSE or
                 PlaybackState.ACTION_SKIP_TO_NEXT or
-                PlaybackState.ACTION_SKIP_TO_PREVIOUS or
-                PlaybackState.ACTION_SEEK_TO
+                PlaybackState.ACTION_SKIP_TO_PREVIOUS
             )
-            .setState(state, mediaPlayer?.currentPosition?.toLong() ?: 0L, 1.0f)
+            .setState(state, 0L, 1.0f)
             .build()
         mediaSession?.setPlaybackState(playbackState)
     }
@@ -409,15 +255,9 @@ class MediaPlaybackService : Service(), MediaPlayer.OnPreparedListener, MediaPla
         val prevIntent = Intent(this, MediaPlaybackService::class.java).apply { action = ACTION_PREV }
         val prevPendingIntent = PendingIntent.getService(this, 1, prevIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
-        val playPauseAction = if (playing) {
-            val pauseIntent = Intent(this, MediaPlaybackService::class.java).apply { action = ACTION_PAUSE }
-            val pausePendingIntent = PendingIntent.getService(this, 2, pauseIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-            NotificationCompat.Action.Builder(android.R.drawable.ic_media_pause, "Pause", pausePendingIntent).build()
-        } else {
-            val resumeIntent = Intent(this, MediaPlaybackService::class.java).apply { action = ACTION_RESUME }
-            val resumePendingIntent = PendingIntent.getService(this, 2, resumeIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-            NotificationCompat.Action.Builder(android.R.drawable.ic_media_play, "Play", resumePendingIntent).build()
-        }
+        val playPauseIntent = Intent(this, MediaPlaybackService::class.java).apply { action = ACTION_PLAY_PAUSE }
+        val playPausePendingIntent = PendingIntent.getService(this, 2, playPauseIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val playPauseIcon = if (playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
 
         val nextIntent = Intent(this, MediaPlaybackService::class.java).apply { action = ACTION_NEXT }
         val nextPendingIntent = PendingIntent.getService(this, 3, nextIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -431,7 +271,7 @@ class MediaPlaybackService : Service(), MediaPlayer.OnPreparedListener, MediaPla
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .addAction(NotificationCompat.Action.Builder(android.R.drawable.ic_media_previous, "Previous", prevPendingIntent).build())
-            .addAction(playPauseAction)
+            .addAction(NotificationCompat.Action.Builder(playPauseIcon, if (playing) "Pause" else "Play", playPausePendingIntent).build())
             .addAction(NotificationCompat.Action.Builder(android.R.drawable.ic_media_next, "Next", nextPendingIntent).build())
 
         currentArtBitmap?.let {
@@ -442,7 +282,6 @@ class MediaPlaybackService : Service(), MediaPlayer.OnPreparedListener, MediaPla
     }
 
     override fun onDestroy() {
-        stopAudioPlayback()
         mediaSession?.release()
         try {
             if (wakeLock?.isHeld == true) {

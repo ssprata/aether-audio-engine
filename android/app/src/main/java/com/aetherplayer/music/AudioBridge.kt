@@ -5,37 +5,16 @@ import android.webkit.JavascriptInterface
 class AudioBridge(private val activity: MainActivity) {
 
     @JavascriptInterface
-    fun play(streamUrl: String, title: String, artist: String, artUrl: String, durationSec: Double) {
+    fun updateMetadata(title: String, artist: String, artUrl: String, isPlaying: Boolean) {
         activity.runOnUiThread {
-            MediaPlaybackService.play(activity, streamUrl, title, artist, artUrl, durationSec)
+            MediaPlaybackService.updateTrack(activity, title, artist, artUrl, isPlaying)
         }
     }
 
     @JavascriptInterface
-    fun pause() {
+    fun updatePlaybackState(isPlaying: Boolean) {
         activity.runOnUiThread {
-            MediaPlaybackService.pausePlayback(activity)
-        }
-    }
-
-    @JavascriptInterface
-    fun resume() {
-        activity.runOnUiThread {
-            MediaPlaybackService.resumePlayback(activity)
-        }
-    }
-
-    @JavascriptInterface
-    fun seekTo(seconds: Double) {
-        activity.runOnUiThread {
-            MediaPlaybackService.seekTo(activity, seconds)
-        }
-    }
-
-    @JavascriptInterface
-    fun setVolume(volumePct: Float) {
-        activity.runOnUiThread {
-            MediaPlaybackService.setVolume(activity, volumePct)
+            MediaPlaybackService.updateState(activity, isPlaying)
         }
     }
 

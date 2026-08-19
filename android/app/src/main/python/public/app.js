@@ -2105,10 +2105,8 @@ function playSong(song, index) {
   activeLyricIndex = -1;
   fetchLyricsForTrack(song);
 
-  // Initialize playback (Native Android player if on phone, otherwise Web player)
-  if (window.AndroidAudio && typeof window.AndroidAudio.play === 'function') {
-    playNativeAndroidTrack(song);
-  } else if (song.platform === 'youtube' || song.isFallback) {
+  // Initialize playback depending on platform source
+  if (song.platform === 'youtube' || song.isFallback) {
     playYouTubeTrack(song.id);
   } else if (song.platform === 'spotify') {
     if (song.previewUrl) {
@@ -2123,6 +2121,13 @@ function playSong(song, index) {
   // Update Play Button Icon
   updatePlayButtonUI(true);
 
+  // Sync native Android system notification & lockscreen media widget
+  if (window.AndroidAudio && typeof window.AndroidAudio.updateMetadata === 'function') {
+    try {
+      window.AndroidAudio.updateMetadata(song.title || 'Aether Track', song.artist || 'Unknown Artist', song.thumbnail || '', true);
+    } catch (e) { }
+  }
+
   // If in playlist detail view, refresh highlighted row
   if (state.currentPlaylistId) {
     openPlaylistDetails(state.currentPlaylistId);
@@ -2130,62 +2135,6 @@ function playSong(song, index) {
 
   // Fetch and display similar song recommendations
   fetchAndRenderRecommendations(song);
-}
-
-async function playNativeAndroidTrack(song) {
-  let targetUrl = '';
-  let videoId = song.id;
-
-  if (song.previewUrl) {
-    targetUrl = song.previewUrl;
-  } else if (song.platform === 'youtube' || song.isFallback) {
-    try {
-      const res = await fetch(`/api/stream-url?id=${videoId}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.url) targetUrl = data.url;
-      }
-    } catch (e) {}
-    if (!targetUrl) {
-      targetUrl = `http://localhost:3000/api/stream?id=${videoId}`;
-    }
-  } else {
-    // Spotify / SoundCloud: search YouTube proxy first
-    try {
-      const query = `${song.title} ${song.artist}`;
-      const searchRes = await fetch(`/api/search?q=${encodeURIComponent(query)}&platform=youtube`);
-      if (searchRes.ok) {
-        const results = await searchRes.json();
-        if (results && results.length > 0) {
-          videoId = results[0].id;
-          const streamRes = await fetch(`/api/stream-url?id=${videoId}`);
-          if (streamRes.ok) {
-            const streamData = await streamRes.json();
-            if (streamData.url) targetUrl = streamData.url;
-          }
-          if (!targetUrl) {
-            targetUrl = `http://localhost:3000/api/stream?id=${videoId}`;
-          }
-        }
-      }
-    } catch (e) {
-      console.error("Native proxy search error:", e);
-    }
-  }
-
-  if (targetUrl) {
-    window.AndroidAudio.play(
-      targetUrl,
-      song.title || 'Aether Track',
-      song.artist || 'Unknown Artist',
-      song.thumbnail || '',
-      state.duration || 180
-    );
-    updatePlayButtonUI(true);
-  } else {
-    showToast('Could not load audio stream');
-    updatePlayButtonUI(false);
-  }
 }
 
 function playYouTubeTrack(videoId) {
@@ -2291,9 +2240,7 @@ function togglePlayPause() {
     state.isPlaying = false;
     state.isUserPaused = true;
 
-    if (window.AndroidAudio && typeof window.AndroidAudio.pause === 'function') {
-      window.AndroidAudio.pause();
-    } else if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
+    if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
       if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
         ytPlayer.pauseVideo();
       }
@@ -2306,9 +2253,7 @@ function togglePlayPause() {
     state.isPlaying = true;
     state.isUserPaused = false;
 
-    if (window.AndroidAudio && typeof window.AndroidAudio.resume === 'function') {
-      window.AndroidAudio.resume();
-    } else if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
+    if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
       if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
         ytPlayer.playVideo();
       }
@@ -2491,6 +2436,12 @@ function updatePlayButtonUI(isPlaying) {
   if ('mediaSession' in navigator) {
     try {
       navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+    } catch (e) { }
+  }
+
+  if (window.AndroidAudio && typeof window.AndroidAudio.updatePlaybackState === 'function') {
+    try {
+      window.AndroidAudio.updatePlaybackState(isPlaying);
     } catch (e) { }
   }
 }
