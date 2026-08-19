@@ -2060,10 +2060,19 @@ def get_local_ip():
         return "127.0.0.1"
 
 def start_android_server():
-    server_address = ('127.0.0.1', PORT)
-    httpd = HTTPServer(server_address, AetherPlayerHandler)
-    print("AetherPlayer Android server is running!")
-    httpd.serve_forever()
+    try:
+        class ReusableServer(HTTPServer):
+            allow_reuse_address = True
+
+        server_address = ('127.0.0.1', PORT)
+        httpd = ReusableServer(server_address, AetherPlayerHandler)
+        print("AetherPlayer Android server is running!")
+        httpd.serve_forever()
+    except OSError as e:
+        if e.errno == 98 or "already in use" in str(e).lower():
+            print("Server is already running on port", PORT)
+            return
+        raise e
 
 def run_server():
     server_address = ('', PORT)

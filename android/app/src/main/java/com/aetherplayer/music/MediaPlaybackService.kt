@@ -299,7 +299,7 @@ class MediaPlaybackService : Service(), MediaPlayer.OnPreparedListener, MediaPla
         stopProgressLoop()
         updateNotification(false)
         MainActivity.instance?.runOnUiThread {
-            MainActivity.instance?.evaluateJs("showToast('Playback error, skipping track...'); setTimeout(playNext, 1200);")
+            MainActivity.instance?.evaluateJs("console.warn('Native MediaPlayer error: $what, extra: $extra');")
         }
         return true
     }
