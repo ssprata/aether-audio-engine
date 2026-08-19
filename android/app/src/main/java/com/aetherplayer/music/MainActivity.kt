@@ -4,9 +4,13 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.view.View
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -20,13 +24,28 @@ import com.chaquo.python.android.AndroidPlatform
 import java.net.Socket
 import kotlin.concurrent.thread
 
+class BackgroundAudioWebView(context: Context) : WebView(context) {
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        // Prevent Chromium from pausing YouTube iframe media when screen is locked/minimized
+        super.onWindowVisibilityChanged(View.VISIBLE)
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, View.VISIBLE)
+    }
+
+    override fun dispatchWindowVisibilityChanged(visibility: Int) {
+        super.dispatchWindowVisibilityChanged(View.VISIBLE)
+    }
+}
+
 class MainActivity : AppCompatActivity() {
 
     companion object {
         var instance: MainActivity? = null
     }
 
-    private lateinit var webView: WebView
+    private lateinit var webView: BackgroundAudioWebView
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -40,7 +59,29 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Acquire partial wake lock to keep audio playback running when screen is locked
+        // Request system audio focus to keep audio channel open during screen-off
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val playbackAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+                val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                    .setAudioAttributes(playbackAttributes)
+                    .setAcceptsDelayedFocusGain(true)
+                    .setOnAudioFocusChangeListener { }
+                    .build()
+                audioManager.requestAudioFocus(focusRequest)
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.requestAudioFocus({ }, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // Acquire partial wake lock to keep CPU active when screen is locked
         try {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = powerManager.newWakeLock(
@@ -51,6 +92,9 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+
+        // Start Foreground Notification Service
+        MediaPlaybackService.start(this)
 
         // Initialize Python runtime inside Android context
         if (!Python.isStarted()) {
@@ -71,8 +115,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Initialize WebView layout
-        webView = WebView(this)
+        // Initialize BackgroundAudioWebView layout
+        webView = BackgroundAudioWebView(this)
         setContentView(webView)
         setupWebView()
 

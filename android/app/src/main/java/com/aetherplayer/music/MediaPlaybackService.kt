@@ -86,6 +86,7 @@ class MediaPlaybackService : Service() {
 
     private var mediaSession: MediaSession? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
     private val handler = Handler(Looper.getMainLooper())
 
     private var currentTitle = "AetherPlayer"
@@ -101,6 +102,10 @@ class MediaPlaybackService : Service() {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AetherPlayer::ServiceWakeLock")
             wakeLock?.acquire(24 * 60 * 60 * 1000L)
+
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+            wifiLock = wifiManager?.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "AetherPlayer::WifiLock")
+            wifiLock?.acquire()
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -286,6 +291,9 @@ class MediaPlaybackService : Service() {
         try {
             if (wakeLock?.isHeld == true) {
                 wakeLock?.release()
+            }
+            if (wifiLock?.isHeld == true) {
+                wifiLock?.release()
             }
         } catch (e: Exception) {
             e.printStackTrace()
