@@ -46,7 +46,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var webView: BackgroundAudioWebView
-    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,18 +76,6 @@ class MainActivity : AppCompatActivity() {
                 @Suppress("DEPRECATION")
                 audioManager.requestAudioFocus({ }, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        // Acquire partial wake lock to keep CPU active when screen is locked
-        try {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = powerManager.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "AetherPlayer::AudioPlaybackWakeLock"
-            )
-            wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24 hours max
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -176,15 +163,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        evaluateJs("if (typeof window.setAppVisibilityState === 'function') window.setAppVisibilityState(true);")
+    }
+
     override fun onPause() {
         super.onPause()
-        // Prevent WebView from freezing audio/timers when minimized
+        // Signal JS frontend that screen is off / minimized to stop DOM timers and CSS anims
+        evaluateJs("if (typeof window.setAppVisibilityState === 'function') window.setAppVisibilityState(false);")
+        // Prevent Chromium from killing background audio execution
         webView.resumeTimers()
     }
 
     override fun onStop() {
         super.onStop()
-        // Prevent WebView from freezing audio/timers when screen turns off
+        evaluateJs("if (typeof window.setAppVisibilityState === 'function') window.setAppVisibilityState(false);")
         webView.resumeTimers()
     }
 
@@ -199,9 +193,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         try {
-            if (wakeLock?.isHeld == true) {
-                wakeLock?.release()
-            }
             MediaPlaybackService.stopPlayback(this)
         } catch (e: Exception) {
             e.printStackTrace()

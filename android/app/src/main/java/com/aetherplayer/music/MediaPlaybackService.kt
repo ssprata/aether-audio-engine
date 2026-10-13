@@ -98,23 +98,49 @@ class MediaPlaybackService : Service() {
         super.onCreate()
         instance = this
 
-        try {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AetherPlayer::ServiceWakeLock")
-            wakeLock?.acquire(24 * 60 * 60 * 1000L)
-
-            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
-            wifiLock = wifiManager?.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "AetherPlayer::WifiLock")
-            wifiLock?.acquire()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
         createNotificationChannel()
         setupMediaSession()
 
         val notification = buildNotification(false)
         startForeground(NOTIFICATION_ID, notification)
+    }
+
+    private fun setPowerLocks(acquire: Boolean) {
+        try {
+            if (acquire) {
+                if (wakeLock == null) {
+                    val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+                    wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AetherPlayer::PlaybackWakeLock").apply {
+                        setReferenceCounted(false)
+                    }
+                }
+                if (wakeLock?.isHeld != true) {
+                    // Safety timeout of 1 hour, refreshed whenever new tracks or state updates arrive
+                    wakeLock?.acquire(60 * 60 * 1000L)
+                }
+
+                if (wifiLock == null) {
+                    val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+                    // Use standard FULL mode to allow battery-saving DTIM beacon sleeping while streaming
+                    @Suppress("DEPRECATION")
+                    wifiLock = wifiManager?.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL, "AetherPlayer::PlaybackWifiLock")?.apply {
+                        setReferenceCounted(false)
+                    }
+                }
+                if (wifiLock?.isHeld != true) {
+                    wifiLock?.acquire()
+                }
+            } else {
+                if (wakeLock?.isHeld == true) {
+                    wakeLock?.release()
+                }
+                if (wifiLock?.isHeld == true) {
+                    wifiLock?.release()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun setupMediaSession() {
@@ -176,11 +202,13 @@ class MediaPlaybackService : Service() {
                 val artUrl = intent.getStringExtra(EXTRA_ART_URL) ?: ""
                 isPlaying = intent.getBooleanExtra(EXTRA_IS_PLAYING, true)
 
+                setPowerLocks(isPlaying)
                 loadAlbumArt(artUrl)
                 updateMediaSessionState(if (isPlaying) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED)
             }
             ACTION_UPDATE_STATE -> {
                 isPlaying = intent.getBooleanExtra(EXTRA_IS_PLAYING, false)
+                setPowerLocks(isPlaying)
                 updateMediaSessionState(if (isPlaying) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED)
                 updateNotification(isPlaying)
             }
@@ -200,6 +228,8 @@ class MediaPlaybackService : Service() {
                 }
             }
             ACTION_STOP -> {
+                isPlaying = false
+                setPowerLocks(false)
                 stopForeground(true)
                 stopSelf()
             }
@@ -288,16 +318,7 @@ class MediaPlaybackService : Service() {
 
     override fun onDestroy() {
         mediaSession?.release()
-        try {
-            if (wakeLock?.isHeld == true) {
-                wakeLock?.release()
-            }
-            if (wifiLock?.isHeld == true) {
-                wifiLock?.release()
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        setPowerLocks(false)
         instance = null
         super.onDestroy()
     }

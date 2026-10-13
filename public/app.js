@@ -14,6 +14,20 @@ try {
   console.warn("Visibility override failed:", e);
 }
 
+// Mobile Battery & Background Power Saver
+let isAppVisible = true;
+window.setAppVisibilityState = function(visible) {
+  isAppVisible = !!visible;
+  if (!isAppVisible) {
+    document.body.classList.add('app-backgrounded');
+  } else {
+    document.body.classList.remove('app-backgrounded');
+    if (state.isPlaying && typeof updateTimelineUI === 'function') {
+      updateTimelineUI();
+    }
+  }
+};
+
 // AetherPlayer Frontend Application State
 let state = {
   activeTab: 'home',
@@ -2436,6 +2450,29 @@ function seekToPercentage(pct) {
   }
 }
 
+function updateTimelineUI(currentSec) {
+  if (currentSec === undefined) currentSec = state.playbackPosition;
+  const pct = state.duration > 0 ? (currentSec / state.duration) * 100 : 0;
+  const boundedPct = Math.min(100, Math.max(0, pct));
+  const timeFormatted = formatSeconds(currentSec);
+
+  const timeline = document.getElementById('playerTimeline');
+  if (timeline) timeline.value = boundedPct;
+  const currentTime = document.getElementById('playerCurrentTime');
+  if (currentTime) currentTime.textContent = timeFormatted;
+
+  // Update Mobile Scrubber & Mini progress bar
+  const mobileTimeline = document.getElementById('mobileNpTimeline');
+  if (mobileTimeline) mobileTimeline.value = boundedPct;
+  const mobileTime = document.getElementById('mobileNpCurrentTime');
+  if (mobileTime) mobileTime.textContent = timeFormatted;
+  const miniProg = document.getElementById('miniPlayerProgress');
+  if (miniProg) miniProg.style.width = `${boundedPct}%`;
+
+  // Update synced lyrics line
+  updateLyricsHighlight(currentSec);
+}
+
 function startProgressTimer(platform) {
   if (progressInterval) clearInterval(progressInterval);
 
@@ -2451,24 +2488,10 @@ function startProgressTimer(platform) {
 
     state.playbackPosition = currentSec;
 
-    // Update synced lyrics line
-    updateLyricsHighlight(currentSec);
+    // BATTERY SAVER: If screen is off or app is minimized, do NOT touch DOM / layout
+    if (!isAppVisible) return;
 
-    // Update UI Progress slider & timestamps
-    const pct = (currentSec / state.duration) * 100;
-    const boundedPct = Math.min(100, Math.max(0, pct));
-    const timeFormatted = formatSeconds(currentSec);
-
-    document.getElementById('playerTimeline').value = boundedPct;
-    document.getElementById('playerCurrentTime').textContent = timeFormatted;
-
-    // Update Mobile Scrubber & Mini progress bar
-    const mobileTimeline = document.getElementById('mobileNpTimeline');
-    if (mobileTimeline) mobileTimeline.value = boundedPct;
-    const mobileTime = document.getElementById('mobileNpCurrentTime');
-    if (mobileTime) mobileTime.textContent = timeFormatted;
-    const miniProg = document.getElementById('miniPlayerProgress');
-    if (miniProg) miniProg.style.width = `${boundedPct}%`;
+    updateTimelineUI(currentSec);
   }, 500);
 }
 
