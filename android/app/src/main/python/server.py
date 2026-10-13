@@ -181,20 +181,25 @@ def is_vibe_polluted(title, seed_title='', seed_artist=''):
     return False
 
 # Get related tracks from YouTube Music algorithmic radio (same vibe, no duplicates/slowed/reverb)
-def get_related_tracks(video_id, platform='youtube', seed_title='', seed_artist='', limit=8):
+def get_related_tracks(video_id, platform='youtube', seed_title='', seed_artist='', limit=15, exclude_ids=None):
     try:
         # Invoking radio=True triggers YouTube Music's machine-learned song radio algorithm
-        # We fetch up to 35 candidates so we can strictly filter out all junk and duplicates
-        playlist = ytmusic.get_watch_playlist(videoId=video_id, radio=True, limit=35)
+        # We fetch up to 50 candidates so we can strictly filter out all junk, duplicates, and already-played tracks
+        playlist = ytmusic.get_watch_playlist(videoId=video_id, radio=True, limit=50)
         tracks = playlist.get('tracks', [])
         
         if not tracks:
-            playlist = ytmusic.get_watch_playlist(videoId=video_id, limit=25)
+            playlist = ytmusic.get_watch_playlist(videoId=video_id, limit=30)
             tracks = playlist.get('tracks', [])
             
         related = []
         artist_counts = {}
         seen_ids = {video_id}
+        if exclude_ids:
+            if isinstance(exclude_ids, str):
+                seen_ids.update(x.strip() for x in exclude_ids.split(',') if x.strip())
+            elif isinstance(exclude_ids, (list, set)):
+                seen_ids.update(exclude_ids)
         
         for item in tracks:
             item_id = item.get('videoId')
@@ -1024,6 +1029,11 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             artist = query_params.get('artist', [''])[0].strip()
             platform = query_params.get('platform', [''])[0].strip()
             track_id = query_params.get('track_id', [''])[0].strip()
+            try:
+                limit_val = int(query_params.get('limit', ['15'])[0])
+            except ValueError:
+                limit_val = 15
+            exclude_ids = query_params.get('exclude_ids', [''])[0].strip()
             
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -1053,12 +1063,15 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                                         seed_id = tracks[0].get('id')
                             
                             if seed_id and len(seed_id) == 22 and seed_id.isalnum():
-                                recommend_url = f"https://api.spotify.com/v1/recommendations?seed_tracks={seed_id}&limit=12"
+                                recommend_url = f"https://api.spotify.com/v1/recommendations?seed_tracks={seed_id}&limit=20"
                                 req = urllib.request.Request(recommend_url, headers={'Authorization': f'Bearer {token}'})
                                 with urllib.request.urlopen(req) as res:
                                     recommend_data = json.loads(res.read().decode('utf-8'))
                                     for track in recommend_data.get('tracks', []):
                                         t_name = track.get('name', '')
+                                        t_id = track.get('id', '')
+                                        if exclude_ids and t_id in exclude_ids:
+                                            continue
                                         if is_vibe_polluted(t_name, seed_title=title, seed_artist=artist):
                                             continue
                                         artists = [a.get('name') for a in track.get('artists', [])]
@@ -1068,7 +1081,7 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                                         thumbnail = images[0].get('url') if images else ''
                                         
                                         recommendations.append({
-                                            'id': track.get('id'),
+                                            'id': t_id,
                                             'title': t_name,
                                             'artist': artist_str,
                                             'duration': format_duration_ms(duration_ms),
@@ -1076,7 +1089,7 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                                             'url': f"https://open.spotify.com/track/{track.get('id')}",
                                             'platform': 'spotify'
                                         })
-                                        if len(recommendations) >= 8:
+                                        if len(recommendations) >= limit_val:
                                             break
                     except Exception as e:
                         print("Spotify recommendations failed:", e)
@@ -1094,7 +1107,7 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                             target_video_id = search_results[0].get('id')
                             
                     if target_video_id:
-                        recommendations = get_related_tracks(target_video_id, platform=platform, seed_title=title, seed_artist=artist, limit=8)
+                        recommendations = get_related_tracks(target_video_id, platform=platform, seed_title=title, seed_artist=artist, limit=limit_val, exclude_ids=exclude_ids)
                 except Exception as e:
                     print("YouTube Music related vibe recommendations failed:", e)
                     

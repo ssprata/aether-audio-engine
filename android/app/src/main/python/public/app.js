@@ -45,7 +45,12 @@ let state = {
   lyricsMode: 0, // 0 = off, 1 = drawer, 2 = widget
   lyricsFontSize: 18,
   lyricsFontFamily: 'Outfit',
-  lyricsCustomFont: ''
+  lyricsCustomFont: '',
+  stationAnchor: null,       // Seed song/vibe for recommendations
+  isRadioSession: false,     // True if currently playing a radio/station session
+  autoplayEnabled: true,     // Endless autoplay enabled by default
+  activeRightTab: 'queue',   // 'queue', 'recent', 'details'
+  isFetchingMoreQueue: false
 };
 
 // Player Reference variables
@@ -1226,39 +1231,77 @@ function setupEventListeners() {
     });
   }
 
-  // Toggle Right Sidebar (Track Details) panel
+  // Toggle Queue & Track Details in Right Sidebar
+  const toggleQueueBtn = document.getElementById('btnToggleQueue');
   const toggleRightSidebarBtn = document.getElementById('btnToggleRightSidebar');
+  const mobileQueueBtn = document.getElementById('btnMobileNpQueue');
   const closeRightSidebarBtn = document.getElementById('btnCloseRightSidebar');
-  
-  if (toggleRightSidebarBtn) {
-    // Initial active state setup
-    const isCollapsed = localStorage.getItem('rightSidebarCollapsed') === 'true';
-    const container = document.getElementById('appContainer');
-    if (isCollapsed) {
-      container.classList.add('right-sidebar-collapsed');
-      toggleRightSidebarBtn.classList.remove('active');
-    } else {
-      container.classList.remove('right-sidebar-collapsed');
-      toggleRightSidebarBtn.classList.add('active');
-    }
 
-    toggleRightSidebarBtn.addEventListener('click', () => {
-      container.classList.toggle('right-sidebar-collapsed');
-      const collapsedNow = container.classList.contains('right-sidebar-collapsed');
-      localStorage.setItem('rightSidebarCollapsed', collapsedNow);
-      toggleRightSidebarBtn.classList.toggle('active', !collapsedNow);
+  // Initial active state setup
+  const isCollapsed = localStorage.getItem('rightSidebarCollapsed') === 'true';
+  const container = document.getElementById('appContainer');
+  if (isCollapsed) {
+    container.classList.add('right-sidebar-collapsed');
+    if (toggleRightSidebarBtn) toggleRightSidebarBtn.classList.remove('active');
+    if (toggleQueueBtn) toggleQueueBtn.classList.remove('active');
+  } else {
+    container.classList.remove('right-sidebar-collapsed');
+    if (toggleQueueBtn) toggleQueueBtn.classList.add('active');
+  }
+
+  if (toggleQueueBtn) {
+    toggleQueueBtn.addEventListener('click', toggleQueuePanel);
+  }
+  if (toggleRightSidebarBtn) {
+    toggleRightSidebarBtn.addEventListener('click', toggleDetailsPanel);
+  }
+  if (mobileQueueBtn) {
+    mobileQueueBtn.addEventListener('click', toggleQueuePanel);
+  }
+  if (closeRightSidebarBtn) {
+    closeRightSidebarBtn.style.display = 'block';
+    closeRightSidebarBtn.addEventListener('click', closeRightSidebarPanel);
+  }
+
+  // Sidebar Tab buttons
+  document.querySelectorAll('.queue-nav-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tabName = btn.dataset.tab;
+      if (tabName) switchRightSidebarTab(tabName);
+    });
+  });
+
+  // Autoplay toggle button
+  const autoplayBtn = document.getElementById('btnToggleAutoplay');
+  if (autoplayBtn) {
+    autoplayBtn.addEventListener('click', () => {
+      state.autoplayEnabled = !state.autoplayEnabled;
+      autoplayBtn.classList.toggle('active', state.autoplayEnabled);
+      autoplayBtn.innerHTML = `<span class="autoplay-dot"></span> Autoplay: ${state.autoplayEnabled ? 'ON' : 'OFF'}`;
+      showToast(`Autoplay ${state.autoplayEnabled ? 'Enabled' : 'Disabled'}`);
+      renderQueueUI();
     });
   }
 
-  if (closeRightSidebarBtn) {
-    closeRightSidebarBtn.style.display = 'block'; // Make close button visible on panel header
-    closeRightSidebarBtn.addEventListener('click', () => {
-      const container = document.getElementById('appContainer');
-      container.classList.add('right-sidebar-collapsed');
-      localStorage.setItem('rightSidebarCollapsed', 'true');
-      if (toggleRightSidebarBtn) {
-        toggleRightSidebarBtn.classList.remove('active');
+  // Clear upcoming queue
+  const clearQueueBtn = document.getElementById('btnClearQueue');
+  if (clearQueueBtn) {
+    clearQueueBtn.addEventListener('click', () => {
+      if (state.playQueue && state.playQueue.length > state.currentQueueIndex + 1) {
+        state.playQueue = state.playQueue.slice(0, state.currentQueueIndex + 1);
+        renderQueueUI();
+        showToast('Upcoming queue cleared');
+      } else {
+        showToast('Queue is already empty');
       }
+    });
+  }
+
+  // Refresh listening history
+  const refreshHistoryBtn = document.getElementById('btnRefreshHistory');
+  if (refreshHistoryBtn) {
+    refreshHistoryBtn.addEventListener('click', () => {
+      renderRecentUI(true);
     });
   }
 }
@@ -1562,11 +1605,25 @@ function createSongCard(song, queueContext) {
   const card = document.createElement('div');
   card.className = 'song-card';
   card.dataset.platform = song.platform;
-  card.addEventListener('click', () => {
-    state.playQueue = queueContext;
-    const index = queueContext.findIndex(s => s.id === song.id);
-    playSong(song, index !== -1 ? index : 0);
-  });
+  const handleCardPlayback = () => {
+    if (queueContext && queueContext.length > 1) {
+      state.playQueue = [...queueContext];
+      state.stationAnchor = song;
+      state.isRadioSession = false;
+      const index = queueContext.findIndex(s => s.id === song.id);
+      playSong(song, index !== -1 ? index : 0);
+    } else {
+      // Single track search discovery - start endless vibe radio station anchored to this song!
+      state.stationAnchor = song;
+      state.isRadioSession = true;
+      state.playQueue = [song];
+      state.currentQueueIndex = 0;
+      playSong(song, 0);
+      fetchStationVibesForSong(song, { isInitial: true });
+    }
+  };
+
+  card.addEventListener('click', handleCardPlayback);
 
   const imgWrapper = document.createElement('div');
   imgWrapper.className = 'song-card-img-wrapper';
@@ -1608,9 +1665,7 @@ function createSongCard(song, queueContext) {
   playActionBtn.innerHTML = `<svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
   playActionBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    state.playQueue = queueContext;
-    const index = queueContext.findIndex(s => s.id === song.id);
-    playSong(song, index !== -1 ? index : 0);
+    handleCardPlayback();
   });
 
   const addBtn = document.createElement('button');
@@ -1991,8 +2046,10 @@ function addSongToPlaylist(playlistId, song) {
 
 // --- MULTI-SOURCE AUDIO PLAYBACK ENGINE ---
 function playSongList(songs, startIndex) {
-  state.playQueue = songs;
+  state.playQueue = [...songs];
   if (songs.length > 0 && startIndex < songs.length) {
+    state.stationAnchor = songs[songs.length - 1] || songs[startIndex];
+    state.isRadioSession = false;
     playSong(songs[startIndex], startIndex);
   }
 }
@@ -2016,6 +2073,9 @@ function playSong(song, index) {
   updateRightSidebar(song);
   updateFavoriteUI(song);
   updateRepeatUI();
+
+  // Sync Spotify-style Queue UI
+  renderQueueUI();
 
   // Update UI Player Details
   document.getElementById('playerSongTitle').textContent = song.title;
@@ -2305,6 +2365,13 @@ function playNext() {
   }
   if (state.playQueue.length === 0) return;
 
+  // Seamless pre-fetch: if within 4 tracks of queue end, fetch more from anchor!
+  if (state.autoplayEnabled && (state.stationAnchor || state.currentSong) && !state.isFetchingMoreQueue) {
+    if (state.currentQueueIndex >= state.playQueue.length - 4) {
+      extendStationQueue(false);
+    }
+  }
+
   let nextIndex = state.currentQueueIndex + 1;
   if (state.shuffle) {
     nextIndex = Math.floor(Math.random() * state.playQueue.length);
@@ -2313,6 +2380,10 @@ function playNext() {
   } else if (nextIndex >= state.playQueue.length) {
     if (state.repeat === 'all') {
       nextIndex = 0;
+    } else if (state.autoplayEnabled && (state.stationAnchor || state.currentSong)) {
+      showToast('Finding more similar vibes...');
+      extendStationQueue(true);
+      return;
     } else {
       showToast('End of queue');
       state.isPlaying = false;
@@ -2432,6 +2503,9 @@ function updatePlayButtonUI(isPlaying) {
   const mobilePauseIcon = document.getElementById('mobileNpPauseIcon');
   if (mobilePlayIcon) mobilePlayIcon.style.display = isPlaying ? 'none' : 'block';
   if (mobilePauseIcon) mobilePauseIcon.style.display = isPlaying ? 'block' : 'none';
+
+  const queueBars = document.getElementById('queueNowPlayingBars');
+  if (queueBars) queueBars.style.display = isPlaying ? 'flex' : 'none';
 
   if ('mediaSession' in navigator) {
     try {
@@ -2891,48 +2965,407 @@ async function fetchAndRenderRecommendations(song) {
   }
 }
 
-async function triggerAutoplayRecommendations(song) {
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// --- SPOTIFY-STYLE QUEUE & ANCHOR STATION ENGINE ---
+async function fetchStationVibesForSong(seedSong, options = {}) {
+  if (!seedSong) return;
+  state.stationAnchor = seedSong;
+  renderQueueUI();
+
   try {
-    const url = `/api/recommendations?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || '')}&platform=${song.platform}&track_id=${song.id || ''}`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('API failed');
-    
-    const data = await response.json();
-    
-    const newTracks = data.filter(track => {
-      const isAlreadyInQueue = state.playQueue.some(t => t.id === track.id || t.title.toLowerCase() === track.title.toLowerCase());
-      const isDuplicateOfSeed = isDuplicateTrack(track, song);
-      return !isAlreadyInQueue && !isDuplicateOfSeed;
-    });
-    
-    if (newTracks.length > 0) {
-      const insertIndex = state.playQueue.length;
-      newTracks.forEach(track => {
+    const excludeIds = (state.playQueue || []).map(s => s.id).filter(Boolean).join(',');
+    const url = `/api/recommendations?title=${encodeURIComponent(seedSong.title)}&artist=${encodeURIComponent(seedSong.artist || '')}&platform=${seedSong.platform || 'youtube'}&track_id=${seedSong.id || ''}&limit=20&exclude_ids=${encodeURIComponent(excludeIds)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Recommendations request failed");
+    const data = await res.json();
+
+    if (Array.isArray(data) && data.length > 0) {
+      const filtered = data.filter(track => {
+        const notInQueue = !state.playQueue.some(q => q.id === track.id);
+        const notDupeOfSeed = !isDuplicateTrack(track, seedSong);
+        return notInQueue && notDupeOfSeed;
+      });
+
+      filtered.forEach(track => {
         state.playQueue.push(track);
       });
-      
+
+      state.currentVibeTracks = filtered;
+
+      // Keep Search tab recommendations UI updated
       const section = document.getElementById('recommendationsSection');
       const grid = document.getElementById('recommendationsGrid');
       const seedText = document.getElementById('recommendationSeedText');
       if (section && grid && seedText) {
         section.style.display = 'block';
-        seedText.textContent = `${song.title} - ${song.artist || 'Unknown'}`;
+        seedText.textContent = `${seedSong.title} - ${seedSong.artist || 'Unknown'}`;
         grid.innerHTML = '';
-        newTracks.forEach(track => {
-          grid.appendChild(createSongCard(track, newTracks));
+        filtered.forEach(track => {
+          grid.appendChild(createSongCard(track, filtered));
         });
       }
-      
-      playSong(state.playQueue[insertIndex], insertIndex);
-    } else {
-      showToast('Queue completed');
-      stopActivePlayback();
     }
   } catch (err) {
-    console.error("Autoplay failed:", err);
-    showToast('Queue completed');
-    stopActivePlayback();
+    console.error("Error fetching initial station queue:", err);
+  } finally {
+    renderQueueUI();
   }
+}
+
+async function extendStationQueue(playImmediately = false) {
+  if (state.isFetchingMoreQueue) return;
+  const seed = state.stationAnchor || state.currentSong;
+  if (!seed) return;
+
+  state.isFetchingMoreQueue = true;
+  try {
+    const excludeIds = (state.playQueue || []).map(s => s.id).filter(Boolean).slice(-50).join(',');
+    const url = `/api/recommendations?title=${encodeURIComponent(seed.title)}&artist=${encodeURIComponent(seed.artist || '')}&platform=${seed.platform || 'youtube'}&track_id=${seed.id || ''}&limit=15&exclude_ids=${encodeURIComponent(excludeIds)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Extend queue request failed");
+    const data = await res.json();
+
+    if (Array.isArray(data) && data.length > 0) {
+      const filtered = data.filter(track => {
+        const notInQueue = !state.playQueue.some(q => q.id === track.id);
+        const notDupeOfSeed = !isDuplicateTrack(track, seed);
+        return notInQueue && notDupeOfSeed;
+      });
+
+      if (filtered.length > 0) {
+        const insertIndex = state.playQueue.length;
+        filtered.forEach(track => {
+          state.playQueue.push(track);
+        });
+        renderQueueUI();
+
+        if (playImmediately) {
+          playSong(state.playQueue[insertIndex], insertIndex);
+          return;
+        }
+      } else if (playImmediately) {
+        showToast('End of queue');
+        state.isPlaying = false;
+        updatePlayButtonUI(false);
+      }
+    } else if (playImmediately) {
+      showToast('End of queue');
+      state.isPlaying = false;
+      updatePlayButtonUI(false);
+    }
+  } catch (err) {
+    console.error("Error extending station queue:", err);
+    if (playImmediately) {
+      showToast('End of queue');
+      state.isPlaying = false;
+      updatePlayButtonUI(false);
+    }
+  } finally {
+    state.isFetchingMoreQueue = false;
+    renderQueueUI();
+  }
+}
+
+function renderQueueUI() {
+  // 1. Update Now Playing Card in Right Sidebar
+  const nowThumbImg = document.getElementById('queueNowThumbImg');
+  const nowThumbPlaceholder = document.getElementById('queueNowThumbPlaceholder');
+  const nowTitle = document.getElementById('queueNowTitle');
+  const nowArtist = document.getElementById('queueNowArtist');
+  const nowBars = document.getElementById('queueNowPlayingBars');
+  const bannerSeed = document.getElementById('queueStationSeedText');
+
+  if (state.currentSong) {
+    if (nowTitle) nowTitle.textContent = state.currentSong.title;
+    if (nowArtist) nowArtist.textContent = state.currentSong.artist || 'Unknown Artist';
+    if (nowThumbImg && nowThumbPlaceholder) {
+      if (state.currentSong.thumbnail) {
+        nowThumbImg.src = state.currentSong.thumbnail;
+        nowThumbImg.style.display = 'block';
+        nowThumbPlaceholder.style.display = 'none';
+      } else {
+        nowThumbImg.style.display = 'none';
+        nowThumbPlaceholder.style.display = 'flex';
+      }
+    }
+    if (nowBars) {
+      nowBars.style.display = state.isPlaying ? 'flex' : 'none';
+    }
+  } else {
+    if (nowTitle) nowTitle.textContent = 'No Song Playing';
+    if (nowArtist) nowArtist.textContent = 'Select a song to start listening';
+    if (nowThumbImg) nowThumbImg.style.display = 'none';
+    if (nowThumbPlaceholder) nowThumbPlaceholder.style.display = 'flex';
+    if (nowBars) nowBars.style.display = 'none';
+  }
+
+  // Update Seed status banner
+  if (bannerSeed) {
+    if (state.stationAnchor) {
+      bannerSeed.textContent = `Station: ${state.stationAnchor.title}`;
+      bannerSeed.title = `Continuous vibe locked to: ${state.stationAnchor.title} by ${state.stationAnchor.artist || 'Unknown'}`;
+    } else {
+      bannerSeed.textContent = 'Continuous Similar Vibe Radio';
+    }
+  }
+
+  // 2. Update Next Up List
+  const queueList = document.getElementById('spotifyQueueList');
+  const queueCount = document.getElementById('queueTrackCount');
+  if (!queueList) return;
+
+  const upcomingTracks = (state.playQueue || []).slice(state.currentQueueIndex + 1);
+  if (queueCount) {
+    queueCount.textContent = `${upcomingTracks.length} tracks`;
+  }
+
+  if (upcomingTracks.length === 0) {
+    queueList.innerHTML = `<div class="spotify-queue-empty">Queue is empty.${state.autoplayEnabled ? ' Similar vibes will play when this track ends.' : ''}</div>`;
+    return;
+  }
+
+  queueList.innerHTML = '';
+  upcomingTracks.forEach((track, offset) => {
+    const queueIndex = state.currentQueueIndex + 1 + offset;
+    const item = document.createElement('div');
+    item.className = 'spotify-queue-item';
+    item.title = `Play next: ${track.title} - ${track.artist || ''}`;
+
+    const thumbHtml = track.thumbnail
+      ? `<img src="${track.thumbnail}" alt="Cover" loading="lazy">`
+      : `<div class="spotify-queue-thumb-placeholder"><svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg></div>`;
+
+    item.innerHTML = `
+      <div class="queue-item-thumb">
+        ${thumbHtml}
+        <div class="queue-item-hover-play">
+          <svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+        </div>
+      </div>
+      <div class="queue-item-info">
+        <div class="queue-item-title">${escapeHtml(track.title)}</div>
+        <div class="queue-item-artist">${escapeHtml(track.artist || 'Unknown')}</div>
+      </div>
+      <div class="queue-item-right">
+        <span class="queue-item-duration">${track.duration || '3:00'}</span>
+        <button class="queue-item-remove-btn" title="Remove from queue">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+    `;
+
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('.queue-item-remove-btn')) return;
+      playSong(track, queueIndex);
+    });
+
+    const removeBtn = item.querySelector('.queue-item-remove-btn');
+    if (removeBtn) {
+      removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        state.playQueue.splice(queueIndex, 1);
+        renderQueueUI();
+        showToast('Removed from queue');
+      });
+    }
+
+    queueList.appendChild(item);
+  });
+}
+
+async function renderRecentUI(forceRefresh = false) {
+  const recentList = document.getElementById('spotifyRecentList');
+  if (!recentList) return;
+
+  recentList.innerHTML = '<div style="text-align: center; color: var(--text-secondary); padding: 18px 0; font-size: 0.8rem;">Loading recent tracks...</div>';
+
+  try {
+    const res = await fetch('/api/history');
+    if (!res.ok) throw new Error("Failed to fetch history");
+    const history = await res.json();
+
+    if (!Array.isArray(history) || history.length === 0) {
+      recentList.innerHTML = '<div class="spotify-queue-empty">No recent listening history yet</div>';
+      return;
+    }
+
+    const uniqueHistory = [];
+    const seen = new Set();
+    for (const item of history) {
+      if (!seen.has(item.id)) {
+        seen.add(item.id);
+        uniqueHistory.push(item);
+      }
+      if (uniqueHistory.length >= 30) break;
+    }
+
+    recentList.innerHTML = '';
+    uniqueHistory.forEach(track => {
+      const item = document.createElement('div');
+      item.className = 'spotify-queue-item';
+      item.title = `Play: ${track.title} - ${track.artist || ''}`;
+
+      const thumbHtml = track.thumbnail
+        ? `<img src="${track.thumbnail}" alt="Cover" loading="lazy">`
+        : `<div class="spotify-queue-thumb-placeholder"><svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg></div>`;
+
+      item.innerHTML = `
+        <div class="queue-item-thumb">
+          ${thumbHtml}
+          <div class="queue-item-hover-play">
+            <svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          </div>
+        </div>
+        <div class="queue-item-info">
+          <div class="queue-item-title">${escapeHtml(track.title)}</div>
+          <div class="queue-item-artist">${escapeHtml(track.artist || 'Unknown')}</div>
+        </div>
+        <div class="queue-item-right">
+          <span class="queue-item-duration">${track.duration || ''}</span>
+        </div>
+      `;
+
+      item.addEventListener('click', () => {
+        state.stationAnchor = track;
+        state.isRadioSession = true;
+        state.playQueue = [track];
+        state.currentQueueIndex = 0;
+        playSong(track, 0);
+        fetchStationVibesForSong(track, { isInitial: true });
+        switchRightSidebarTab('queue');
+      });
+
+      recentList.appendChild(item);
+    });
+  } catch (err) {
+    console.error("Error loading recent tracks:", err);
+    recentList.innerHTML = '<div class="spotify-queue-empty">Failed to load recent history</div>';
+  }
+}
+
+function switchRightSidebarTab(tabName) {
+  state.activeRightTab = tabName;
+
+  document.querySelectorAll('.queue-nav-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tabName);
+  });
+
+  const viewQueue = document.getElementById('viewQueueTab');
+  const viewRecent = document.getElementById('viewRecentTab');
+  const viewDetails = document.getElementById('viewDetailsTab');
+
+  if (viewQueue) {
+    viewQueue.style.display = tabName === 'queue' ? 'block' : 'none';
+    viewQueue.classList.toggle('active', tabName === 'queue');
+  }
+  if (viewRecent) {
+    viewRecent.style.display = tabName === 'recent' ? 'block' : 'none';
+    viewRecent.classList.toggle('active', tabName === 'recent');
+  }
+  if (viewDetails) {
+    viewDetails.style.display = tabName === 'details' ? 'block' : 'none';
+    viewDetails.classList.toggle('active', tabName === 'details');
+  }
+
+  const toggleQueueBtn = document.getElementById('btnToggleQueue');
+  const toggleSidebarBtn = document.getElementById('btnToggleRightSidebar');
+  const container = document.getElementById('appContainer');
+  const isOpen = !container.classList.contains('right-sidebar-collapsed');
+
+  if (toggleQueueBtn) {
+    toggleQueueBtn.classList.toggle('active', isOpen && tabName === 'queue');
+  }
+  if (toggleSidebarBtn) {
+    toggleSidebarBtn.classList.toggle('active', isOpen && tabName === 'details');
+  }
+
+  if (tabName === 'queue') {
+    renderQueueUI();
+  } else if (tabName === 'recent') {
+    renderRecentUI();
+  }
+}
+
+function toggleQueuePanel() {
+  const container = document.getElementById('appContainer');
+  const sidebar = document.getElementById('rightSidebar');
+  const isMobile = window.innerWidth <= 1024;
+
+  if (isMobile) {
+    if (sidebar.classList.contains('mobile-open') && state.activeRightTab === 'queue') {
+      sidebar.classList.remove('mobile-open');
+    } else {
+      sidebar.classList.add('mobile-open');
+      switchRightSidebarTab('queue');
+    }
+    return;
+  }
+
+  const isCollapsed = container.classList.contains('right-sidebar-collapsed');
+  if (isCollapsed) {
+    container.classList.remove('right-sidebar-collapsed');
+    localStorage.setItem('rightSidebarCollapsed', 'false');
+    switchRightSidebarTab('queue');
+  } else if (state.activeRightTab === 'queue') {
+    container.classList.add('right-sidebar-collapsed');
+    localStorage.setItem('rightSidebarCollapsed', 'true');
+    const toggleQueueBtn = document.getElementById('btnToggleQueue');
+    if (toggleQueueBtn) toggleQueueBtn.classList.remove('active');
+  } else {
+    switchRightSidebarTab('queue');
+  }
+}
+
+function toggleDetailsPanel() {
+  const container = document.getElementById('appContainer');
+  const sidebar = document.getElementById('rightSidebar');
+  const isMobile = window.innerWidth <= 1024;
+
+  if (isMobile) {
+    if (sidebar.classList.contains('mobile-open') && state.activeRightTab === 'details') {
+      sidebar.classList.remove('mobile-open');
+    } else {
+      sidebar.classList.add('mobile-open');
+      switchRightSidebarTab('details');
+    }
+    return;
+  }
+
+  const isCollapsed = container.classList.contains('right-sidebar-collapsed');
+  if (isCollapsed) {
+    container.classList.remove('right-sidebar-collapsed');
+    localStorage.setItem('rightSidebarCollapsed', 'false');
+    switchRightSidebarTab('details');
+  } else if (state.activeRightTab === 'details') {
+    container.classList.add('right-sidebar-collapsed');
+    localStorage.setItem('rightSidebarCollapsed', 'true');
+    const toggleSidebarBtn = document.getElementById('btnToggleRightSidebar');
+    if (toggleSidebarBtn) toggleSidebarBtn.classList.remove('active');
+  } else {
+    switchRightSidebarTab('details');
+  }
+}
+
+function closeRightSidebarPanel() {
+  const container = document.getElementById('appContainer');
+  const sidebar = document.getElementById('rightSidebar');
+  sidebar.classList.remove('mobile-open');
+  container.classList.add('right-sidebar-collapsed');
+  localStorage.setItem('rightSidebarCollapsed', 'true');
+
+  const toggleQueueBtn = document.getElementById('btnToggleQueue');
+  const toggleSidebarBtn = document.getElementById('btnToggleRightSidebar');
+  if (toggleQueueBtn) toggleQueueBtn.classList.remove('active');
+  if (toggleSidebarBtn) toggleSidebarBtn.classList.remove('active');
 }
 
 // --- ALBUM & ARTIST RENDERING LOGIC ---
