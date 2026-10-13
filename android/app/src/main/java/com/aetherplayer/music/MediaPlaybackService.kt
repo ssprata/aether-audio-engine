@@ -105,9 +105,14 @@ class MediaPlaybackService : Service() {
         startForeground(NOTIFICATION_ID, notification)
     }
 
+    private var releaseLockRunnable: Runnable? = null
+
     private fun setPowerLocks(acquire: Boolean) {
         try {
             if (acquire) {
+                // Cancel pending release if a new track starts playing
+                releaseLockRunnable?.let { handler.removeCallbacks(it) }
+
                 if (wakeLock == null) {
                     val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
                     wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AetherPlayer::PlaybackWakeLock").apply {
@@ -115,13 +120,11 @@ class MediaPlaybackService : Service() {
                     }
                 }
                 if (wakeLock?.isHeld != true) {
-                    // Safety timeout of 1 hour, refreshed whenever new tracks or state updates arrive
                     wakeLock?.acquire(60 * 60 * 1000L)
                 }
 
                 if (wifiLock == null) {
                     val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
-                    // Use standard FULL mode to allow battery-saving DTIM beacon sleeping while streaming
                     @Suppress("DEPRECATION")
                     wifiLock = wifiManager?.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL, "AetherPlayer::PlaybackWifiLock")?.apply {
                         setReferenceCounted(false)
@@ -131,13 +134,32 @@ class MediaPlaybackService : Service() {
                     wifiLock?.acquire()
                 }
             } else {
-                if (wakeLock?.isHeld == true) {
-                    wakeLock?.release()
+                // Do not drop power locks instantly: allow a 15-second grace period
+                // so that background track transitions, buffering, and API calls can finish
+                // smoothly while the device screen is locked!
+                releaseLockRunnable?.let { handler.removeCallbacks(it) }
+                releaseLockRunnable = Runnable {
+                    if (!isPlaying) {
+                        try {
+                            if (wakeLock?.isHeld == true) wakeLock?.release()
+                            if (wifiLock?.isHeld == true) wifiLock?.release()
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
                 }
-                if (wifiLock?.isHeld == true) {
-                    wifiLock?.release()
-                }
+                handler.postDelayed(releaseLockRunnable!!, 15000L)
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun releasePowerLocksImmediately() {
+        releaseLockRunnable?.let { handler.removeCallbacks(it) }
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+            if (wifiLock?.isHeld == true) wifiLock?.release()
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -229,7 +251,7 @@ class MediaPlaybackService : Service() {
             }
             ACTION_STOP -> {
                 isPlaying = false
-                setPowerLocks(false)
+                releasePowerLocksImmediately()
                 stopForeground(true)
                 stopSelf()
             }
@@ -318,7 +340,7 @@ class MediaPlaybackService : Service() {
 
     override fun onDestroy() {
         mediaSession?.release()
-        setPowerLocks(false)
+        releasePowerLocksImmediately()
         instance = null
         super.onDestroy()
     }

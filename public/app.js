@@ -2079,10 +2079,12 @@ function playSong(song, index) {
   state.currentSong = song;
   state.currentQueueIndex = index;
   state.isPlaying = true;
+  state.isUserPaused = false;
   state.isTransitioning = true;
+  state.transitionStartTime = Date.now();
   setTimeout(() => {
     state.isTransitioning = false;
-  }, 1500);
+  }, 1200);
 
   // Log listening history
   logPlayHistory(song);
@@ -2286,10 +2288,6 @@ async function playProxyFallback(song) {
 }
 
 function stopActivePlayback() {
-  if (window.AndroidAudio && typeof window.AndroidAudio.stop === 'function') {
-    try { window.AndroidAudio.stop(); } catch(e) {}
-  }
-
   if (progressInterval) {
     clearInterval(progressInterval);
     progressInterval = null;
@@ -2379,10 +2377,13 @@ window.onNativeAudioStateChange = function(isPlaying) {
 };
 
 function playNext() {
-  if (state.isTransitioning) {
-    console.log("Ignoring playNext() during transition...");
+  const now = Date.now();
+  if (state.isTransitioning && (now - (state.transitionStartTime || 0) < 1800)) {
+    console.log("Ignoring playNext() during rapid transition...");
     return;
   }
+  state.isTransitioning = true;
+  state.transitionStartTime = now;
   if (state.playQueue.length === 0) return;
 
   // Seamless pre-fetch: if within 4 tracks of queue end, fetch more from anchor!
@@ -2408,6 +2409,9 @@ function playNext() {
       showToast('End of queue');
       state.isPlaying = false;
       updatePlayButtonUI(false);
+      if (window.AndroidAudio && typeof window.AndroidAudio.stop === 'function') {
+        try { window.AndroidAudio.stop(); } catch(e) {}
+      }
       return;
     }
   }
@@ -2488,6 +2492,20 @@ function startProgressTimer(platform) {
 
     state.playbackPosition = currentSec;
 
+    // Background track-end detector:
+    // When the phone is locked, YouTube IFrame API can occasionally fail to dispatch onStateChange: ENDED.
+    // If current playback timestamp reaches the duration, automatically trigger the next track!
+    if (state.duration > 0 && currentSec >= state.duration - 0.75) {
+      const now = Date.now();
+      if (!state.isTransitioning || (now - (state.transitionStartTime || 0) > 3000)) {
+        console.log("Track completion detected by background ticker, advancing queue...");
+        state.isTransitioning = true;
+        state.transitionStartTime = now;
+        playNext();
+        return;
+      }
+    }
+
     // BATTERY SAVER: If screen is off or app is minimized, do NOT touch DOM / layout
     if (!isAppVisible) return;
 
@@ -2500,6 +2518,7 @@ function onPlayerStateChange(event) {
   if (event.data === YT.PlayerState.PLAYING) {
     state.isTransitioning = false;
     state.isPlaying = true;
+    state.isUserPaused = false;
     updatePlayButtonUI(true);
   }
   if (event.data === YT.PlayerState.PAUSED) {
@@ -2513,6 +2532,7 @@ function onPlayerStateChange(event) {
     }
   }
   if (event.data === YT.PlayerState.ENDED) {
+    state.isTransitioning = false;
     playNext();
   }
 }
