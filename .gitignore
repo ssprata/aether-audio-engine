@@ -1,0 +1,43 @@
+# User data, backups & credentials
+config.json
+history.json
+playlists_backup.json
+
+# User uploads (custom avatars & wallpapers)
+public/uploads/*
+!public/uploads/.gitkeep
+android/app/src/main/python/public/uploads/*
+!android/app/src/main/python/public/uploads/.gitkeep
+
+# Python cache & runtime artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+venv/
+.venv/
+env/
+
+# Node dependencies & logs
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Android Gradle build outputs & local configuration
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.apk
+*.aab
+
+# OS & Editor generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+*.swp
+*.bak
