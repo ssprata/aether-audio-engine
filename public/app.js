@@ -1606,8 +1606,9 @@ function createSongCard(song, queueContext) {
   card.className = 'song-card';
   card.dataset.platform = song.platform;
   const handleCardPlayback = () => {
+    state.currentPlaylistId = null; // Clear playlist context when playing from search
     if (queueContext && queueContext.length > 1) {
-      state.playQueue = [...queueContext];
+      state.playQueue = queueContext.map(s => ({ ...s }));
       state.stationAnchor = song;
       state.isRadioSession = false;
       const index = queueContext.findIndex(s => s.id === song.id);
@@ -1616,7 +1617,7 @@ function createSongCard(song, queueContext) {
       // Single track search discovery - start endless vibe radio station anchored to this song!
       state.stationAnchor = song;
       state.isRadioSession = true;
-      state.playQueue = [song];
+      state.playQueue = [{ ...song }];
       state.currentQueueIndex = 0;
       playSong(song, 0);
       fetchStationVibesForSong(song, { isInitial: true });
@@ -1915,7 +1916,10 @@ function openPlaylistDetails(playlistId) {
     }
 
     row.addEventListener('click', () => {
-      state.playQueue = pl.songs;
+      // Clone playlist songs to ensure recommendations NEVER pollute the playlist
+      state.playQueue = pl.songs.map(s => ({ ...s }));
+      state.stationAnchor = pl.songs[pl.songs.length - 1] || song;
+      state.isRadioSession = false;
       playSong(song, idx);
     });
 
@@ -2046,7 +2050,7 @@ function addSongToPlaylist(playlistId, song) {
 
 // --- MULTI-SOURCE AUDIO PLAYBACK ENGINE ---
 function playSongList(songs, startIndex) {
-  state.playQueue = [...songs];
+  state.playQueue = songs.map(s => ({ ...s }));
   if (songs.length > 0 && startIndex < songs.length) {
     state.stationAnchor = songs[songs.length - 1] || songs[startIndex];
     state.isRadioSession = false;
@@ -2188,9 +2192,11 @@ function playSong(song, index) {
     } catch (e) { }
   }
 
-  // If in playlist detail view, refresh highlighted row
-  if (state.currentPlaylistId) {
-    openPlaylistDetails(state.currentPlaylistId);
+  // If user is currently looking at playlist details, update the active row highlight only
+  if (state.activeTab === 'playlist-detail') {
+    document.querySelectorAll('#playlistSongsContainer .song-row').forEach((row, rIdx) => {
+      row.classList.toggle('active', rIdx === index);
+    });
   }
 
   // Fetch and display similar song recommendations
@@ -2947,17 +2953,6 @@ async function fetchAndRenderRecommendations(song) {
         };
       }
     }
-
-    // Radio Autoplay mode queue builder
-    if (state.playQueue && state.playQueue.length === 1 && state.playQueue[0].id === song.id) {
-      song.isRadio = true;
-      filteredTracks.forEach(track => {
-        if (!state.playQueue.some(t => t.id === track.id)) {
-          state.playQueue.push(track);
-        }
-      });
-      console.log("Radio Mode Queue Built:", state.playQueue);
-    }
   } catch (err) {
     console.error("Vibe recommendations error:", err);
     if (grid) grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 20px;">Failed to load similar vibes.</div>';
@@ -3618,7 +3613,10 @@ async function openAlbumDetails(albumId, platform) {
         }
         
         row.addEventListener('click', () => {
-          state.playQueue = album.tracks;
+          state.currentPlaylistId = null;
+          state.playQueue = album.tracks.map(s => ({ ...s }));
+          state.stationAnchor = album.tracks[album.tracks.length - 1] || song;
+          state.isRadioSession = false;
           playSong(song, idx);
         });
         
@@ -3684,8 +3682,8 @@ async function openAlbumDetails(albumId, platform) {
 // Play all tracks from currently loaded album
 document.getElementById('btnPlayAlbum').addEventListener('click', () => {
   if (state.tempAlbumTracks && state.tempAlbumTracks.length > 0) {
-    state.playQueue = state.tempAlbumTracks;
-    playSong(state.tempAlbumTracks[0], 0);
+    state.currentPlaylistId = null;
+    playSongList(state.tempAlbumTracks, 0);
   }
 });
 
@@ -4004,7 +4002,13 @@ async function loadHomeDashboard() {
             </div>
           `;
           card.addEventListener('click', () => {
-            playSong(song, -1);
+            state.currentPlaylistId = null;
+            state.stationAnchor = song;
+            state.isRadioSession = true;
+            state.playQueue = [{ ...song }];
+            state.currentQueueIndex = 0;
+            playSong(song, 0);
+            fetchStationVibesForSong(song, { isInitial: true });
           });
           quickGrid.appendChild(card);
         });
@@ -4043,6 +4047,7 @@ async function loadHomeDashboard() {
           `;
           card.addEventListener('click', () => {
             if (mix.tracks && mix.tracks.length > 0) {
+              state.currentPlaylistId = null;
               playSongList(mix.tracks, 0);
             } else {
               showToast('Fetching mix tracks...');
@@ -4078,7 +4083,13 @@ async function loadHomeDashboard() {
             <div class="home-card-desc">${song.artist}</div>
           `;
           card.addEventListener('click', () => {
-            playSong(song, -1);
+            state.currentPlaylistId = null;
+            state.stationAnchor = song;
+            state.isRadioSession = true;
+            state.playQueue = [{ ...song }];
+            state.currentQueueIndex = 0;
+            playSong(song, 0);
+            fetchStationVibesForSong(song, { isInitial: true });
           });
           recGrid.appendChild(card);
         });
