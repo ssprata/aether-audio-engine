@@ -120,46 +120,137 @@ def get_spotify_access_token(client_id, client_secret):
         print("Spotify auth error:", err)
         return None
 
-# Get related tracks from YouTube Music watch playlist
-def get_related_tracks(video_id, platform):
+# Banned modifiers, remix memes, loops, and junk keywords for true music vibe discovery
+BANNED_VIBE_KEYWORDS = {
+    'slowed', 'reverb', 'sped up', 'speed up', 'speedup', 'spedup',
+    'nightcore', 'daycore', 'bass boosted', 'bassboost', 'bassboosted',
+    '8d audio', '16d audio', '3d audio',
+    '1 hour', '10 hours', '10hr', '1hr', 'extended loop', 'loop version',
+    'instrumental', 'karaoke', 'backing track', 'acapella', 'a cappella',
+    'cover version', 'acoustic cover', 'guitar cover', 'piano cover', 'drum cover',
+    'tribute', 'parody', 'mashup', 'pitch shifted', 'pitched',
+    'reaction video', 'reaction', 'tutorial', 'how to play', 'clean version'
+}
+
+def clean_title_tokens(title_text):
+    if not title_text:
+        return set()
+    # Strip bracketed tags (e.g. [Official Video], (Live at ...), etc.)
+    text = re.sub(r'[\(\[][^\)\]]*[\)\]]', '', title_text)
+    text = re.sub(r'[^a-zA-Z0-9\s]', ' ', text).lower()
+    stop_words = {'the', 'and', 'official', 'video', 'audio', 'feat', 'ft', 'music', 'version', 'remaster', 'remastered', 'single', 'album', 'edit', 'radio'}
+    return set(w for w in text.split() if len(w) > 2 and w not in stop_words)
+
+def is_vibe_polluted(title, seed_title='', seed_artist=''):
+    title_lower = title.lower()
+    
+    # 1. Banned modifier/meme keywords
+    for keyword in BANNED_VIBE_KEYWORDS:
+        if keyword in title_lower:
+            return True
+            
+    # Check common regex patterns for slowed & reverb, sped up, and hour loops
+    if re.search(r'slowed\s*[\+&/]?\s*reverb', title_lower):
+        return True
+    if re.search(r'sped\s*up|speed\s*up', title_lower):
+        return True
+    if re.search(r'1\s*hour|10\s*hour|loop\b', title_lower):
+        return True
+    if re.search(r'\b(cover|remake|karaoke|instrumental|acapella)\b', title_lower):
+        return True
+
+    # 2. Check for duplicate / same song name as the seed track
+    if seed_title:
+        seed_tokens = clean_title_tokens(seed_title)
+        cand_tokens = clean_title_tokens(title)
+        
+        # Exact token match (e.g. "After Dark" vs "After Dark")
+        if seed_tokens and cand_tokens and seed_tokens == cand_tokens:
+            return True
+            
+        # Seed tokens subset of candidate with high coverage (e.g. "After Dark" in "After Dark Extended")
+        if seed_tokens and len(seed_tokens) >= 2 and seed_tokens.issubset(cand_tokens):
+            return True
+            
+        # Single distinctive seed word (e.g. "Starboy")
+        if len(seed_tokens) == 1:
+            seed_word = list(seed_tokens)[0]
+            if len(seed_word) >= 5 and seed_word in cand_tokens:
+                return True
+
+    return False
+
+# Get related tracks from YouTube Music algorithmic radio (same vibe, no duplicates/slowed/reverb)
+def get_related_tracks(video_id, platform='youtube', seed_title='', seed_artist='', limit=8):
     try:
-        playlist = ytmusic.get_watch_playlist(videoId=video_id, limit=10)
+        # Invoking radio=True triggers YouTube Music's machine-learned song radio algorithm
+        # We fetch up to 35 candidates so we can strictly filter out all junk and duplicates
+        playlist = ytmusic.get_watch_playlist(videoId=video_id, radio=True, limit=35)
         tracks = playlist.get('tracks', [])
+        
+        if not tracks:
+            playlist = ytmusic.get_watch_playlist(videoId=video_id, limit=25)
+            tracks = playlist.get('tracks', [])
+            
         related = []
+        artist_counts = {}
+        seen_ids = {video_id}
+        
         for item in tracks:
             item_id = item.get('videoId')
-            # Skip the seed track itself
-            if not item_id or item_id == video_id:
+            if not item_id or item_id in seen_ids:
+                continue
+            seen_ids.add(item_id)
+            
+            raw_title = item.get('title', 'Unknown Track')
+            
+            # Filter out slowed/reverb, speedups, memes, and duplicate song titles
+            if is_vibe_polluted(raw_title, seed_title=seed_title, seed_artist=seed_artist):
                 continue
                 
             artists = item.get('artists', [])
-            artist_name = ", ".join([a.get('name', 'Unknown Artist') for a in artists]) if artists else 'Unknown Artist'
+            artist_name = ", ".join([a.get('name', 'Unknown Artist') for a in artists]) if artists else item.get('author', 'Unknown Artist')
+            
+            # Artist diversity cap: max 1 other song by the seed artist, max 2 by any other artist
+            main_artist = artists[0].get('name', '').lower() if artists else artist_name.lower()
+            if seed_artist and main_artist == seed_artist.lower():
+                if artist_counts.get(main_artist, 0) >= 1:
+                    continue
+            if artist_counts.get(main_artist, 0) >= 2:
+                continue
+            artist_counts[main_artist] = artist_counts.get(main_artist, 0) + 1
             
             duration = item.get('length', '3:00')
             
             thumbnail = ''
             thumbnails = item.get('thumbnail', [])
-            if thumbnails:
+            if isinstance(thumbnails, list) and thumbnails:
                 thumbnail = thumbnails[-1].get('url', '')
+            elif isinstance(thumbnails, dict):
+                thumbnail = thumbnails.get('url', '')
                 
+            clean_title = re.sub(r'\s*[\(\[][^\]\)]*(official|video|lyric|audio|hd|4k|hq)[^\]\)]*[\)\]]\s*', '', raw_title, flags=re.I).strip()
+            clean_title = re.sub(r'\s*-\s*topic\s*$', '', clean_title, flags=re.I).strip()
+            
             track_data = {
                 'id': item_id,
-                'title': item.get('title', 'Unknown Track'),
+                'title': clean_title or raw_title,
                 'artist': artist_name,
                 'duration': duration,
                 'thumbnail': thumbnail,
                 'url': f"https://music.youtube.com/watch?v={item_id}",
-                'platform': platform
+                'platform': platform if platform in ('youtube', 'spotify') else 'youtube'
             }
             if platform == 'spotify':
                 track_data['isFallback'] = True
-                track_data['title'] = re.sub(r'\s*[\(\[][^\]\)]*(official|video|lyric|audio|dubstep|slowed)[^\]\)]*[\)\]]\s*', '', track_data['title'], flags=re.I)
-                track_data['title'] = re.sub(r'\s*-\s*topic\s*$', '', track_data['title'], flags=re.I).strip()
                 
             related.append(track_data)
-        return related[:6]
+            if len(related) >= limit:
+                break
+                
+        return related
     except Exception as e:
-        print(f"Error fetching related tracks for video {video_id}: {e}")
+        print(f"Error fetching related vibe tracks for video {video_id}: {e}")
         return []
 
 # Search YouTube
@@ -962,11 +1053,14 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                                         seed_id = tracks[0].get('id')
                             
                             if seed_id and len(seed_id) == 22 and seed_id.isalnum():
-                                recommend_url = f"https://api.spotify.com/v1/recommendations?seed_tracks={seed_id}&limit=6"
+                                recommend_url = f"https://api.spotify.com/v1/recommendations?seed_tracks={seed_id}&limit=12"
                                 req = urllib.request.Request(recommend_url, headers={'Authorization': f'Bearer {token}'})
                                 with urllib.request.urlopen(req) as res:
                                     recommend_data = json.loads(res.read().decode('utf-8'))
                                     for track in recommend_data.get('tracks', []):
+                                        t_name = track.get('name', '')
+                                        if is_vibe_polluted(t_name, seed_title=title, seed_artist=artist):
+                                            continue
                                         artists = [a.get('name') for a in track.get('artists', [])]
                                         artist_str = ", ".join(artists) if artists else 'Unknown Artist'
                                         duration_ms = track.get('duration_ms', 0)
@@ -975,13 +1069,15 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                                         
                                         recommendations.append({
                                             'id': track.get('id'),
-                                            'title': track.get('name'),
+                                            'title': t_name,
                                             'artist': artist_str,
                                             'duration': format_duration_ms(duration_ms),
                                             'thumbnail': thumbnail,
                                             'url': f"https://open.spotify.com/track/{track.get('id')}",
                                             'platform': 'spotify'
                                         })
+                                        if len(recommendations) >= 8:
+                                            break
                     except Exception as e:
                         print("Spotify recommendations failed:", e)
                     
@@ -992,15 +1088,15 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                     if track_id and len(track_id) == 11:
                         target_video_id = track_id
                     
-                    if not target_video_id and title:
+                    if not target_video_id and (title or artist):
                         search_results = search_youtube(f"{title} {artist}", limit=1)
                         if search_results:
                             target_video_id = search_results[0].get('id')
                             
                     if target_video_id:
-                        recommendations = get_related_tracks(target_video_id, platform)
+                        recommendations = get_related_tracks(target_video_id, platform=platform, seed_title=title, seed_artist=artist, limit=8)
                 except Exception as e:
-                    print("YouTube Music related recommendations failed:", e)
+                    print("YouTube Music related vibe recommendations failed:", e)
                     
             self.wfile.write(json.dumps(recommendations).encode('utf-8'))
             return
@@ -1362,10 +1458,15 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                 print("Running YouTube Music recommendations for:", recent_yt_tracks[0]['id'])
                 try:
                     recent_vid = recent_yt_tracks[0]['id']
-                    watch_list = ytmusic.get_watch_playlist(videoId=recent_vid, limit=15)
+                    recent_title = recent_yt_tracks[0].get('title', '')
+                    recent_artist = recent_yt_tracks[0].get('artist', '')
+                    watch_list = ytmusic.get_watch_playlist(videoId=recent_vid, radio=True, limit=25)
                     print("Watch playlist returned tracks count:", len(watch_list.get('tracks', [])))
                     for t in watch_list.get('tracks', []):
                         if t.get('videoId') == recent_vid:
+                            continue
+                        t_title = t.get('title', 'Unknown Track')
+                        if is_vibe_polluted(t_title, seed_title=recent_title, seed_artist=recent_artist):
                             continue
                         t_thumb = ''
                         t_thumbs = t.get('thumbnail', [])
@@ -1383,9 +1484,12 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                         t_album_id = t_album.get('id') if isinstance(t_album, dict) else None
                         t_album_name = t_album.get('name') if isinstance(t_album, dict) else None
                         
+                        clean_title = re.sub(r'\s*[\(\[][^\]\)]*(official|video|lyric|audio|hd|4k|hq)[^\]\)]*[\)\]]\s*', '', t_title, flags=re.I).strip()
+                        clean_title = re.sub(r'\s*-\s*topic\s*$', '', clean_title, flags=re.I).strip()
+                        
                         tracks.append({
                             'id': t.get('videoId'),
-                            'title': t.get('title', 'Unknown Track'),
+                            'title': clean_title or t_title,
                             'artist': t_artist,
                             'duration': t_dur,
                             'thumbnail': t_thumb,
@@ -1394,6 +1498,8 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                             'albumId': t_album_id,
                             'albumName': t_album_name
                         })
+                        if len(tracks) >= 15:
+                            break
                 except Exception as e:
                     print("YouTube Music related watch playlist recommendations failed:", e)
                     

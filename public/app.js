@@ -2739,9 +2739,22 @@ function updateLyricsHighlight(currentTime) {
   }
 }
 
+const BANNED_VIBE_TERMS = [
+  'slowed', 'reverb', 'sped up', 'speed up', 'speedup', 'spedup',
+  'nightcore', 'daycore', 'bass boosted', 'bassboost', '8d audio',
+  '1 hour', '10 hours', 'extended loop', 'loop', 'instrumental',
+  'karaoke', 'backing track', 'acapella', 'cover', 'remake', 'tribute',
+  'mashup', 'pitch shifted', 'reaction'
+];
+
 function isDuplicateTrack(track, seedTrack) {
   if (!track || !seedTrack) return false;
-  if (track.id === seedTrack.id) return true;
+  if (track.id && seedTrack.id && track.id === seedTrack.id) return true;
+  
+  const titleLower = (track.title || '').toLowerCase();
+  for (const term of BANNED_VIBE_TERMS) {
+    if (titleLower.includes(term)) return true;
+  }
   
   const clean = (str) => {
     return (str || '').toLowerCase()
@@ -2752,11 +2765,10 @@ function isDuplicateTrack(track, seedTrack) {
   
   const cleanTitle1 = clean(track.title);
   const cleanTitle2 = clean(seedTrack.title);
-  const cleanArtist1 = clean(track.artist);
-  const cleanArtist2 = clean(seedTrack.artist);
   
-  if (cleanTitle1 === cleanTitle2) {
-    if (cleanArtist1 === cleanArtist2 || cleanArtist1.includes(cleanArtist2) || cleanArtist2.includes(cleanArtist1)) {
+  if (cleanTitle1 === cleanTitle2) return true;
+  if (cleanTitle1.length >= 5 && cleanTitle2.length >= 5) {
+    if (cleanTitle1.includes(cleanTitle2) || cleanTitle2.includes(cleanTitle1)) {
       return true;
     }
   }
@@ -2767,12 +2779,20 @@ async function fetchAndRenderRecommendations(song) {
   const section = document.getElementById('recommendationsSection');
   const grid = document.getElementById('recommendationsGrid');
   const seedText = document.getElementById('recommendationSeedText');
+  const rightVibesSec = document.getElementById('rightVibesSection');
+  const rightVibesList = document.getElementById('rightVibesList');
   
-  if (!section || !grid || !seedText) return;
-  
-  section.style.display = 'block';
-  seedText.textContent = `${song.title} - ${song.artist || 'Unknown'}`;
-  grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 20px;">Finding similar vibes...</div>';
+  if (section && seedText) {
+    section.style.display = 'block';
+    seedText.textContent = `${song.title} - ${song.artist || 'Unknown'}`;
+  }
+  if (grid) {
+    grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 20px;">Curating similar vibes...</div>';
+  }
+  if (rightVibesSec && rightVibesList) {
+    rightVibesSec.style.display = 'block';
+    rightVibesList.innerHTML = '<div style="font-size: 0.75rem; color: var(--text-secondary); text-align: center; padding: 10px;">Finding vibes...</div>';
+  }
   
   try {
     const url = `/api/recommendations?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || '')}&platform=${song.platform}&track_id=${song.id || ''}`;
@@ -2780,25 +2800,81 @@ async function fetchAndRenderRecommendations(song) {
     if (!response.ok) throw new Error('Failed to fetch recommendations');
     
     const data = await response.json();
-    grid.innerHTML = '';
+    if (grid) grid.innerHTML = '';
+    if (rightVibesList) rightVibesList.innerHTML = '';
     
     if (!data || data.length === 0) {
-      grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 20px;">No similar vibes found.</div>';
+      if (grid) grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 20px;">No similar vibes found.</div>';
+      if (rightVibesSec) rightVibesSec.style.display = 'none';
       return;
     }
     
     const filteredTracks = data.filter(track => !isDuplicateTrack(track, song));
     
     if (filteredTracks.length === 0) {
-      grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 20px;">No similar vibes found.</div>';
+      if (grid) grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 20px;">No similar vibes found.</div>';
+      if (rightVibesSec) rightVibesSec.style.display = 'none';
       return;
     }
     
-    filteredTracks.forEach(track => {
-      const card = createSongCard(track, [track]);
-      grid.appendChild(card);
-    });
+    state.currentVibeTracks = filteredTracks;
+    
+    // Render search tab grid cards with filteredTracks as queue context
+    if (grid) {
+      filteredTracks.forEach(track => {
+        const card = createSongCard(track, filteredTracks);
+        grid.appendChild(card);
+      });
+    }
 
+    // Set up Play Vibe Radio button on Search tab
+    const btnPlayAll = document.getElementById('btnPlayAllRecommendations');
+    if (btnPlayAll) {
+      btnPlayAll.onclick = () => {
+        if (state.currentVibeTracks && state.currentVibeTracks.length > 0) {
+          state.playQueue = [...state.currentVibeTracks];
+          playSong(state.currentVibeTracks[0], 0);
+          showToast(`Playing Similar Vibes radio (${state.currentVibeTracks.length} tracks)`);
+        }
+      };
+    }
+
+    // Render Right Sidebar mini vibe rows
+    if (rightVibesSec && rightVibesList) {
+      rightVibesSec.style.display = 'block';
+      filteredTracks.slice(0, 5).forEach((track, idx) => {
+        const row = document.createElement('div');
+        row.className = 'right-vibe-row';
+        row.title = `Play: ${track.title} - ${track.artist}`;
+        row.innerHTML = `
+          <div class="right-vibe-thumb">
+            <img src="${track.thumbnail || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=100'}" alt="Thumb" loading="lazy">
+          </div>
+          <div class="right-vibe-info">
+            <div class="right-vibe-title">${track.title}</div>
+            <div class="right-vibe-artist">${track.artist || 'Unknown'}</div>
+          </div>
+          <div class="right-vibe-play-icon">
+            <svg viewBox="0 0 24 24" fill="currentColor" style="width: 12px; height: 12px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          </div>
+        `;
+        row.onclick = () => {
+          playSongList(filteredTracks, idx);
+        };
+        rightVibesList.appendChild(row);
+      });
+
+      const btnRightPlay = document.getElementById('btnRightPlayAllVibes');
+      if (btnRightPlay) {
+        btnRightPlay.onclick = () => {
+          if (state.currentVibeTracks && state.currentVibeTracks.length > 0) {
+            playSongList(state.currentVibeTracks, 0);
+          }
+        };
+      }
+    }
+
+    // Radio Autoplay mode queue builder
     if (state.playQueue && state.playQueue.length === 1 && state.playQueue[0].id === song.id) {
       song.isRadio = true;
       filteredTracks.forEach(track => {
@@ -2809,8 +2885,9 @@ async function fetchAndRenderRecommendations(song) {
       console.log("Radio Mode Queue Built:", state.playQueue);
     }
   } catch (err) {
-    console.error(err);
-    grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 20px;">Failed to load similar vibes.</div>';
+    console.error("Vibe recommendations error:", err);
+    if (grid) grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 20px;">Failed to load similar vibes.</div>';
+    if (rightVibesSec) rightVibesSec.style.display = 'none';
   }
 }
 
@@ -2842,7 +2919,7 @@ async function triggerAutoplayRecommendations(song) {
         seedText.textContent = `${song.title} - ${song.artist || 'Unknown'}`;
         grid.innerHTML = '';
         newTracks.forEach(track => {
-          grid.appendChild(createSongCard(track, [track]));
+          grid.appendChild(createSongCard(track, newTracks));
         });
       }
       

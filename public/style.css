@@ -3853,3 +3853,155 @@ input[type="range"]::-webkit-slider-thumb:hover {
     display: none !important;
   }
 }
+
+/* ==========================================================================
+   SIMILAR VIBES & RADIO ENGINE STYLES
+   ========================================================================== */
+.recommendations-section {
+  margin-top: 36px;
+  border-top: 1px solid var(--glass-border);
+  padding-top: 24px;
+  width: 100%;
+  animation: fadeInVibes 0.4s ease-out;
+}
+
+@keyframes fadeInVibes {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.recommendations-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.recommendations-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.recommendations-badge-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(var(--accent-rgb, 99, 102, 241), 0.25), rgba(var(--accent-rgb, 99, 102, 241), 0.05));
+  border: 1px solid var(--neon-border, var(--accent-color));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-color);
+  box-shadow: 0 0 12px rgba(var(--accent-rgb, 99, 102, 241), 0.2);
+}
+
+.recommendations-heading {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text-color);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.recommendations-subheading {
+  margin: 3px 0 0 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.recommendations-subheading strong {
+  color: var(--accent-color);
+  font-weight: 600;
+}
+
+/* Right Sidebar Vibe List */
+.right-vibes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.right-vibe-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.right-vibe-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: var(--accent-color);
+  transform: translateX(3px);
+}
+
+.right-vibe-thumb {
+  width: 38px;
+  height: 38px;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: #111;
+}
+
+.right-vibe-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.right-vibe-info {
+  flex-grow: 1;
+  overflow: hidden;
+}
+
+.right-vibe-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.right-vibe-artist {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.right-vibe-play-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-color);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  flex-shrink: 0;
+}
+
+.right-vibe-row:hover .right-vibe-play-icon {
+  opacity: 1;
+}

@@ -224,10 +224,21 @@
           </div>
 
           <!-- RECOMMENDATIONS SECTION -->
-          <div class="recommendations-section" id="recommendationsSection" style="display: none; margin-top: 40px; border-top: 1px solid var(--glass-border); padding-top: 24px; width: 100%;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-              <h3 style="margin: 0; font-size: 1.3rem; color: var(--text-color);">Similar Vibes (Recommended)</h3>
-              <span style="font-size: 0.85rem; color: var(--text-secondary);">Inspired by: <strong id="recommendationSeedText" style="color: var(--accent-color);">Song Title</strong></span>
+          <div class="recommendations-section" id="recommendationsSection" style="display: none;">
+            <div class="recommendations-header-row">
+              <div class="recommendations-title-group">
+                <div class="recommendations-badge-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px;"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+                </div>
+                <div>
+                  <h3 class="recommendations-heading">Similar Vibes</h3>
+                  <p class="recommendations-subheading">Curated radio inspired by <strong id="recommendationSeedText">Song Title</strong></p>
+                </div>
+              </div>
+              <button class="btn btn-primary btn-sm" id="btnPlayAllRecommendations" style="display: inline-flex; align-items: center; gap: 6px;">
+                <svg viewBox="0 0 24 24" fill="currentColor" style="width: 14px; height: 14px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                <span>Play Vibe Radio</span>
+              </button>
             </div>
             <div class="songs-grid" id="recommendationsGrid">
               <!-- Recommended song cards render here -->
@@ -659,6 +670,17 @@
           <div class="right-song-info">
             <h2 id="rightSongTitleText">Song Title</h2>
             <p id="rightSongArtistText">Artist Name</p>
+          </div>
+        </div>
+
+        <!-- Similar Vibes Widget in Right Sidebar -->
+        <div class="right-section" id="rightVibesSection" style="display: none;">
+          <div class="right-section-title-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h5 style="margin: 0; font-size: 0.82rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);">Similar Vibes</h5>
+            <span style="font-size: 0.75rem; color: var(--accent-color); cursor: pointer; font-weight: 500;" id="btnRightPlayAllVibes">Play Radio</span>
+          </div>
+          <div class="right-vibes-list" id="rightVibesList">
+            <!-- Dynamic mini vibe rows render here -->
           </div>
         </div>
 
