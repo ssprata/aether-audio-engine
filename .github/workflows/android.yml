@@ -25,8 +25,9 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
+    - name: Accept Android SDK Licenses
+      run: |
+        yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
     - name: Sync Sources to Chaquopy Asset Folder
       run: |
@@ -38,7 +39,7 @@ jobs:
       run: |
         cd android
         chmod +x gradlew
-        ./gradlew assembleDebug
+        ./gradlew assembleDebug --no-daemon --stacktrace
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
