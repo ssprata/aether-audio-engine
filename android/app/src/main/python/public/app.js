@@ -310,6 +310,9 @@ function loadData() {
 function savePlaylists() {
   localStorage.setItem('playlists', JSON.stringify(state.playlists));
   renderPlaylists();
+  if (typeof CloudSync !== 'undefined' && CloudSync._isApplyingRemote) {
+    return;
+  }
   debouncedSyncBackup();
   if (typeof CloudSync !== 'undefined' && CloudSync.mode === 'cloud') {
     CloudSync.debouncedPush();
@@ -339,8 +342,11 @@ function updateUserProfileUI() {
 
 function saveProfile() {
   localStorage.setItem('profile', JSON.stringify(state.profile));
-  syncSettingsToServer({ username: state.profile.username, avatar: state.profile.avatar });
   updateUserProfileUI();
+  if (typeof CloudSync !== 'undefined' && CloudSync._isApplyingRemote) {
+    return;
+  }
+  syncSettingsToServer({ username: state.profile.username, avatar: state.profile.avatar });
   if (typeof CloudSync !== 'undefined' && CloudSync.mode === 'cloud') {
     CloudSync.debouncedPush();
   }
@@ -400,7 +406,11 @@ async function syncSettingsToServer(payload) {
 let themeSyncTimeout = null;
 function debouncedSyncTheme() {
   if (themeSyncTimeout) clearTimeout(themeSyncTimeout);
+  if (typeof CloudSync !== 'undefined' && CloudSync._isApplyingRemote) {
+    return;
+  }
   themeSyncTimeout = setTimeout(() => {
+    if (typeof CloudSync !== 'undefined' && CloudSync._isApplyingRemote) return;
     syncSettingsToServer({ currentTheme: state.currentTheme });
     if (typeof CloudSync !== 'undefined' && CloudSync.mode === 'cloud') {
       CloudSync.debouncedPush();
@@ -2064,7 +2074,14 @@ function renderPlaylists() {
       const thumb = document.createElement('div');
       thumb.className = 'playlist-thumb';
       if (pl.cover) {
-        thumb.innerHTML = `<img src="${pl.cover}" alt="Cover">`;
+        const img = document.createElement('img');
+        img.src = pl.cover;
+        img.alt = 'Cover';
+        img.referrerPolicy = 'no-referrer';
+        img.onerror = () => {
+          thumb.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
+        };
+        thumb.appendChild(img);
       } else {
         thumb.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
       }
@@ -2082,7 +2099,14 @@ function renderPlaylists() {
       const thumb = document.createElement('div');
       thumb.className = 'playlist-thumb';
       if (pl.cover) {
-        thumb.innerHTML = `<img src="${pl.cover}" alt="Cover">`;
+        const img = document.createElement('img');
+        img.src = pl.cover;
+        img.alt = 'Cover';
+        img.referrerPolicy = 'no-referrer';
+        img.onerror = () => {
+          thumb.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
+        };
+        thumb.appendChild(img);
       } else {
         thumb.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
       }
@@ -2122,7 +2146,16 @@ function openPlaylistDetails(playlistId) {
 
   const imgContent = document.getElementById('detailPlaylistImgContent');
   if (pl.cover) {
-    imgContent.innerHTML = `<img src="${pl.cover}" alt="Cover" style="width:100%; height:100%; object-fit:cover;">`;
+    const img = document.createElement('img');
+    img.src = pl.cover;
+    img.alt = 'Cover';
+    img.referrerPolicy = 'no-referrer';
+    img.style.cssText = 'width:100%; height:100%; object-fit:cover;';
+    img.onerror = () => {
+      imgContent.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 48px; height: 48px;"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
+    };
+    imgContent.innerHTML = '';
+    imgContent.appendChild(img);
   } else {
     imgContent.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 48px; height: 48px;"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
   }

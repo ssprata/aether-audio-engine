@@ -16,6 +16,11 @@ const CloudSync = {
   lastSyncTime: null,
   _debounceTimer: null,
   _unsubscribeRealtime: null,
+  _isApplyingRemote: false,
+  _lastToastTime: 0,
+  _cachedKey: null,
+  _cachedSaltStr: null,
+  _cachedPasskey: null,
   deviceId: null,
 
   getDeviceId() {
@@ -59,8 +64,13 @@ const CloudSync = {
           this.status = 'synced';
           this.lastSyncTime = new Date();
           this.updateUI();
-          if (typeof showToast === 'function') {
-            showToast('Cloud playlists & settings updated live!');
+
+          const now = Date.now();
+          if (now - this._lastToastTime > 8000) {
+            this._lastToastTime = now;
+            if (typeof showToast === 'function') {
+              showToast('Cloud playlists & settings updated live!');
+            }
           }
         } catch (e) {
           console.warn('[CloudSync] Failed to decrypt realtime update:', e);
@@ -132,10 +142,15 @@ const CloudSync = {
     return arr.map(b => b.toString(16).padStart(2, '0')).join('');
   },
 
-  // Derive AES-256 key from passkey and salt using PBKDF2
+  // Derive AES-256 key from passkey and salt using PBKDF2 (with fast in-memory cache)
   async deriveKey(passkey, salt) {
-    const enc = new TextEncoder();
     const cleanKey = (passkey || '').trim().toUpperCase();
+    const saltStr = this._bufToBase64(salt);
+    if (this._cachedKey && this._cachedPasskey === cleanKey && this._cachedSaltStr === saltStr) {
+      return this._cachedKey;
+    }
+
+    const enc = new TextEncoder();
     const baseKey = await crypto.subtle.importKey(
       'raw',
       enc.encode(cleanKey),
@@ -143,7 +158,7 @@ const CloudSync = {
       false,
       ['deriveKey']
     );
-    return crypto.subtle.deriveKey(
+    const derived = await crypto.subtle.deriveKey(
       {
         name: 'PBKDF2',
         salt: salt,
@@ -155,12 +170,29 @@ const CloudSync = {
       false,
       ['encrypt', 'decrypt']
     );
+
+    this._cachedKey = derived;
+    this._cachedPasskey = cleanKey;
+    this._cachedSaltStr = saltStr;
+    return derived;
+  },
+
+  // Get or persist account salt so key derivation doesn't need to re-run on every push
+  getAccountSalt(passkey) {
+    const cleanKey = (passkey || '').trim().toUpperCase();
+    let savedSalt = localStorage.getItem('aether_sync_salt_' + cleanKey);
+    if (!savedSalt) {
+      const saltBuf = crypto.getRandomValues(new Uint8Array(16));
+      savedSalt = this._bufToBase64(saltBuf);
+      localStorage.setItem('aether_sync_salt_' + cleanKey, savedSalt);
+    }
+    return this._base64ToBuf(savedSalt);
   },
 
   // Encrypt JSON object to Base64 ciphertext
   async encryptPayload(dataObj, passkey) {
     const enc = new TextEncoder();
-    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const salt = this.getAccountSalt(passkey);
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const key = await this.deriveKey(passkey, salt);
     const jsonString = JSON.stringify(dataObj);
@@ -375,6 +407,9 @@ const CloudSync = {
     this.mode = 'guest';
     this.status = 'idle';
     this.lastSyncTime = null;
+    this._cachedKey = null;
+    this._cachedSaltStr = null;
+    this._cachedPasskey = null;
     localStorage.removeItem('aether_cloud_sync_key');
     this.updateUI();
     if (typeof showToast === 'function') {
@@ -423,7 +458,7 @@ const CloudSync = {
 
   // Push latest local data to cloud (immediate)
   async pushToCloud() {
-    if (this.mode !== 'cloud' || !this.syncKey) return;
+    if (this.mode !== 'cloud' || !this.syncKey || this._isApplyingRemote) return;
     try {
       this.status = 'syncing';
       this.updateUI();
@@ -452,12 +487,13 @@ const CloudSync = {
 
   // Debounced push to avoid hammering Firestore during fast actions
   debouncedPush(delayMs = 1200) {
-    if (this.mode !== 'cloud' || !this.syncKey) return;
+    if (this.mode !== 'cloud' || !this.syncKey || this._isApplyingRemote) return;
     if (this._debounceTimer) clearTimeout(this._debounceTimer);
     this.status = 'syncing';
     this.updateUI();
 
     this._debounceTimer = setTimeout(() => {
+      if (this._isApplyingRemote) return;
       this.pushToCloud();
     }, delayMs);
   },
@@ -491,75 +527,83 @@ const CloudSync = {
 
   async applyCloudData(data) {
     if (!data) return;
+    this._isApplyingRemote = true;
 
-    // 1. Playlists
-    if (Array.isArray(data.playlists)) {
-      state.playlists = data.playlists;
-      localStorage.setItem('playlists', JSON.stringify(state.playlists));
-      if (typeof renderPlaylists === 'function') renderPlaylists();
-      // Also update local server.py backup file
-      try {
-        await fetch('/api/backup', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(state.playlists)
-        });
-      } catch (e) {
-        console.warn('Could not forward backup to local server:', e);
-      }
-    }
-
-    // 2. Custom Themes
-    if (Array.isArray(data.customThemes)) {
-      state.customThemes = data.customThemes;
-      localStorage.setItem('custom_themes', JSON.stringify(state.customThemes));
-      if (typeof renderCustomThemesList === 'function') renderCustomThemesList();
-    }
-
-    // 3. Current Theme
-    if (data.currentTheme) {
-      state.currentTheme = data.currentTheme;
-      localStorage.setItem('current_theme_settings', JSON.stringify(state.currentTheme));
-      if (typeof applyCurrentTheme === 'function') applyCurrentTheme();
-    }
-
-    // 4. Profile
-    if (data.profile) {
-      if (data.profile.username) state.profile.username = data.profile.username;
-      if (data.profile.avatar) state.profile.avatar = data.profile.avatar;
-      localStorage.setItem('profile', JSON.stringify(state.profile));
-      if (typeof updateUserProfileUI === 'function') updateUserProfileUI();
-    }
-
-    // 5. Spotify Credentials
-    if (data.spotify) {
-      const clientId = data.spotify.clientId || '';
-      const clientSecret = data.spotify.clientSecret || '';
-
-      if (clientId || clientSecret) {
-        state.spotifyConfigured = (clientId && clientSecret);
-        state._rawSpotifySecret = clientSecret;
-
-        const idEl = document.getElementById('spotifyClientId');
-        const secEl = document.getElementById('spotifyClientSecret');
-        if (idEl) idEl.value = clientId;
-        if (secEl) secEl.value = clientSecret ? '••••••••••••••••' : '';
-
-        // Forward decrypted credentials to local Python server.py
+    try {
+      // 1. Playlists
+      if (Array.isArray(data.playlists)) {
+        state.playlists = data.playlists;
+        localStorage.setItem('playlists', JSON.stringify(state.playlists));
+        if (typeof renderPlaylists === 'function') renderPlaylists();
+        // Also update local server.py backup file
         try {
-          await fetch('/api/settings', {
+          await fetch('/api/backup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              spotifyClientId: clientId,
-              spotifyClientSecret: clientSecret
-            })
+            body: JSON.stringify(state.playlists)
           });
-          console.log('[CloudSync] Forwarded decrypted Spotify keys to local server.py');
         } catch (e) {
-          console.warn('Could not push Spotify settings to local server:', e);
+          console.warn('Could not forward backup to local server:', e);
         }
       }
+
+      // 2. Custom Themes
+      if (Array.isArray(data.customThemes)) {
+        state.customThemes = data.customThemes;
+        localStorage.setItem('custom_themes', JSON.stringify(state.customThemes));
+        if (typeof renderCustomThemesList === 'function') renderCustomThemesList();
+      }
+
+      // 3. Current Theme
+      if (data.currentTheme) {
+        state.currentTheme = data.currentTheme;
+        localStorage.setItem('current_theme_settings', JSON.stringify(state.currentTheme));
+        if (typeof applyCurrentTheme === 'function') applyCurrentTheme();
+      }
+
+      // 4. Profile
+      if (data.profile) {
+        if (data.profile.username) state.profile.username = data.profile.username;
+        if (data.profile.avatar) state.profile.avatar = data.profile.avatar;
+        localStorage.setItem('profile', JSON.stringify(state.profile));
+        if (typeof updateUserProfileUI === 'function') updateUserProfileUI();
+      }
+
+      // 5. Spotify Credentials
+      if (data.spotify) {
+        const clientId = data.spotify.clientId || '';
+        const clientSecret = data.spotify.clientSecret || '';
+
+        if (clientId || clientSecret) {
+          state.spotifyConfigured = (clientId && clientSecret);
+          state._rawSpotifySecret = clientSecret;
+
+          const idEl = document.getElementById('spotifyClientId');
+          const secEl = document.getElementById('spotifyClientSecret');
+          if (idEl) idEl.value = clientId;
+          if (secEl) secEl.value = clientSecret ? '••••••••••••••••' : '';
+
+          // Forward decrypted credentials to local Python server.py
+          try {
+            await fetch('/api/settings', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                spotifyClientId: clientId,
+                spotifyClientSecret: clientSecret
+              })
+            });
+            console.log('[CloudSync] Forwarded decrypted Spotify keys to local server.py');
+          } catch (e) {
+            console.warn('Could not push Spotify settings to local server:', e);
+          }
+        }
+      }
+    } finally {
+      // Keep guard active for 1500ms so any queued timeouts from applyCurrentTheme die silently
+      setTimeout(() => {
+        this._isApplyingRemote = false;
+      }, 1500);
     }
   },
 
