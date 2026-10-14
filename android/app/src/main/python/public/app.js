@@ -249,6 +249,9 @@ function savePlaylists() {
   localStorage.setItem('playlists', JSON.stringify(state.playlists));
   renderPlaylists();
   debouncedSyncBackup();
+  if (typeof CloudSync !== 'undefined' && CloudSync.mode === 'cloud') {
+    CloudSync.debouncedPush();
+  }
 }
 
 function updateUserProfileUI() {
@@ -267,6 +270,9 @@ function saveProfile() {
   localStorage.setItem('profile', JSON.stringify(state.profile));
   syncSettingsToServer({ username: state.profile.username, avatar: state.profile.avatar });
   updateUserProfileUI();
+  if (typeof CloudSync !== 'undefined' && CloudSync.mode === 'cloud') {
+    CloudSync.debouncedPush();
+  }
 }
 
 // Debounce timer for server backup
@@ -325,6 +331,9 @@ function debouncedSyncTheme() {
   if (themeSyncTimeout) clearTimeout(themeSyncTimeout);
   themeSyncTimeout = setTimeout(() => {
     syncSettingsToServer({ currentTheme: state.currentTheme });
+    if (typeof CloudSync !== 'undefined' && CloudSync.mode === 'cloud') {
+      CloudSync.debouncedPush();
+    }
   }, 1000); // 1 second debounce
 }
 
@@ -336,6 +345,7 @@ async function loadServerSettings() {
 
       // 1. Spotify Config
       state.spotifyConfigured = (config.spotifyClientId && config.spotifyClientSecret);
+      state._rawSpotifySecret = config.spotifyClientSecret || '';
       document.getElementById('spotifyClientId').value = config.spotifyClientId || '';
       document.getElementById('spotifyClientSecret').value = config.spotifyClientSecret ? '••••••••••••••••' : '';
 
@@ -946,17 +956,27 @@ function setupEventListeners() {
   // Spotify setting credentials save
   document.getElementById('btnSaveSpotifySettings').addEventListener('click', async () => {
     const clientId = document.getElementById('spotifyClientId').value.trim();
-    const clientSecret = document.getElementById('spotifyClientSecret').value.trim();
+    const inputSecret = document.getElementById('spotifyClientSecret').value.trim();
+    const effectiveSecret = (inputSecret.includes('•') && state._rawSpotifySecret)
+      ? state._rawSpotifySecret
+      : inputSecret;
+
+    if (!inputSecret.includes('•')) {
+      state._rawSpotifySecret = inputSecret;
+    }
 
     try {
       const response = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spotifyClientId: clientId, spotifyClientSecret: clientSecret })
+        body: JSON.stringify({ spotifyClientId: clientId, spotifyClientSecret: effectiveSecret })
       });
       if (response.ok) {
         showToast('Spotify settings saved!');
         checkSpotifyConfig();
+        if (typeof CloudSync !== 'undefined' && CloudSync.mode === 'cloud') {
+          CloudSync.debouncedPush();
+        }
       }
     } catch (e) {
       showToast('Failed to save Spotify settings');
@@ -1316,6 +1336,109 @@ function setupEventListeners() {
   if (refreshHistoryBtn) {
     refreshHistoryBtn.addEventListener('click', () => {
       renderRecentUI(true);
+    });
+  }
+
+  // --- CLOUD SYNC & ACCOUNTS EVENT LISTENERS ---
+  const headerCloudBtn = document.getElementById('btnHeaderCloud');
+  if (headerCloudBtn) {
+    headerCloudBtn.addEventListener('click', () => {
+      switchTab('profile');
+      const cloudCard = document.getElementById('cloudSyncCard');
+      if (cloudCard) {
+        cloudCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        cloudCard.style.outline = '2px solid var(--accent-color)';
+        setTimeout(() => { cloudCard.style.outline = 'none'; }, 1500);
+      }
+    });
+  }
+
+  const btnCreateCloud = document.getElementById('btnCreateCloudAccount');
+  if (btnCreateCloud) {
+    btnCreateCloud.addEventListener('click', async () => {
+      try {
+        btnCreateCloud.disabled = true;
+        btnCreateCloud.innerHTML = `<span>⏳ Generating & Encrypting...</span>`;
+        await CloudSync.createAccount();
+      } catch (e) {
+        console.error(e);
+      } finally {
+        btnCreateCloud.disabled = false;
+        btnCreateCloud.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+          </svg>
+          <span>✨ Generate 1-Click Sync Passkey</span>`;
+      }
+    });
+  }
+
+  const btnConnectCloud = document.getElementById('btnConnectCloudAccount');
+  const inputConnectKey = document.getElementById('inputConnectKey');
+  if (btnConnectCloud && inputConnectKey) {
+    const handleConnect = async () => {
+      const key = inputConnectKey.value.trim();
+      if (!key) {
+        showToast('Please enter your Sync Key first');
+        inputConnectKey.focus();
+        return;
+      }
+      try {
+        btnConnectCloud.disabled = true;
+        btnConnectCloud.innerHTML = `<span>Connecting...</span>`;
+        await CloudSync.connectAccount(key);
+        inputConnectKey.value = '';
+      } catch (e) {
+        console.error(e);
+      } finally {
+        btnConnectCloud.disabled = false;
+        btnConnectCloud.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/>
+          </svg>
+          Connect & Sync`;
+      }
+    };
+
+    btnConnectCloud.addEventListener('click', handleConnect);
+    inputConnectKey.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleConnect();
+    });
+  }
+
+  const btnCopyCloudKey = document.getElementById('btnCopyCloudKey');
+  if (btnCopyCloudKey) {
+    btnCopyCloudKey.addEventListener('click', () => {
+      if (CloudSync.syncKey) {
+        navigator.clipboard.writeText(CloudSync.syncKey).then(() => {
+          const txt = document.getElementById('btnCopyCloudKeyText');
+          if (txt) txt.textContent = 'Copied!';
+          showToast('Passkey copied to clipboard!');
+          setTimeout(() => {
+            if (txt) txt.textContent = 'Copy';
+          }, 2000);
+        }).catch(() => {
+          showToast('Could not copy automatically. Passkey: ' + CloudSync.syncKey);
+        });
+      }
+    });
+  }
+
+  const btnManualSync = document.getElementById('btnManualCloudSync');
+  if (btnManualSync) {
+    btnManualSync.addEventListener('click', async () => {
+      showToast('Syncing with cloud...');
+      await CloudSync.pushToCloud();
+      showToast('Synced successfully!');
+    });
+  }
+
+  const btnDisconnectCloud = document.getElementById('btnDisconnectCloud');
+  if (btnDisconnectCloud) {
+    btnDisconnectCloud.addEventListener('click', () => {
+      if (confirm('Disconnect from Cloud Sync? Your local playlists and settings will remain on this device.')) {
+        CloudSync.disconnect();
+      }
     });
   }
 }

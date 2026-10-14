@@ -14,6 +14,12 @@
   <link rel="apple-touch-icon" href="icon-512.png">
   <!-- YouTube IFrame Player API -->
   <script src="https://www.youtube.com/iframe_api"></script>
+  <!-- Firebase SDK (Compat) -->
+  <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="cloud-sync.js"></script>
   <!-- Application Core -->
   <script src="app.js" defer></script>
   <script>
@@ -64,6 +70,13 @@
       </div>
 
       <div class="header-right">
+        <button class="cloud-pill-btn status-guest" id="btnHeaderCloud" title="Cloud Sync Status & Accounts">
+          <span class="cloud-dot" id="headerCloudDot"></span>
+          <svg class="cloud-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
+          </svg>
+          <span class="cloud-pill-status" id="headerCloudStatus">Guest</span>
+        </button>
         <button class="icon-btn header-nav-btn" id="btnHeaderTheme" title="Theme Creator" data-tab="customizer">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
         </button>
@@ -498,6 +511,90 @@
         </div>
 
         <div class="profile-grid">
+          <!-- Cloud Account & Multi-Device Sync Card -->
+          <div class="card cloud-sync-card" id="cloudSyncCard">
+            <div class="cloud-header">
+              <div class="cloud-title-group">
+                <div class="cloud-icon-circle">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
+                  </svg>
+                </div>
+                <div>
+                  <h3>Cloud Sync & Accounts</h3>
+                  <p class="card-subtitle">Zero-knowledge encrypted sync across PC & Android</p>
+                </div>
+              </div>
+              <span id="cloudCardStatusBadge" class="badge badge-guest">Guest Mode (Local Only)</span>
+            </div>
+
+            <div class="cloud-desc-box">
+              <p>
+                <strong>Guest Mode:</strong> Your playlists, themes, and Spotify keys stay 100% private on this device.<br>
+                <strong>Cloud Mode:</strong> Sync across devices with an anonymous <strong>Passkey</strong>. Sensitive keys are encrypted locally with <strong>AES-256</strong> before reaching the cloud.
+              </p>
+            </div>
+
+            <!-- GUEST ACTIONS (Shown in Guest Mode) -->
+            <div class="cloud-actions-section" id="cloudGuestActions">
+              <div class="cloud-action-row">
+                <button class="btn btn-primary btn-block" id="btnCreateCloudAccount">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                  </svg>
+                  <span>✨ Generate 1-Click Sync Passkey</span>
+                </button>
+              </div>
+
+              <div class="cloud-or-divider">
+                <span>OR CONNECT EXISTING DEVICE</span>
+              </div>
+
+              <div class="cloud-connect-row">
+                <input type="text" id="inputConnectKey" placeholder="Paste Passkey (e.g. AETH-XXXX-XXXX-XXXX)" class="cloud-input" autocomplete="off">
+                <button class="btn btn-success" id="btnConnectCloudAccount">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/>
+                  </svg>
+                  Connect & Sync
+                </button>
+              </div>
+            </div>
+
+            <!-- CONNECTED ACTIONS (Shown in Cloud Mode) -->
+            <div class="cloud-actions-section" id="cloudConnectedActions" style="display: none;">
+              <div class="cloud-key-display-box" id="cloudKeyDisplayBox">
+                <div class="key-label">YOUR CLOUD PASSKEY (SAVE THIS TO CONNECT OTHER DEVICES)</div>
+                <div class="key-value-row">
+                  <code class="cloud-key-code" id="cloudCurrentKeyText">AETH-••••-••••-••••</code>
+                  <button class="btn btn-sm btn-outline" id="btnCopyCloudKey" title="Copy to clipboard">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                      <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                    </svg>
+                    <span id="btnCopyCloudKeyText">Copy</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="cloud-status-row">
+                <div class="last-sync-text" id="cloudLastSyncTime">Synchronized with cloud</div>
+              </div>
+
+              <div class="cloud-connected-buttons">
+                <button class="btn btn-primary" id="btnManualCloudSync">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/>
+                  </svg>
+                  Sync Now
+                </button>
+                <button class="btn btn-outline btn-danger-hover" id="btnDisconnectCloud">
+                  Disconnect (Back to Guest)
+                </button>
+              </div>
+            </div>
+          </div>
+
           <!-- Profile Card -->
           <div class="card profile-card">
             <div class="avatar-container">
