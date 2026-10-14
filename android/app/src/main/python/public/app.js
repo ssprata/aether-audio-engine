@@ -69,8 +69,57 @@ let state = {
 
 // Player Reference variables
 let ytPlayer = null;
+let ytPlayerReady = false;
+let pendingVideoToPlay = null;
 let activeAudio = null; // for Spotify previews
 let progressInterval = null;
+
+// Default Fallback Visuals (Lightweight SVG Data URIs)
+const DEFAULT_ALBUM_ART = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'><rect width='200' height='200' fill='%2313141f'/><circle cx='100' cy='100' r='52' fill='%231c1d2e'/><circle cx='100' cy='100' r='20' fill='%2313141f'/><path d='M95 72v34a12 12 0 1 1-6-10.4V72h22v26a12 12 0 1 1-6-10.4V68H95z' fill='%237c3aed'/></svg>";
+const DEFAULT_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'><rect width='100' height='100' fill='%231a1b26'/><circle cx='50' cy='36' r='18' fill='%237c3aed'/><ellipse cx='50' cy='82' rx='28' ry='18' fill='%237c3aed'/></svg>";
+
+// Client-side image compression for cross-device sync & offline persistence
+function compressImageFile(file, maxWidth = 300, maxHeight = 300, quality = 0.8) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type.startsWith('image/')) {
+      return reject(new Error('Selected file is not an image'));
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        let dataUrl = canvas.toDataURL('image/webp', quality);
+        if (!dataUrl || !dataUrl.startsWith('data:image/webp')) {
+          dataUrl = canvas.toDataURL('image/jpeg', quality);
+        }
+        resolve(dataUrl);
+      };
+      img.onerror = () => reject(new Error('Image decode error'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('File read error'));
+    reader.readAsDataURL(file);
+  });
+}
 
 // Preset Themes Definitions
 const PRESET_THEMES = {
@@ -179,20 +228,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Setup YouTube Player Iframe API
 window.onYouTubeIframeAPIReady = function () {
-  ytPlayer = new YT.Player('ytPlayerContainer', {
-    height: '1',
-    width: '1',
-    videoId: '',
-    playerVars: {
-      'playsinline': 1,
-      'controls': 0,
-      'disablekb': 1
-    },
-    events: {
-      'onStateChange': onPlayerStateChange,
-      'onError': onPlayerError
-    }
-  });
+  try {
+    ytPlayer = new YT.Player('ytPlayerContainer', {
+      height: '1',
+      width: '1',
+      videoId: '',
+      playerVars: {
+        'playsinline': 1,
+        'controls': 0,
+        'disablekb': 1
+      },
+      events: {
+        'onReady': () => {
+          ytPlayerReady = true;
+          console.log('[YouTube Player] Ready for instant playback');
+          if (pendingVideoToPlay) {
+            const vid = pendingVideoToPlay;
+            pendingVideoToPlay = null;
+            playYouTubeTrack(vid);
+          }
+        },
+        'onStateChange': onPlayerStateChange,
+        'onError': onPlayerError
+      }
+    });
+  } catch (e) {
+    console.warn("YouTube iframe init error:", e);
+  }
 };
 
 // --- DATA PERSISTENCE & LOAD ---
@@ -260,10 +322,19 @@ function updateUserProfileUI() {
   const usernameInput = document.getElementById('profileUsernameInput');
   const headerUsernameEl = document.getElementById('headerUsername');
   
-  if (avatarEl) avatarEl.src = state.profile.avatar;
-  if (headerAvatarEl) headerAvatarEl.src = state.profile.avatar;
-  if (usernameInput) usernameInput.value = state.profile.username;
-  if (headerUsernameEl) headerUsernameEl.textContent = state.profile.username;
+  const avatarSrc = (state.profile && state.profile.avatar) ? state.profile.avatar : DEFAULT_AVATAR;
+  if (avatarEl) {
+    avatarEl.src = avatarSrc;
+    avatarEl.referrerPolicy = 'no-referrer';
+    avatarEl.onerror = () => { avatarEl.src = DEFAULT_AVATAR; };
+  }
+  if (headerAvatarEl) {
+    headerAvatarEl.src = avatarSrc;
+    headerAvatarEl.referrerPolicy = 'no-referrer';
+    headerAvatarEl.onerror = () => { headerAvatarEl.src = DEFAULT_AVATAR; };
+  }
+  if (usernameInput) usernameInput.value = state.profile.username || 'Music Enthusiast';
+  if (headerUsernameEl) headerUsernameEl.textContent = state.profile.username || 'Music Enthusiast';
 }
 
 function saveProfile() {
@@ -615,32 +686,24 @@ function setupEventListeners() {
     document.getElementById('avatarFileInput').click();
   });
 
-  document.getElementById('avatarFileInput').addEventListener('change', (e) => {
+  document.getElementById('avatarFileInput').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = async function (evt) {
-      const base64Data = evt.target.result;
-      try {
-        const response = await fetch('/api/upload-avatar', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: base64Data, filename: file.name })
-        });
-        if (response.ok) {
-          const result = await response.json();
-          state.profile.avatar = result.fileUrl;
-          document.getElementById('profileAvatar').src = result.fileUrl;
-          saveProfile();
-          showToast('Avatar updated!');
-        }
-      } catch (err) {
-        console.error('Failed to upload avatar:', err);
-        showToast('Avatar upload failed');
-      }
-    };
-    reader.readAsDataURL(file);
+    try {
+      showToast('Compressing avatar...');
+      const dataUrl = await compressImageFile(file, 220, 220, 0.8);
+      state.profile.avatar = dataUrl;
+      const avatarEl = document.getElementById('profileAvatar');
+      const headerAvatar = document.getElementById('headerAvatar');
+      if (avatarEl) avatarEl.src = dataUrl;
+      if (headerAvatar) headerAvatar.src = dataUrl;
+      saveProfile();
+      showToast('Avatar updated & synced!');
+    } catch (err) {
+      console.error('Failed to compress avatar:', err);
+      showToast('Avatar compression failed');
+    }
   });
 
   // Playlist Cover Image Change (URL or file upload)
@@ -661,35 +724,24 @@ function setupEventListeners() {
     }
   });
 
-  document.getElementById('playlistCoverFileInput').addEventListener('change', (e) => {
+  document.getElementById('playlistCoverFileInput').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = async function (evt) {
-      const base64Data = evt.target.result;
-      try {
-        const response = await fetch('/api/upload-avatar', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: base64Data, filename: file.name })
-        });
-        if (response.ok) {
-          const result = await response.json();
-          const pl = state.playlists.find(p => p.id === state.currentPlaylistId);
-          if (pl) {
-            pl.cover = result.fileUrl;
-            savePlaylists();
-            openPlaylistDetails(state.currentPlaylistId);
-            showToast('Playlist cover image uploaded!');
-          }
-        }
-      } catch (err) {
-        console.error('Failed to upload cover:', err);
-        showToast('Cover upload failed');
+    try {
+      showToast('Compressing cover...');
+      const dataUrl = await compressImageFile(file, 320, 320, 0.82);
+      const pl = state.playlists.find(p => p.id === state.currentPlaylistId);
+      if (pl) {
+        pl.cover = dataUrl;
+        savePlaylists();
+        openPlaylistDetails(state.currentPlaylistId);
+        showToast('Playlist cover updated & synced!');
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('Failed to compress cover:', err);
+      showToast('Cover compression failed');
+    }
   });
 
   // Playlist sidebar display style selector
@@ -1767,8 +1819,14 @@ function createSongCard(song, queueContext) {
   imgWrapper.className = 'song-card-img-wrapper';
 
   const img = document.createElement('img');
-  img.src = song.thumbnail || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=200&auto=format&fit=crop';
+  img.src = song.thumbnail || DEFAULT_ALBUM_ART;
   img.loading = 'lazy';
+  img.referrerPolicy = 'no-referrer';
+  img.alt = '';
+  img.onerror = function() {
+    this.onerror = null;
+    this.src = DEFAULT_ALBUM_ART;
+  };
   imgWrapper.appendChild(img);
 
   const info = document.createElement('div');
@@ -2343,36 +2401,21 @@ function playSong(song, index) {
 }
 
 function playYouTubeTrack(videoId) {
-  if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
-    ytPlayer.loadVideoById(videoId);
-    ytPlayer.playVideo();
-    applyVolume();
-    startProgressTimer('youtube');
+  if (!videoId) return;
+  if (ytPlayer && ytPlayerReady && typeof ytPlayer.loadVideoById === 'function') {
+    try {
+      ytPlayer.loadVideoById(videoId);
+      ytPlayer.playVideo();
+      applyVolume();
+      startProgressTimer('youtube');
+    } catch (e) {
+      console.warn("Could not play video immediately:", e);
+    }
   } else {
-    // Check if YouTube API is loaded globally, if so, initialize player on-demand
-    if (window.YT && window.YT.Player) {
-      console.log('Initializing YouTube player on-demand...');
-      ytPlayer = new YT.Player('ytPlayerContainer', {
-        height: '1',
-        width: '1',
-        videoId: videoId,
-        playerVars: {
-          'playsinline': 1,
-          'controls': 0,
-          'disablekb': 1
-        },
-        events: {
-          'onStateChange': onPlayerStateChange,
-          'onError': onPlayerError,
-          'onReady': (event) => {
-            event.target.playVideo();
-            applyVolume();
-            startProgressTimer('youtube');
-          }
-        }
-      });
-    } else {
-      console.error('YouTube player is not fully loaded yet');
+    // Queue it so as soon as YouTube is ready, it starts automatically on the FIRST click!
+    pendingVideoToPlay = videoId;
+    if (window.YT && window.YT.Player && !ytPlayer) {
+      window.onYouTubeIframeAPIReady();
     }
   }
 }
@@ -2396,6 +2439,14 @@ async function playProxyFallback(song) {
     if (response.ok) {
       const results = await response.json();
       if (results && results.length > 0) {
+        // If current track has broken or missing artwork, adopt YouTube match's artwork immediately
+        if (results[0].thumbnail && (!song.thumbnail || song.thumbnail.includes('unsplash.com'))) {
+          song.thumbnail = results[0].thumbnail;
+          const albumArtEl = document.getElementById('playerAlbumArt');
+          if (albumArtEl) albumArtEl.innerHTML = `<img src="${song.thumbnail}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src=DEFAULT_ALBUM_ART;">`;
+          const mobileCover = document.getElementById('mobileNpCoverImg');
+          if (mobileCover) mobileCover.src = song.thumbnail;
+        }
         // play the best YouTube match but keep Spotify/SoundCloud UI metadata
         playYouTubeTrack(results[0].id);
       } else {
@@ -4158,7 +4209,7 @@ async function loadHomeDashboard() {
           const card = document.createElement('div');
           card.className = 'quick-recent-card';
           card.innerHTML = `
-            <img src="${song.thumbnail || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=150&auto=format&fit=crop'}" class="quick-recent-art" alt="Art">
+            <img src="${song.thumbnail || DEFAULT_ALBUM_ART}" class="quick-recent-art" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src=DEFAULT_ALBUM_ART;">
             <div class="quick-recent-info">
               <div class="quick-recent-title">${song.title}</div>
               <div class="quick-recent-subtitle">${song.artist || 'Unknown'}</div>
@@ -4203,7 +4254,7 @@ async function loadHomeDashboard() {
           card.className = 'home-card';
           card.innerHTML = `
             <div class="home-card-art-wrapper">
-              <img src="${mix.thumbnail}" class="home-card-art" alt="Art">
+              <img src="${mix.thumbnail || DEFAULT_ALBUM_ART}" class="home-card-art" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src=DEFAULT_ALBUM_ART;">
               <div class="home-card-play-btn" title="Play Vibe Mix">
                 <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
               </div>
@@ -4240,7 +4291,7 @@ async function loadHomeDashboard() {
           card.className = 'home-card';
           card.innerHTML = `
             <div class="home-card-art-wrapper">
-              <img src="${song.thumbnail || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=200&auto=format&fit=crop'}" class="home-card-art" alt="Art">
+              <img src="${song.thumbnail || DEFAULT_ALBUM_ART}" class="home-card-art" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src=DEFAULT_ALBUM_ART;">
               <div class="home-card-play-btn">
                 <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
               </div>
