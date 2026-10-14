@@ -525,7 +525,82 @@ def find_playlist_title(data):
         return None
     return traverse(data) or "Imported YouTube Playlist"
 
-def resolve_youtube_playlist(playlist_id):
+def resolve_youtube_mix(playlist_id=None, video_id=None, limit=100):
+    try:
+        kwargs = {'limit': limit}
+        if playlist_id:
+            kwargs['playlistId'] = playlist_id
+        if video_id:
+            kwargs['videoId'] = video_id
+        elif playlist_id and playlist_id.startswith('RDAMVM'):
+            potential_vid = playlist_id[6:]
+            if len(potential_vid) == 11:
+                kwargs['videoId'] = potential_vid
+        elif playlist_id and playlist_id.startswith('RD') and len(playlist_id) == 13:
+            potential_vid = playlist_id[2:]
+            if len(potential_vid) == 11:
+                kwargs['videoId'] = potential_vid
+
+        if not playlist_id and video_id:
+            kwargs['radio'] = True
+
+        res = ytmusic.get_watch_playlist(**kwargs)
+        raw_tracks = res.get('tracks', [])
+        tracks = []
+        for item in raw_tracks:
+            vid = item.get('videoId')
+            if not vid:
+                continue
+            title = item.get('title', 'Unknown Track')
+            artists = item.get('artists', [])
+            artist_name = ", ".join([a.get('name', '') for a in artists if isinstance(a, dict) and a.get('name')]) if artists else item.get('author', 'Unknown Artist')
+            duration = item.get('length', '3:00')
+            thumb = ''
+            thumbnails = item.get('thumbnail', [])
+            if isinstance(thumbnails, list) and thumbnails:
+                thumb = thumbnails[-1].get('url', '')
+            elif isinstance(thumbnails, dict):
+                thumb = thumbnails.get('url', '')
+            if not thumb:
+                thumb = f"https://img.youtube.com/vi/{vid}/0.jpg"
+                
+            tracks.append({
+                'id': vid,
+                'title': title,
+                'artist': artist_name,
+                'duration': duration,
+                'thumbnail': thumb,
+                'url': f"https://www.youtube.com/watch?v={vid}",
+                'platform': 'youtube'
+            })
+            if len(tracks) >= limit:
+                break
+                
+        mix_title = res.get('title')
+        if not mix_title or mix_title == 'None':
+            if tracks:
+                mix_title = f"Mix - {tracks[0]['title']}"
+            else:
+                mix_title = "YouTube Mix"
+
+        return {
+            'name': mix_title,
+            'tracks': tracks
+        }
+    except Exception as e:
+        print("YouTube Mix resolve error:", e)
+        return None
+
+def resolve_youtube_playlist(playlist_id, video_id=None, limit=100):
+    is_mix = False
+    if playlist_id:
+        if playlist_id.startswith('RD') or playlist_id.startswith('RDAMVM') or playlist_id.startswith('RDMM') or playlist_id.startswith('RDEM') or playlist_id.startswith('RDCLAK') or playlist_id.startswith('RDQM'):
+            is_mix = True
+    if is_mix or (video_id and not playlist_id):
+        mix_res = resolve_youtube_mix(playlist_id=playlist_id, video_id=video_id, limit=limit)
+        if mix_res and mix_res.get('tracks'):
+            return mix_res
+
     try:
         url = f"https://www.youtube.com/playlist?list={playlist_id}"
         headers = {
@@ -572,13 +647,21 @@ def resolve_youtube_playlist(playlist_id):
                 data = json.loads(raw_json)
                 title = find_playlist_title(data)
                 tracks = find_youtube_playlist_videos(data)
-                return {
-                    'name': title,
-                    'tracks': tracks
-                }
+                if tracks:
+                    return {
+                        'name': title,
+                        'tracks': tracks[:limit]
+                    }
     except Exception as e:
         print("YouTube playlist resolve error:", e)
+
+    # Fallback to get_watch_playlist
+    mix_res = resolve_youtube_mix(playlist_id=playlist_id, video_id=video_id, limit=limit)
+    if mix_res and mix_res.get('tracks'):
+        return mix_res
+
     return None
+
 
 def resolve_spotify_track(track_id):
     config = read_config()
@@ -710,7 +793,7 @@ def get_youtube_audio_url(video_id):
         print("YouTube audio stream extraction error:", e)
     return None
 
-def resolve_spotify_playlist(playlist_id):
+def resolve_spotify_playlist(playlist_id, limit=100):
     config = read_config()
     client_id = config.get('spotifyClientId')
     client_secret = config.get('spotifyClientSecret')
@@ -770,8 +853,10 @@ def resolve_spotify_playlist(playlist_id):
                     'albumId': t.get('album', {}).get('id') if t.get('album') else None,
                     'albumName': t.get('album', {}).get('name') if t.get('album') else None
                 })
+                if len(tracks) >= limit:
+                    break
             
-            if not next_url:
+            if len(tracks) >= limit or not next_url:
                 break
                 
             try:
@@ -835,7 +920,7 @@ def resolve_soundcloud_track(url):
         print("SoundCloud track resolve error:", e)
         return None
 
-def resolve_soundcloud_playlist(url):
+def resolve_soundcloud_playlist(url, limit=100):
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -875,6 +960,8 @@ def resolve_soundcloud_playlist(url):
                 'platform': 'soundcloud',
                 'isFallback': True
             })
+            if len(tracks) >= limit:
+                break
             
         return {
             'name': playlist_name,
@@ -1122,6 +1209,17 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(b'{"error": "URL required"}')
                 return
             
+            limit_val = 100
+            if 'limit' in query_params:
+                try:
+                    limit_val = int(query_params.get('limit')[0])
+                    if limit_val <= 0:
+                        limit_val = 100
+                    if limit_val > 300:
+                        limit_val = 300
+                except (ValueError, TypeError):
+                    limit_val = 100
+
             # Resolve redirects first (e.g. mobile soundcloud or youtu.be links)
             if 'on.soundcloud.com' in url or 'youtu.be' in url:
                 url = resolve_redirect(url)
@@ -1144,7 +1242,7 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             # 2. Spotify Playlist Link
             elif SPOTIFY_PLAYLIST_RE.search(url):
                 playlist_id = SPOTIFY_PLAYLIST_RE.search(url).group(1)
-                res_playlist = resolve_spotify_playlist(playlist_id)
+                res_playlist = resolve_spotify_playlist(playlist_id, limit=limit_val)
                 if res_playlist:
                     self.wfile.write(json.dumps({
                         'type': 'playlist', 
@@ -1156,7 +1254,7 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                     self.wfile.write(b'{"error": "Failed to resolve Spotify playlist"}')
                 return
                 
-            # 3. YouTube Playlist Link
+            # 3. YouTube Playlist / Mix Link
             elif 'list=' in url or YOUTUBE_PLAYLIST_RE.search(url):
                 playlist_match = YOUTUBE_PLAYLIST_RE.search(url)
                 playlist_id = playlist_match.group(1) if playlist_match else None
@@ -1164,16 +1262,24 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                     parsed_qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
                     playlist_id = parsed_qs.get('list', [None])[0]
                     
+                video_id = None
+                v_match = YOUTUBE_VIDEO_RE.search(url)
+                if v_match:
+                    video_id = v_match.group(1)
+                else:
+                    parsed_qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+                    video_id = parsed_qs.get('v', [None])[0]
+
                 if playlist_id:
-                    res_playlist = resolve_youtube_playlist(playlist_id)
-                    if res_playlist:
+                    res_playlist = resolve_youtube_playlist(playlist_id, video_id=video_id, limit=limit_val)
+                    if res_playlist and res_playlist.get('tracks'):
                         self.wfile.write(json.dumps({
                             'type': 'playlist', 
                             'name': res_playlist['name'], 
                             'songs': res_playlist['tracks']
                         }).encode('utf-8'))
                     else:
-                        self.wfile.write(b'{"error": "Failed to resolve YouTube playlist"}')
+                        self.wfile.write(b'{"error": "Failed to resolve YouTube playlist/mix"}')
                 else:
                     self.wfile.write(b'{"error": "Invalid YouTube playlist ID"}')
                 return
@@ -1181,16 +1287,27 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             # 4. YouTube Video Link
             elif YOUTUBE_VIDEO_RE.search(url):
                 video_id = YOUTUBE_VIDEO_RE.search(url).group(1)
+                allow_mix = query_params.get('allow_mix', ['0'])[0] in ('1', 'true', 'True')
+                if allow_mix:
+                    res_mix = resolve_youtube_mix(playlist_id=None, video_id=video_id, limit=limit_val)
+                    if res_mix and res_mix.get('tracks'):
+                        self.wfile.write(json.dumps({
+                            'type': 'playlist', 
+                            'name': res_mix['name'], 
+                            'songs': res_mix['tracks']
+                        }).encode('utf-8'))
+                        return
+
                 res_track = resolve_youtube_video(video_id)
                 if res_track:
-                    self.wfile.write(json.dumps({'type': 'track', 'song': res_track}).encode('utf-8'))
+                    self.wfile.write(json.dumps({'type': 'track', 'song': res_track, 'can_mix': True}).encode('utf-8'))
                 else:
                     self.wfile.write(b'{"error": "Failed to resolve YouTube video"}')
                 return
                 
             # 5. SoundCloud Playlist Link
             elif SOUNDCLOUD_PLAYLIST_RE.search(url):
-                res_playlist = resolve_soundcloud_playlist(url)
+                res_playlist = resolve_soundcloud_playlist(url, limit=limit_val)
                 if res_playlist:
                     self.wfile.write(json.dumps({
                         'type': 'playlist', 

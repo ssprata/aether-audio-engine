@@ -817,7 +817,7 @@ function setupEventListeners() {
 
   // Import Playlist from URL Action
   document.getElementById('btnImportPlaylistUrl').addEventListener('click', async () => {
-    let link = await showPromptModal('Import Playlist from Link', 'Paste a YouTube, Spotify, or SoundCloud playlist link:');
+    let link = await showPromptModal('Import Playlist or Mix', 'Paste a YouTube Mix, Playlist, or Track link:');
     if (!link) return;
 
     link = link.trim();
@@ -825,10 +825,26 @@ function setupEventListeners() {
       link = 'https://' + link;
     }
 
-    showToast('Analyzing playlist link...');
+    // Ask user how many songs to import (default: 100)
+    const limitInput = await showPromptModal(
+      'Import Song Limit',
+      'How many songs would you like to import? (Default: 100):',
+      '100'
+    );
+    if (limitInput === null) return; // User cancelled
+
+    let limit = parseInt(limitInput, 10);
+    if (isNaN(limit) || limit <= 0) {
+      limit = 100;
+    }
+    if (limit > 300) {
+      limit = 300;
+    }
+
+    showToast(`Analyzing link and importing up to ${limit} songs...`);
 
     try {
-      const response = await fetch(`/api/resolve-link?url=${encodeURIComponent(link)}`);
+      const response = await fetch(`/api/resolve-link?url=${encodeURIComponent(link)}&limit=${limit}&allow_mix=1`);
       if (response.ok) {
         const data = await response.json();
         if (data.error) {
@@ -842,8 +858,26 @@ function setupEventListeners() {
           } else {
             showToast('This playlist contains no playable songs.');
           }
+        } else if (data.type === 'track') {
+          const wantMix = await showConfirmModal(
+            'Single Track Detected',
+            `"${data.song.title}" is a single track. Would you like to generate and import a ${limit}-song YouTube Mix based on it?`
+          );
+          if (wantMix) {
+            showToast(`Generating mix from "${data.song.title}"...`);
+            const mixResp = await fetch(`/api/resolve-link?url=${encodeURIComponent(link)}&limit=${limit}&allow_mix=1`);
+            if (mixResp.ok) {
+              const mixData = await mixResp.json();
+              if (mixData.type === 'playlist' && mixData.songs && mixData.songs.length > 0) {
+                importPlaylistFromData(mixData.name, mixData.songs);
+                return;
+              }
+            }
+          }
+          // Otherwise import single track into new playlist
+          importPlaylistFromData(data.song.title, [data.song]);
         } else {
-          showToast('This link resolves to a single track. Try pasting it in the search bar instead!');
+          showToast('Failed to resolve media from this link.');
         }
       } else {
         showToast('Failed to resolve playlist link.');
@@ -1716,7 +1750,7 @@ async function performSearch() {
 
   try {
     if (isUrl) {
-      const response = await fetch(`/api/resolve-link?url=${encodeURIComponent(finalQuery)}`);
+      const response = await fetch(`/api/resolve-link?url=${encodeURIComponent(finalQuery)}&limit=100`);
       if (response.ok) {
         const data = await response.json();
         loader.style.display = 'none';
@@ -2000,15 +2034,18 @@ function createPlaylist(name) {
   showToast(`Playlist "${name}" created!`);
 }
 
-function importPlaylistFromData(name, songs) {
+function importPlaylistFromData(name, songs, cover = null) {
+  const playlistCover = cover || (songs && songs.length > 0 && songs[0].thumbnail ? songs[0].thumbnail : null);
   const newPlaylist = {
     id: 'pl-' + Date.now(),
     name: name,
     songs: songs,
+    cover: playlistCover,
     createdAt: new Date().toLocaleDateString()
   };
   state.playlists.push(newPlaylist);
   savePlaylists();
+  renderPlaylists();
   showToast(`Playlist "${name}" imported with ${songs.length} songs!`);
 }
 
