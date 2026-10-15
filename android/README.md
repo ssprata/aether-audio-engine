@@ -43,8 +43,7 @@ If you make code updates in the root workspace folder, always run the synchroniz
 #### Step 2: Open Project in Android Studio
 1. Launch **Android Studio**.
 2. Select **Open** (or **File > Open**).
-3. Navigate to and select the `android` folder in this workspace:
-   `F:\Sprata\Apps\Multi-music-tool\android`
+3. Navigate to and select the `android` folder in the project root directory.
 4. Wait for Android Studio to index, download the Android SDK platform toolchains, and complete the Gradle build configuration sync.
 
 #### Step 3: Build the APK

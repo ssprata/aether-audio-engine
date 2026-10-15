@@ -3,7 +3,7 @@
 This file details the known issues with SoundCloud playlist imports and how to resolve them in the future.
 
 ## Current Issue
-SoundCloud playlist links (e.g. `https://soundcloud.com/spr4t4/sets/gym-hardstyle`) fail to import tracks properly on the Python backend.
+SoundCloud playlist links (e.g. `https://soundcloud.com/username/sets/playlist-name`) fail to import tracks properly on the Python backend.
 
 ### Technical Analysis
 1. **Dynamic Client Side Rendering (CSR)**: SoundCloud's public web interface relies heavily on client-side React rendering. The raw HTML response fetched by `urllib.request` (without Javascript execution) may contain only an empty layout skeleton or simplified meta tags, missing the `<noscript>` track list or rendering them in a highly nested JSON structure inside a `<script>` tag.
