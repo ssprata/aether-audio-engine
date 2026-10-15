@@ -54,6 +54,9 @@ let state = {
   smartCacheLimit: 200,
   downloadingTrackIds: new Set(),
   isDownloadingPlaylist: false,
+  downloadingPlaylistName: '',
+  cancelPlaylistDownload: false,
+  playlistDownloadAbortController: null,
   currentPlaybackType: null,
   profile: {
     username: 'Music Enthusiast',
@@ -2047,6 +2050,7 @@ function showConfirmModal(title, message) {
     btnCancel.addEventListener('click', onCancel);
   });
 }
+window.openConfirmModal = showConfirmModal;
 
 // --- PLAYLIST CONTROLLER ---
 function createPlaylist(name) {
@@ -2548,6 +2552,7 @@ function playSong(song, index) {
 
 function playYouTubeTrack(videoId) {
   if (!videoId) return;
+  state.currentPlaybackType = 'youtube';
   if (ytPlayer && ytPlayerReady && typeof ytPlayer.loadVideoById === 'function') {
     try {
       ytPlayer.loadVideoById(videoId);
@@ -2567,6 +2572,7 @@ function playYouTubeTrack(videoId) {
 }
 
 function playPreviewTrack(previewUrl) {
+  state.currentPlaybackType = 'audio';
   activeAudio = new Audio(previewUrl);
   activeAudio.volume = state.isMuted ? 0 : state.volume / 100;
   activeAudio.play();
@@ -2622,30 +2628,45 @@ function stopActivePlayback() {
 
   // Stop HTML5 Audio
   if (activeAudio) {
-    activeAudio.pause();
-    activeAudio.src = '';
+    try {
+      activeAudio.pause();
+      activeAudio.src = '';
+    } catch (e) {}
     activeAudio = null;
   }
 
+  state.currentPlaybackType = null;
   state.isPlaying = false;
 }
 
 function togglePlayPause() {
-  if (!state.currentSong) return;
+  if (!state.currentSong) {
+    if (state.playQueue && state.playQueue.length > 0) {
+      playSong(state.playQueue[0], 0);
+      return;
+    }
+    const currentPl = state.playlists.find(p => p.id === state.currentPlaylistId);
+    if (currentPl && currentPl.songs && currentPl.songs.length > 0) {
+      playSongList(currentPl.songs, 0);
+      return;
+    }
+    showToast("Choose a song to play");
+    return;
+  }
 
   if (state.isPlaying) {
     // User explicitly paused
     state.isPlaying = false;
     state.isUserPaused = true;
 
-    if (state.currentPlaybackType === 'offline' || (activeAudio && (!ytPlayer || typeof ytPlayer.getPlayerState !== 'function' || ytPlayer.getPlayerState() !== 1))) {
-      if (activeAudio) activeAudio.pause();
-    } else if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
-      if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
-        ytPlayer.pauseVideo();
-      }
-    } else if (activeAudio) {
-      activeAudio.pause();
+    if (activeAudio) {
+      try { activeAudio.pause(); } catch (e) {}
+    }
+    if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+      try { ytPlayer.pauseVideo(); } catch (e) {}
+    }
+    if (window.AndroidAudio && typeof window.AndroidAudio.pauseTrack === 'function') {
+      try { window.AndroidAudio.pauseTrack(); } catch (e) {}
     }
     updatePlayButtonUI(false);
   } else {
@@ -2653,14 +2674,15 @@ function togglePlayPause() {
     state.isPlaying = true;
     state.isUserPaused = false;
 
-    if (state.currentPlaybackType === 'offline' || (activeAudio && (!ytPlayer || typeof ytPlayer.getPlayerState !== 'function' || ytPlayer.getPlayerState() !== 1))) {
-      if (activeAudio) activeAudio.play();
-    } else if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
-      if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
-        ytPlayer.playVideo();
-      }
+    if ((state.currentPlaybackType === 'offline' || state.currentPlaybackType === 'audio') && activeAudio) {
+      activeAudio.play().catch(e => console.warn("Audio resume error:", e));
+    } else if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+      try { ytPlayer.playVideo(); } catch (e) {}
     } else if (activeAudio) {
-      activeAudio.play();
+      activeAudio.play().catch(e => console.warn("Audio resume error:", e));
+    }
+    if (window.AndroidAudio && typeof window.AndroidAudio.resumeTrack === 'function') {
+      try { window.AndroidAudio.resumeTrack(); } catch (e) {}
     }
     updatePlayButtonUI(true);
   }
@@ -2768,13 +2790,11 @@ function applyVolume() {
 function seekToPercentage(pct) {
   const seekSeconds = pct * state.duration;
   if (window.AndroidAudio && typeof window.AndroidAudio.seekTo === 'function') {
-    window.AndroidAudio.seekTo(seekSeconds);
-  } else if (state.currentPlaybackType === 'offline' || (activeAudio && (!ytPlayer || typeof ytPlayer.getPlayerState !== 'function' || ytPlayer.getPlayerState() !== 1))) {
-    if (activeAudio) activeAudio.currentTime = seekSeconds;
-  } else if (state.currentSong && (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl)) {
-    if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
-      ytPlayer.seekTo(seekSeconds, true);
-    }
+    try { window.AndroidAudio.seekTo(seekSeconds); } catch (e) {}
+  } else if ((state.currentPlaybackType === 'offline' || state.currentPlaybackType === 'audio') && activeAudio) {
+    activeAudio.currentTime = seekSeconds;
+  } else if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
+    try { ytPlayer.seekTo(seekSeconds, true); } catch (e) {}
   } else if (activeAudio) {
     activeAudio.currentTime = seekSeconds;
   }
@@ -4525,6 +4545,21 @@ function setupOfflineEventListeners() {
     });
   }
 
+  // Cancel Playlist Download buttons (detail view and profile view)
+  const btnCancelDownloadPlaylist = document.getElementById('btnCancelDownloadPlaylist');
+  if (btnCancelDownloadPlaylist) {
+    btnCancelDownloadPlaylist.addEventListener('click', () => {
+      cancelCurrentPlaylistDownload();
+    });
+  }
+
+  const btnProfileCancelDownload = document.getElementById('btnProfileCancelDownload');
+  if (btnProfileCancelDownload) {
+    btnProfileCancelDownload.addEventListener('click', () => {
+      cancelCurrentPlaylistDownload();
+    });
+  }
+
   // Smart Stream Cache toggle in Profile
   const toggleSmartCache = document.getElementById('toggleSmartCache');
   if (toggleSmartCache) {
@@ -4547,7 +4582,7 @@ function setupOfflineEventListeners() {
   const btnClearStreamCache = document.getElementById('btnClearStreamCache');
   if (btnClearStreamCache) {
     btnClearStreamCache.addEventListener('click', async () => {
-      const confirmed = await openConfirmModal(
+      const confirmed = await showConfirmModal(
         'Clear Stream Cache?',
         'This will remove all automatically cached streamed songs. Playlist downloads will NOT be removed.'
       );
@@ -4560,7 +4595,8 @@ function setupOfflineEventListeners() {
           });
           const result = await res.json();
           showToast(`Cache cleared (${result.deletedCount || 0} songs removed)`);
-          refreshOfflineStatsSilently();
+          await refreshOfflineStatsSilently();
+          updateOfflineUIBadges();
           if (state.currentPlaylistId === 'system_downloaded') {
             openDownloadedMusicPlaylist();
           }
@@ -4575,7 +4611,7 @@ function setupOfflineEventListeners() {
   const btnClearAllDownloads = document.getElementById('btnClearAllDownloads');
   if (btnClearAllDownloads) {
     btnClearAllDownloads.addEventListener('click', async () => {
-      const confirmed = await openConfirmModal(
+      const confirmed = await showConfirmModal(
         'Remove All Downloads?',
         'This will delete ALL downloaded music and stream cache from this device. Are you sure?'
       );
@@ -4587,8 +4623,14 @@ function setupOfflineEventListeners() {
             body: JSON.stringify({ type: 'all' })
           });
           const result = await res.json();
+          state.downloadedTrackIds.clear();
+          const btn = document.getElementById('btnDownloadPlaylist');
+          const btnText = document.getElementById('btnDownloadPlaylistText');
+          if (btn) btn.classList.remove('is-downloaded');
+          if (btnText) btnText.textContent = "Download Playlist";
+          updateOfflineUIBadges();
+          await refreshOfflineStatsSilently();
           showToast(`All downloads removed (${result.deletedCount || 0} songs deleted)`);
-          refreshOfflineStatsSilently();
           if (state.currentPlaylistId === 'system_downloaded') {
             openDownloadedMusicPlaylist();
           }
@@ -4709,15 +4751,24 @@ async function refreshOfflineStatsSilently() {
 function updateOfflineUIBadges() {
   const downloadBtn = document.getElementById('btnDownloadPlaylist');
   const downloadBtnText = document.getElementById('btnDownloadPlaylistText');
-  if (downloadBtn && downloadBtnText && state.activeTab === 'playlist-detail' && state.currentPlaylistId && state.currentPlaylistId !== 'system_downloaded') {
+  if (downloadBtn && downloadBtnText && state.currentPlaylistId && state.currentPlaylistId !== 'system_downloaded') {
     const pl = state.playlists.find(p => p.id === state.currentPlaylistId);
     if (pl && pl.songs && pl.songs.length > 0) {
       const allDownloaded = pl.songs.every(s => state.downloadedTrackIds.has(s.id));
       if (allDownloaded) {
         downloadBtn.classList.add('is-downloaded');
-        downloadBtnText.textContent = "Downloaded";
+        if (!state.isDownloadingPlaylist) {
+          downloadBtnText.textContent = "Downloaded";
+        }
       } else {
         downloadBtn.classList.remove('is-downloaded');
+        if (!state.isDownloadingPlaylist) {
+          downloadBtnText.textContent = "Download Playlist";
+        }
+      }
+    } else {
+      downloadBtn.classList.remove('is-downloaded');
+      if (!state.isDownloadingPlaylist) {
         downloadBtnText.textContent = "Download Playlist";
       }
     }
@@ -4734,6 +4785,10 @@ function updateOfflineUIBadges() {
       dlBtn.innerHTML = isDownloaded
         ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #10b981;"><polyline points="20 6 9 17 4 12"></polyline></svg>`
         : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
+    }
+    const checkIcon = row.querySelector('.download-check-icon');
+    if (checkIcon) {
+      checkIcon.style.display = isDownloaded ? 'inline-flex' : 'none';
     }
   });
 }
@@ -4761,6 +4816,8 @@ function playOfflineTrack(song) {
     startProgressTimer('audio');
   }).catch(err => {
     console.warn("Offline playback failed, attempting fallback:", err);
+    state.currentPlaybackType = null;
+    activeAudio = null;
     if (navigator.onLine) {
       if (song.platform === 'youtube' || song.isFallback) {
         playYouTubeTrack(song.id);
@@ -4807,7 +4864,7 @@ async function downloadSingleTrack(song) {
   if (!song || !song.id) return;
 
   if (state.downloadedTrackIds.has(song.id)) {
-    const confirmed = await openConfirmModal(
+    const confirmed = await showConfirmModal(
       "Remove Download?",
       `Do you want to remove "${song.title}" from your device storage?`
     );
@@ -4855,7 +4912,8 @@ async function removeDownloadedTrack(songId) {
     if (result.success) {
       state.downloadedTrackIds.delete(songId);
       showToast('Track removed from device storage');
-      refreshOfflineStatsSilently();
+      updateOfflineUIBadges();
+      await refreshOfflineStatsSilently();
       if (state.currentPlaylistId === 'system_downloaded') {
         openDownloadedMusicPlaylist();
       }
@@ -4867,6 +4925,46 @@ async function removeDownloadedTrack(songId) {
   }
 }
 
+function renderProfileDownloadBanner(show, playlistName = '', currentIdx = 0, total = 0, currentTitle = '') {
+  const banner = document.getElementById('profileActiveDownloadBanner');
+  if (!banner) return;
+
+  if (!show) {
+    banner.style.display = 'none';
+    return;
+  }
+
+  banner.style.display = 'flex';
+  const nameEl = document.getElementById('profileDownloadPlName');
+  const songEl = document.getElementById('profileDownloadCurrentSong');
+  const countEl = document.getElementById('profileDownloadCount');
+  const pctEl = document.getElementById('profileDownloadPct');
+  const fillEl = document.getElementById('profileDownloadProgressFill');
+
+  if (nameEl) nameEl.textContent = `Downloading Playlist: ${playlistName || 'Playlist'}`;
+  if (songEl) songEl.textContent = currentTitle ? `Song ${currentIdx} of ${total}: ${currentTitle}` : 'Downloading tracks...';
+  if (countEl) countEl.textContent = `${currentIdx} / ${total} songs`;
+
+  const pct = total > 0 ? Math.round((currentIdx / total) * 100) : 0;
+  if (pctEl) pctEl.textContent = `${pct}%`;
+  if (fillEl) fillEl.style.width = `${pct}%`;
+}
+
+function cancelCurrentPlaylistDownload() {
+  if (!state.isDownloadingPlaylist) return;
+  state.cancelPlaylistDownload = true;
+  if (state.playlistDownloadAbortController) {
+    try {
+      state.playlistDownloadAbortController.abort();
+    } catch (e) {}
+  }
+  const btnText = document.getElementById('btnDownloadPlaylistText');
+  if (btnText) btnText.textContent = 'Stopping...';
+  const songEl = document.getElementById('profileDownloadCurrentSong');
+  if (songEl) songEl.textContent = 'Stopping download...';
+  showToast('Cancelling download...');
+}
+
 async function downloadCurrentPlaylist() {
   const pl = state.playlists.find(p => p.id === state.currentPlaylistId);
   if (!pl || !pl.songs || pl.songs.length === 0) {
@@ -4876,27 +4974,41 @@ async function downloadCurrentPlaylist() {
 
   const btn = document.getElementById('btnDownloadPlaylist');
   const btnText = document.getElementById('btnDownloadPlaylistText');
+  const cancelBtn = document.getElementById('btnCancelDownloadPlaylist');
   if (state.isDownloadingPlaylist) {
     showToast("Download already in progress");
     return;
   }
 
   state.isDownloadingPlaylist = true;
+  state.downloadingPlaylistName = pl.name;
+  state.cancelPlaylistDownload = false;
+  state.playlistDownloadAbortController = new AbortController();
+
   if (btn) btn.classList.add('is-downloading');
+  if (cancelBtn) cancelBtn.style.display = 'inline-flex';
 
   const total = pl.songs.length;
   let downloadedCount = 0;
   let failCount = 0;
 
+  renderProfileDownloadBanner(true, pl.name, 0, total, 'Starting...');
+
   for (let i = 0; i < total; i++) {
+    if (state.cancelPlaylistDownload) {
+      break;
+    }
+
     const s = pl.songs[i];
     if (btnText) btnText.textContent = `Downloading (${i + 1}/${total})...`;
+    renderProfileDownloadBanner(true, pl.name, i + 1, total, s.title);
 
     try {
       const res = await fetch('/api/offline/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ song: s, isCache: false })
+        body: JSON.stringify({ song: s, isCache: false }),
+        signal: state.playlistDownloadAbortController ? state.playlistDownloadAbortController.signal : undefined
       });
       const result = await res.json();
       if (result.success) {
@@ -4906,20 +5018,35 @@ async function downloadCurrentPlaylist() {
         failCount++;
       }
     } catch (e) {
+      if (e.name === 'AbortError' || state.cancelPlaylistDownload) {
+        break;
+      }
       failCount++;
     }
     updateOfflineUIBadges();
   }
 
+  const wasCancelled = state.cancelPlaylistDownload;
   state.isDownloadingPlaylist = false;
+  state.cancelPlaylistDownload = false;
+  state.playlistDownloadAbortController = null;
+
   if (btn) {
     btn.classList.remove('is-downloading');
-    btn.classList.add('is-downloaded');
   }
-  if (btnText) btnText.textContent = "Downloaded";
+  if (cancelBtn) {
+    cancelBtn.style.display = 'none';
+  }
+  renderProfileDownloadBanner(false);
 
-  refreshOfflineStatsSilently();
-  showToast(`Playlist download complete! (${downloadedCount} saved${failCount > 0 ? `, ${failCount} failed` : ''})`);
+  updateOfflineUIBadges();
+  await refreshOfflineStatsSilently();
+
+  if (wasCancelled) {
+    showToast(`Playlist download stopped (${downloadedCount} saved)`);
+  } else {
+    showToast(`Playlist download complete! (${downloadedCount} saved${failCount > 0 ? `, ${failCount} failed` : ''})`);
+  }
 }
 
 async function openDownloadedMusicPlaylist() {
@@ -5051,7 +5178,7 @@ function renderDownloadedSongsList(tracks) {
     removeBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
     removeBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const confirmed = await openConfirmModal("Remove Song?", `Remove "${song.title}" from device storage?`);
+      const confirmed = await showConfirmModal("Remove Song?", `Remove "${song.title}" from device storage?`);
       if (confirmed) {
         await removeDownloadedTrack(song.id);
       }

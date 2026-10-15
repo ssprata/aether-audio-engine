@@ -298,6 +298,10 @@
                 </svg>
                 <span id="btnDownloadPlaylistText">Download Playlist</span>
               </button>
+              <button class="btn btn-outline btn-danger-hover" id="btnCancelDownloadPlaylist" style="display: none;" title="Cancel ongoing download">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                <span>Cancel</span>
+              </button>
               <button class="btn btn-danger btn-outline" id="btnDeletePlaylist">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                 Delete Playlist
@@ -629,6 +633,39 @@
                 </div>
               </div>
               <span id="offlineStorageBadge" class="badge">0 MB</span>
+            </div>
+
+            <!-- Active Playlist Download Progress Banner -->
+            <div class="active-download-banner" id="profileActiveDownloadBanner" style="display: none;">
+              <div class="active-download-header">
+                <div class="active-download-info">
+                  <div class="active-download-spinner">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="spin-icon">
+                      <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
+                      <path d="M12 2a10 10 0 0 1 10 10"></path>
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 id="profileDownloadPlName">Downloading Playlist...</h4>
+                    <p id="profileDownloadCurrentSong" class="active-download-sub">Preparing tracks...</p>
+                  </div>
+                </div>
+                <button class="btn btn-sm btn-outline btn-danger-hover" id="btnProfileCancelDownload" title="Stop ongoing playlist download">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; margin-right: 4px;">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="15" y1="9" x2="9" y2="15"></line>
+                    <line x1="9" y1="9" x2="15" y2="15"></line>
+                  </svg>
+                  Stop Download
+                </button>
+              </div>
+              <div class="active-download-progress-bg">
+                <div class="active-download-progress-fill" id="profileDownloadProgressFill" style="width: 0%;"></div>
+              </div>
+              <div class="active-download-meta">
+                <span id="profileDownloadCount">0 / 0 songs</span>
+                <span id="profileDownloadPct">0%</span>
+              </div>
             </div>
 
             <!-- Visual Storage Meter -->

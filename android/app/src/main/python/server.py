@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 import json
 import base64
@@ -1190,15 +1191,34 @@ def download_track_offline(song_data, is_cache=False):
 
 def delete_offline_track(song_id):
     index = read_offline_index()
-    if song_id in index.get('tracks', {}):
-        track_info = index['tracks'][song_id]
+    song_id = str(song_id)
+    tracks = index.get('tracks', {})
+    found_key = None
+    if song_id in tracks:
+        found_key = song_id
+    else:
+        for k in tracks:
+            if str(k) == song_id:
+                found_key = k
+                break
+    if found_key:
+        track_info = tracks[found_key]
         filepath = track_info.get('filepath')
         if filepath and os.path.exists(filepath):
             try:
                 os.remove(filepath)
             except Exception as e:
                 print(f"Error deleting file {filepath}:", e)
-        del index['tracks'][song_id]
+        # Also clean up any possible leftover files with safe_id
+        safe_id = re.sub(r'[^a-zA-Z0-9_-]', '_', song_id)
+        import glob
+        for extra in glob.glob(os.path.join(DOWNLOADS_DIR, f"{safe_id}.*")):
+            if not extra.endswith('.json'):
+                try:
+                    os.remove(extra)
+                except Exception:
+                    pass
+        del tracks[found_key]
         write_offline_index(index)
         return True
     return False
@@ -1208,7 +1228,7 @@ def clear_offline_storage(clear_type='cache'):
     tracks = index.get('tracks', {})
     to_delete = []
     
-    for sid, t in tracks.items():
+    for sid, t in list(tracks.items()):
         is_cache = t.get('isCache', False)
         if clear_type == 'all' or (clear_type == 'cache' and is_cache) or (clear_type == 'permanent' and not is_cache):
             fp = t.get('filepath')
@@ -1217,10 +1237,29 @@ def clear_offline_storage(clear_type='cache'):
                     os.remove(fp)
                 except Exception as e:
                     print(f"Error deleting file {fp}:", e)
+            safe_id = re.sub(r'[^a-zA-Z0-9_-]', '_', str(sid))
+            import glob
+            for extra in glob.glob(os.path.join(DOWNLOADS_DIR, f"{safe_id}.*")):
+                if not extra.endswith('.json'):
+                    try:
+                        os.remove(extra)
+                    except Exception:
+                        pass
             to_delete.append(sid)
             
     for sid in to_delete:
-        del tracks[sid]
+        if sid in tracks:
+            del tracks[sid]
+
+    # If all, clean up any stray media files in DOWNLOADS_DIR
+    if clear_type == 'all':
+        import glob
+        for extra in glob.glob(os.path.join(DOWNLOADS_DIR, "*")):
+            if os.path.isfile(extra) and not extra.endswith('.json'):
+                try:
+                    os.remove(extra)
+                except Exception:
+                    pass
         
     write_offline_index(index)
     return len(to_delete)
