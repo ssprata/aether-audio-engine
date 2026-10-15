@@ -17,7 +17,15 @@ try:
 except ImportError:
     pass
 
-PUBLIC_DIR = os.path.join(os.path.dirname(__file__), 'public')
+# Handle PyInstaller frozen executable environment
+if getattr(sys, 'frozen', False):
+    BUNDLE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    DATA_DIR = os.path.dirname(sys.executable)
+else:
+    BUNDLE_DIR = os.path.dirname(os.path.abspath(__file__))
+    DATA_DIR = BUNDLE_DIR
+
+PUBLIC_DIR = os.path.join(BUNDLE_DIR, 'public')
 
 if IS_ANDROID:
     # Under Chaquopy, redirect config and writeable uploads to application files storage
@@ -31,14 +39,15 @@ if IS_ANDROID:
     HISTORY_FILE = os.path.join(android_files_dir, 'history.json')
     DOWNLOADS_DIR = os.path.join(android_files_dir, 'downloads')
 else:
-    CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'config.json')
-    BACKUP_FILE = os.path.join(os.path.dirname(__file__), 'playlists_backup.json')
-    UPLOADS_DIR = os.path.join(PUBLIC_DIR, 'uploads')
-    HISTORY_FILE = os.path.join(os.path.dirname(__file__), 'history.json')
-    DOWNLOADS_DIR = os.path.join(os.path.dirname(__file__), 'downloads')
+    CONFIG_FILE = os.path.join(DATA_DIR, 'config.json')
+    BACKUP_FILE = os.path.join(DATA_DIR, 'playlists_backup.json')
+    UPLOADS_DIR = os.path.join(DATA_DIR, 'uploads')
+    HISTORY_FILE = os.path.join(DATA_DIR, 'history.json')
+    DOWNLOADS_DIR = os.path.join(DATA_DIR, 'downloads')
 
 OFFLINE_INDEX_FILE = os.path.join(DOWNLOADS_DIR, 'offline_index.json')
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 def read_history():
     print("Reading history from:", HISTORY_FILE)

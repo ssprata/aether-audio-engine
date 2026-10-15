@@ -1,8 +1,18 @@
 import os
 import sys
+
+# Safeguard stdout/stderr for PyInstaller --noconsole mode
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, 'w')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, 'w')
+
 import time
 import socket
 import subprocess
+
+import threading
+import server
 
 PORT = 3000
 SERVER_PROCESS = None
@@ -18,18 +28,21 @@ def start_server():
     global SERVER_PROCESS
     if not is_port_in_use(PORT):
         print("Starting AetherPlayer server...")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        server_path = os.path.join(script_dir, 'server.py')
-        
-        # Start server in the background
-        SERVER_PROCESS = subprocess.Popen([sys.executable, server_path], cwd=script_dir)
+        try:
+            server_thread = threading.Thread(target=server.run_server, daemon=True)
+            server_thread.start()
+        except Exception as e:
+            print("Failed to start server in thread, falling back to subprocess:", e)
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            server_path = os.path.join(script_dir, 'server.py')
+            SERVER_PROCESS = subprocess.Popen([sys.executable, server_path], cwd=script_dir)
         
         # Wait a moment for server to bind
-        for _ in range(15):
+        for _ in range(30):
             if is_port_in_use(PORT):
                 print("Server started successfully.")
                 break
-            time.sleep(0.2)
+            time.sleep(0.1)
     else:
         print("AetherPlayer server is already running.")
 
