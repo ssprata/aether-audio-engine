@@ -18,10 +18,56 @@ try:
 except ImportError:
     pass
 
+def _migrate_legacy_data(legacy_dir, new_data_dir):
+    """Automatically move existing user data from previous exe folder to AppData."""
+    if not legacy_dir or legacy_dir == new_data_dir:
+        return
+    import shutil
+    try:
+        os.makedirs(new_data_dir, exist_ok=True)
+        # Migrate files
+        for fname in ['config.json', 'playlists_backup.json', 'history.json']:
+            old_p = os.path.join(legacy_dir, fname)
+            new_p = os.path.join(new_data_dir, fname)
+            if os.path.exists(old_p):
+                if not os.path.exists(new_p):
+                    shutil.move(old_p, new_p)
+                else:
+                    try:
+                        os.remove(old_p)
+                    except Exception:
+                        pass
+        # Migrate folders (uploads, downloads)
+        for dname in ['uploads', 'downloads']:
+            old_d = os.path.join(legacy_dir, dname)
+            new_d = os.path.join(new_data_dir, dname)
+            if os.path.exists(old_d) and os.path.isdir(old_d):
+                os.makedirs(new_d, exist_ok=True)
+                for item in os.listdir(old_d):
+                    s = os.path.join(old_d, item)
+                    d = os.path.join(new_d, item)
+                    if not os.path.exists(d):
+                        shutil.move(s, d)
+                try:
+                    if not os.listdir(old_d):
+                        os.rmdir(old_d)
+                except Exception:
+                    pass
+    except Exception as e:
+        print("[Migration Warning]", e)
+
 # Handle PyInstaller frozen executable environment
 if getattr(sys, 'frozen', False):
     BUNDLE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-    DATA_DIR = os.path.dirname(sys.executable)
+    appdata = os.getenv('APPDATA')
+    if appdata:
+        DATA_DIR = os.path.join(appdata, 'AetherPlayer')
+    else:
+        DATA_DIR = os.path.join(os.path.expanduser('~'), '.aetherplayer')
+    
+    # Auto-migrate any stray files from the exe directory
+    exe_dir = os.path.dirname(sys.executable)
+    _migrate_legacy_data(exe_dir, DATA_DIR)
 else:
     BUNDLE_DIR = os.path.dirname(os.path.abspath(__file__))
     DATA_DIR = BUNDLE_DIR
