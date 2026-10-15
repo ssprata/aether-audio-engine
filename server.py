@@ -96,6 +96,54 @@ OFFLINE_INDEX_FILE = os.path.join(DOWNLOADS_DIR, 'offline_index.json')
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
+# In-memory lyrics cache & rate-limit cooldown
+LYRICS_CACHE = {}
+LYRICS_RATE_LIMIT_COOLDOWN = 0
+
+def clean_track_metadata_for_lyrics(raw_title, raw_artist):
+    """Clean noisy YouTube/platform metadata into clean artist and track title for LrcLib."""
+    t = raw_title or ''
+    # Strip common bracketed tags e.g. [Official Video], (4K 60fps), (Lyric Video), [MV]
+    noise_patterns = [
+        r'\(.*?(?:official|video|audio|lyric|visualizer|remaster|live|version|edit|prod|feat|ft\.).*?\)',
+        r'\[.*?(?:official|video|audio|lyric|visualizer|remaster|live|version|edit|prod|feat|ft\.).*?\]',
+        r'\(.*?\)',
+        r'\[.*?\]',
+        r'(?i)\b(?:official\s*(?:video|audio|music\s*video)|lyric\s*video|visualizer|remastered|remaster|hd|4k)\b'
+    ]
+    for pat in noise_patterns:
+        t = re.sub(pat, '', t, flags=re.I).strip()
+
+    a = raw_artist or ''
+    # Strip YouTube topic channel tags (e.g. "Dua Lipa - Topic" -> "Dua Lipa")
+    a = re.sub(r'\s*-\s*topic\b', '', a, flags=re.I).strip()
+    a = re.sub(r'\(.*?\)|\[.*?\]', '', a).strip()
+
+    # If title has "Artist - Title", split it
+    if ' - ' in t:
+        parts = t.split(' - ', 1)
+        potential_artist = parts[0].strip()
+        potential_title = parts[1].strip()
+        if potential_artist and potential_title:
+            if not a or 'topic' in (raw_artist or '').lower() or 'vevo' in (raw_artist or '').lower() or a.lower() in potential_artist.lower():
+                a = potential_artist
+            t = potential_title
+
+    t = re.sub(r'\s+', ' ', t).strip()
+    a = re.sub(r'\s+', ' ', a).strip()
+    return t, a
+
+def get_cached_lyrics(clean_t, clean_a):
+    key = f"{clean_t.lower()}|{clean_a.lower()}"
+    return LYRICS_CACHE.get(key)
+
+def set_cached_lyrics(clean_t, clean_a, lyrics_obj):
+    key = f"{clean_t.lower()}|{clean_a.lower()}"
+    LYRICS_CACHE[key] = lyrics_obj
+    if len(LYRICS_CACHE) > 500:
+        first_key = next(iter(LYRICS_CACHE))
+        del LYRICS_CACHE[first_key]
+
 def read_history():
     print("Reading history from:", HISTORY_FILE)
     if os.path.exists(HISTORY_FILE):
@@ -1498,6 +1546,14 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(b'[]')
             return
 
+        elif path == '/api/ping':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(b'{"status": "ok", "app": "AetherPlayer"}')
+            return
+
         elif path == '/api/lyrics':
             title = query_params.get('title', [''])[0].strip()
             artist = query_params.get('artist', [''])[0].strip()
@@ -1513,46 +1569,84 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
 
-            # Clean query strings to improve search matching on LrcLib
-            # Remove terms like (Official Video), (Lyric Video), [MV], etc.
-            clean_title = re.sub(r'\(.*?\)|\[.*?\]|official video|official audio|lyric video|video|mv|audio', '', title, flags=re.I).strip()
-            clean_artist = re.sub(r'\(.*?\)|\[.*?\]', '', artist, flags=re.I).strip() if artist else ''
+            # Clean noisy YouTube/platform metadata into clean artist and track title
+            clean_title, clean_artist = clean_track_metadata_for_lyrics(title, artist)
+
+            # 1. Check in-memory cache first
+            cached = get_cached_lyrics(clean_title, clean_artist)
+            if cached:
+                self.wfile.write(json.dumps(cached).encode('utf-8'))
+                return
+
+            import time
+            global LYRICS_RATE_LIMIT_COOLDOWN
+            now = time.time()
+            if now < LYRICS_RATE_LIMIT_COOLDOWN:
+                # Still in cooldown period from previous 429
+                self.wfile.write(b'{"error": "Lyrics service is temporarily busy. Will retry shortly...", "isRateLimited": true}')
+                return
+
+            lrclib_headers = {
+                'User-Agent': 'AetherPlayer/1.0 (https://github.com/ssprata/Multi-music-tool; contact: desktop-app)'
+            }
 
             try:
-                # 1. Try exact matching using LrcLib API /api/get
-                get_url = f"https://lrclib.net/api/get?track_name={urllib.parse.quote(clean_title)}&artist_name={urllib.parse.quote(clean_artist)}"
-                req = urllib.request.Request(get_url, headers={'User-Agent': 'AetherPlayer/1.0'})
+                # 2. Try exact matching using LrcLib API /api/get
+                get_url = f"https://lrclib.net/api/get?track_name={urllib.parse.quote(clean_title)}"
+                if clean_artist:
+                    get_url += f"&artist_name={urllib.parse.quote(clean_artist)}"
+                
+                req = urllib.request.Request(get_url, headers=lrclib_headers)
                 try:
-                    with urllib.request.urlopen(req) as res:
+                    with urllib.request.urlopen(req, timeout=5) as res:
                         data = json.loads(res.read().decode('utf-8'))
-                        self.wfile.write(json.dumps({
+                        result = {
                             'synced': bool(data.get('syncedLyrics')),
                             'lyrics': data.get('plainLyrics', ''),
                             'syncedLyrics': data.get('syncedLyrics', '')
-                        }).encode('utf-8'))
+                        }
+                        set_cached_lyrics(clean_title, clean_artist, result)
+                        self.wfile.write(json.dumps(result).encode('utf-8'))
                         return
                 except urllib.error.HTTPError as he:
-                    if he.code != 404:
+                    if he.code == 429:
+                        LYRICS_RATE_LIMIT_COOLDOWN = time.time() + 45
+                        self.wfile.write(b'{"error": "Lyrics service is busy right now. Will retry shortly...", "isRateLimited": true}')
+                        return
+                    elif he.code != 404:
                         raise he
 
-                # 2. Try search/fuzzy matching if exact match was 404
-                search_url = f"https://lrclib.net/api/search?q={urllib.parse.quote(clean_title + ' ' + clean_artist)}"
-                req_search = urllib.request.Request(search_url, headers={'User-Agent': 'AetherPlayer/1.0'})
-                with urllib.request.urlopen(req_search) as res_search:
-                    search_results = json.loads(res_search.read().decode('utf-8'))
-                    if search_results and len(search_results) > 0:
-                        best_match = search_results[0]
-                        self.wfile.write(json.dumps({
-                            'synced': bool(best_match.get('syncedLyrics')),
-                            'lyrics': best_match.get('plainLyrics', ''),
-                            'syncedLyrics': best_match.get('syncedLyrics', '')
-                        }).encode('utf-8'))
+                # 3. Try search/fuzzy matching if exact match was 404
+                search_query = f"{clean_title} {clean_artist}".strip()
+                search_url = f"https://lrclib.net/api/search?q={urllib.parse.quote(search_query)}"
+                req_search = urllib.request.Request(search_url, headers=lrclib_headers)
+                try:
+                    with urllib.request.urlopen(req_search, timeout=6) as res_search:
+                        search_results = json.loads(res_search.read().decode('utf-8'))
+                        if search_results and len(search_results) > 0:
+                            best_match = search_results[0]
+                            result = {
+                                'synced': bool(best_match.get('syncedLyrics')),
+                                'lyrics': best_match.get('plainLyrics', ''),
+                                'syncedLyrics': best_match.get('syncedLyrics', '')
+                            }
+                            set_cached_lyrics(clean_title, clean_artist, result)
+                            self.wfile.write(json.dumps(result).encode('utf-8'))
+                            return
+                except urllib.error.HTTPError as he:
+                    if he.code == 429:
+                        LYRICS_RATE_LIMIT_COOLDOWN = time.time() + 45
+                        self.wfile.write(b'{"error": "Lyrics service is busy right now. Will retry shortly...", "isRateLimited": true}')
                         return
 
-                self.wfile.write(b'{"error": "No lyrics found"}')
+                self.wfile.write(b'{"error": "No lyrics found for this song."}')
             except Exception as err:
                 print("Lyrics search error:", err)
-                self.wfile.write(f'{{"error": "{str(err)}"}}'.encode('utf-8'))
+                if "429" in str(err):
+                    LYRICS_RATE_LIMIT_COOLDOWN = time.time() + 45
+                    self.wfile.write(b'{"error": "Lyrics service is busy right now. Will retry shortly...", "isRateLimited": true}')
+                else:
+                    self.wfile.write(b'{"error": "Could not retrieve lyrics."}')
             return
 
 
@@ -2822,12 +2916,18 @@ def start_android_server():
             return
         raise e
 
-def run_server():
-    server_address = ('', PORT)
-    httpd = HTTPServer(server_address, AetherPlayerHandler)
-    print("AetherPlayer server is running!")
-    print(f"  - Local access:   http://localhost:{PORT}")
-    print(f"  - Network access: http://{get_local_ip()}:{PORT}")
+def run_server(port=None):
+    if port is None:
+        port = int(os.environ.get('PORT', PORT))
+    
+    class ReusableServer(HTTPServer):
+        allow_reuse_address = True
+
+    server_address = ('', port)
+    httpd = ReusableServer(server_address, AetherPlayerHandler)
+    print(f"AetherPlayer server is running on port {port}!")
+    print(f"  - Local access:   http://localhost:{port}")
+    print(f"  - Network access: http://{get_local_ip()}:{port}")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

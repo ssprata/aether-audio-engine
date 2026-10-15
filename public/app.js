@@ -66,6 +66,8 @@ let state = {
   lyrics: null,
   lyricsSynced: false,
   lyricsOpen: false,
+  cachedLyricsTrackId: null,
+  lyricsDebounceTimer: null,
   playlistStyle: 'image-name', // 'image-name', 'image-only', 'name-only'
   lyricsMode: 0, // 0 = off, 1 = drawer, 2 = widget
   lyricsFontSize: 18,
@@ -1224,7 +1226,7 @@ function setupEventListeners() {
     state.lyricsMode = 1;
     const drawer = document.getElementById('lyricsDrawer');
     if (drawer) drawer.classList.add('active');
-    if (state.currentSong) fetchLyricsForTrack(state.currentSong);
+    if (state.currentSong) ensureLyricsLoaded(state.currentSong);
     closeMobileNowPlaying();
   });
   document.getElementById('btnExpandLyricsModal')?.addEventListener('click', (e) => {
@@ -1232,7 +1234,7 @@ function setupEventListeners() {
     state.lyricsMode = 1;
     const drawer = document.getElementById('lyricsDrawer');
     if (drawer) drawer.classList.add('active');
-    if (state.currentSong) fetchLyricsForTrack(state.currentSong);
+    if (state.currentSong) ensureLyricsLoaded(state.currentSong);
     closeMobileNowPlaying();
   });
   document.getElementById('btnMobileNpFollowArtist')?.addEventListener('click', (e) => {
@@ -1286,14 +1288,14 @@ function setupEventListeners() {
       drawer.classList.add('active');
       btn.classList.add('active');
       state.lyricsOpen = true;
-      if (state.currentSong) fetchLyricsForTrack(state.currentSong);
+      if (state.currentSong) ensureLyricsLoaded(state.currentSong);
     } else if (state.lyricsMode === 2) {
       widget.style.display = 'flex';
       btn.classList.add('active');
       btn.style.color = 'var(--accent-color)';
       state.lyricsOpen = true;
       if (state.currentSong) {
-        fetchLyricsForTrack(state.currentSong);
+        ensureLyricsLoaded(state.currentSong);
       } else {
         updateLyricsHighlight(0); // Show song info placeholder
       }
@@ -2500,9 +2502,9 @@ function playSong(song, index) {
     }
   }
 
-  // Reset lyrics index and trigger fetch for lyrics box
+  // Reset lyrics index and trigger debounced fetch for lyrics box
   activeLyricIndex = -1;
-  fetchLyricsForTrack(song);
+  ensureLyricsLoaded(song);
 
   // Initialize playback: check if downloaded locally or device is offline
   const isLocalOffline = (state.downloadedTrackIds && state.downloadedTrackIds.has(song.id)) || !navigator.onLine;
@@ -2989,12 +2991,37 @@ function showToast(message) {
 }
 
 // --- LYRICS ENGINE ---
-async function fetchLyricsForTrack(song) {
+function ensureLyricsLoaded(song, force = false) {
+  if (!song) return;
   const container = document.getElementById('lyricsDrawerBody');
-  container.innerHTML = '<div class="lyrics-placeholder">Loading lyrics...</div>';
+  // If we already have lyrics loaded for this specific song and not forcing a re-fetch:
+  if (!force && state.cachedLyricsTrackId === song.id && state.lyrics !== null) {
+    if (state.lyricsSynced && Array.isArray(state.lyrics)) {
+      renderSyncedLyrics(state.lyrics);
+    } else if (container && typeof state.lyrics === 'string') {
+      container.innerHTML = `<div class="lyric-plain-text">${state.lyrics}</div>`;
+    }
+    updateLyricsHighlight(state.playbackPosition || 0);
+    return;
+  }
+
+  // Debounce the actual network fetch so skipping tracks doesn't flood the API
+  clearTimeout(state.lyricsDebounceTimer);
+  state.lyricsDebounceTimer = setTimeout(() => {
+    fetchLyricsForTrack(song);
+  }, 400);
+}
+
+async function fetchLyricsForTrack(song) {
+  if (!song) return;
+  const container = document.getElementById('lyricsDrawerBody');
+  if (container) {
+    container.innerHTML = '<div class="lyrics-placeholder">Loading lyrics...</div>';
+  }
 
   state.lyrics = null;
   state.lyricsSynced = false;
+  state.cachedLyricsTrackId = song.id;
 
   try {
     const response = await fetch(`/api/lyrics?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || '')}`);
@@ -3002,7 +3029,9 @@ async function fetchLyricsForTrack(song) {
 
     const data = await response.json();
     if (data.error) {
-      container.innerHTML = `<div class="lyrics-placeholder">${data.error}</div>`;
+      if (container) {
+        container.innerHTML = `<div class="lyrics-placeholder">${data.error}</div>`;
+      }
       return;
     }
 
@@ -3015,15 +3044,21 @@ async function fetchLyricsForTrack(song) {
       // Plain lyrics exist
       state.lyrics = data.lyrics;
       state.lyricsSynced = false;
-      container.innerHTML = `<div class="lyric-plain-text">${data.lyrics}</div>`;
+      if (container) {
+        container.innerHTML = `<div class="lyric-plain-text">${data.lyrics}</div>`;
+      }
     } else {
-      container.innerHTML = '<div class="lyrics-placeholder">No lyrics found for this song.</div>';
+      if (container) {
+        container.innerHTML = '<div class="lyrics-placeholder">No lyrics found for this song.</div>';
+      }
     }
   } catch (err) {
     console.error('Failed to fetch lyrics:', err);
-    container.innerHTML = '<div class="lyrics-placeholder">Failed to load lyrics.</div>';
+    if (container) {
+      container.innerHTML = '<div class="lyrics-placeholder">Failed to load lyrics.</div>';
+    }
   } finally {
-    updateLyricsHighlight(state.playbackPosition);
+    updateLyricsHighlight(state.playbackPosition || 0);
   }
 }
 

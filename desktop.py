@@ -14,37 +14,75 @@ import subprocess
 import threading
 import server
 
-PORT = 3000
+DEFAULT_START_PORT = 38241
+ACTIVE_PORT = DEFAULT_START_PORT
 SERVER_PROCESS = None
 
 def is_port_in_use(port):
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
             return s.connect_ex(('localhost', port)) == 0
     except Exception:
         return False
 
+def is_aether_server(port):
+    """Check if the service on the port is genuinely an AetherPlayer server."""
+    import urllib.request
+    import json
+    try:
+        req = urllib.request.Request(f'http://localhost:{port}/api/ping', headers={'User-Agent': 'AetherDesktop'})
+        with urllib.request.urlopen(req, timeout=0.8) as res:
+            if res.status == 200:
+                data = json.loads(res.read().decode('utf-8'))
+                return data.get('app') == 'AetherPlayer'
+    except Exception:
+        pass
+    return False
+
+def determine_active_port(start_port=38241, max_scan=50):
+    # First: check if an existing AetherPlayer server is already running on any scanned port
+    for p in range(start_port, start_port + max_scan):
+        if is_port_in_use(p) and is_aether_server(p):
+            print(f"Discovered already running AetherPlayer instance on port {p}")
+            return p, True
+
+    # Second: find the first available free port
+    for p in range(start_port, start_port + max_scan):
+        if not is_port_in_use(p):
+            return p, False
+
+    # Fallback: OS assigned dynamic port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        return s.getsockname()[1], False
+
 def start_server():
-    global SERVER_PROCESS
-    if not is_port_in_use(PORT):
-        print("Starting AetherPlayer server...")
+    global SERVER_PROCESS, ACTIVE_PORT
+    port, already_running = determine_active_port(DEFAULT_START_PORT)
+    ACTIVE_PORT = port
+
+    if not already_running:
+        print(f"Starting AetherPlayer server on port {ACTIVE_PORT}...")
         try:
-            server_thread = threading.Thread(target=server.run_server, daemon=True)
+            server_thread = threading.Thread(target=server.run_server, args=(ACTIVE_PORT,), daemon=True)
             server_thread.start()
         except Exception as e:
             print("Failed to start server in thread, falling back to subprocess:", e)
             script_dir = os.path.dirname(os.path.abspath(__file__))
             server_path = os.path.join(script_dir, 'server.py')
-            SERVER_PROCESS = subprocess.Popen([sys.executable, server_path], cwd=script_dir)
+            env = os.environ.copy()
+            env['PORT'] = str(ACTIVE_PORT)
+            SERVER_PROCESS = subprocess.Popen([sys.executable, server_path], cwd=script_dir, env=env)
         
         # Wait a moment for server to bind
-        for _ in range(30):
-            if is_port_in_use(PORT):
-                print("Server started successfully.")
+        for _ in range(40):
+            if is_aether_server(ACTIVE_PORT) or is_port_in_use(ACTIVE_PORT):
+                print(f"Server started successfully on port {ACTIVE_PORT}.")
                 break
             time.sleep(0.1)
     else:
-        print("AetherPlayer server is already running.")
+        print(f"Connecting to existing AetherPlayer server on port {ACTIVE_PORT}.")
 
 def launch_desktop():
     # 1. First choice: Use native system WebView (via pywebview) if available
@@ -55,7 +93,7 @@ def launch_desktop():
         # Create webview window
         window = webview.create_window(
             title='AetherPlayer',
-            url=f'http://localhost:{PORT}',
+            url=f'http://localhost:{ACTIVE_PORT}',
             width=1280,
             height=800,
             resizable=True,
@@ -89,14 +127,14 @@ def launch_desktop():
     if browser_path:
         print(f"Launching standalone app window using: {os.path.basename(browser_path)}")
         # App mode opens a clean, borderless browser window frame with no URL bars or tabs
-        browser_process = subprocess.Popen([browser_path, f"--app=http://localhost:{PORT}"])
+        browser_process = subprocess.Popen([browser_path, f"--app=http://localhost:{ACTIVE_PORT}"])
         browser_process.wait()
         print("App window closed.")
     else:
         # 3. Third choice: Fallback to standard web browser tab
         import webbrowser
         print("No native window wrapper found. Opening in default browser tab...")
-        webbrowser.open(f"http://localhost:{PORT}")
+        webbrowser.open(f"http://localhost:{ACTIVE_PORT}")
         # Keep launcher process alive for a bit so they can see the tab open
         time.sleep(5)
 
