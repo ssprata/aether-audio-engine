@@ -2,6 +2,8 @@
 config.json
 history.json
 playlists_backup.json
+downloads/
+android/app/src/main/python/downloads/
 
 # User uploads (custom avatars & wallpapers)
 public/uploads/*

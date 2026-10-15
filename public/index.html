@@ -102,6 +102,21 @@
 
       <!-- PLAYLISTS LIST -->
       <div class="sidebar-scroll">
+        <!-- PINNED SYSTEM PLAYLIST: DOWNLOADED MUSIC -->
+        <div class="pinned-system-playlist" id="btnOpenDownloadedPlaylist" title="View downloaded songs saved on this device">
+          <div class="system-playlist-thumb">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+          </div>
+          <div class="system-playlist-info">
+            <span class="system-playlist-name">Downloaded Music</span>
+            <span class="system-playlist-badge" id="downloadedSidebarBadge">0 songs</span>
+          </div>
+        </div>
+
         <ul class="playlists-list" id="playlistsList">
           <!-- Dynamic rendering -->
         </ul>
@@ -274,6 +289,14 @@
               <button class="btn btn-primary" id="btnPlayPlaylist">
                 <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                 Play All
+              </button>
+              <button class="btn btn-secondary" id="btnDownloadPlaylist" title="Download all songs to this device for offline playback">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <span id="btnDownloadPlaylistText">Download Playlist</span>
               </button>
               <button class="btn btn-danger btn-outline" id="btnDeletePlaylist">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
@@ -586,6 +609,72 @@
                   Disconnect (Back to Guest)
                 </button>
               </div>
+            </div>
+          </div>
+
+          <!-- Offline Storage & Smart Stream Cache Card -->
+          <div class="card offline-storage-card" id="offlineStorageCard">
+            <div class="cloud-header">
+              <div class="cloud-title-group">
+                <div class="cloud-icon-circle offline-icon-circle">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                  </svg>
+                </div>
+                <div>
+                  <h3>Offline Music & Storage</h3>
+                  <p class="card-subtitle">Manage downloaded songs & Smart Stream Cache</p>
+                </div>
+              </div>
+              <span id="offlineStorageBadge" class="badge">0 MB</span>
+            </div>
+
+            <!-- Visual Storage Meter -->
+            <div class="storage-meter-section">
+              <div class="storage-meter-bar-container">
+                <div class="storage-meter-bar">
+                  <div class="storage-bar-perm" id="storageBarPerm" style="width: 0%;"></div>
+                  <div class="storage-bar-cache" id="storageBarCache" style="width: 0%;"></div>
+                </div>
+              </div>
+              <div class="storage-legend">
+                <div class="legend-item">
+                  <span class="legend-color color-perm"></span>
+                  <span class="legend-label">Playlist Downloads:</span>
+                  <strong id="storagePermLabel">0 MB (0 songs)</strong>
+                </div>
+                <div class="legend-item">
+                  <span class="legend-color color-cache"></span>
+                  <span class="legend-label">Stream Cache (LRU):</span>
+                  <strong id="storageCacheLabel">0 MB (0 / 200 songs)</strong>
+                </div>
+              </div>
+            </div>
+
+            <!-- Smart Cache Toggle -->
+            <div class="smart-cache-toggle-box">
+              <div class="toggle-info">
+                <h4>Smart Stream Cache</h4>
+                <p>Automatically save songs as you listen for instant offline playback. Auto-rotates up to 200 songs using LRU eviction.</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggleSmartCache">
+                <span class="slider round"></span>
+              </label>
+            </div>
+
+            <!-- Storage Actions -->
+            <div class="storage-actions-grid">
+              <button class="btn btn-outline" id="btnClearStreamCache">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+                Clear Stream Cache
+              </button>
+              <button class="btn btn-outline btn-danger-hover" id="btnClearAllDownloads">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                Remove All Downloads
+              </button>
             </div>
           </div>
 
@@ -1162,6 +1251,50 @@
           <button class="btn btn-outline btn-sm" id="btnConfirmCancel">Cancel</button>
           <button class="btn btn-primary btn-sm" id="btnConfirmConfirm">Confirm</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FIRST RUN SMART CACHE WELCOME MODAL -->
+  <div class="modal-overlay" id="smartCacheFirstRunModal" style="display: none;">
+    <div class="modal-card modal-premium-card" style="max-width: 460px;">
+      <div class="modal-header" style="text-align: center; border-bottom: none; padding-bottom: 0;">
+        <div class="cloud-icon-circle offline-icon-circle" style="margin: 0 auto 14px auto; width: 52px; height: 52px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 26px; height: 26px;">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+        </div>
+        <h2 style="margin-bottom: 6px; font-size: 1.3rem;">Enable Smart Stream Cache?</h2>
+        <p style="color: var(--text-muted); font-size: 0.88rem; line-height: 1.4;">Enjoy offline listening without having to manually download songs</p>
+      </div>
+      <div class="modal-body" style="padding: 18px 4px;">
+        <div class="feature-bullet-item">
+          <div class="bullet-icon">⚡</div>
+          <div>
+            <strong>Auto-Save as You Stream</strong>
+            <p>Every track you listen to is quietly saved so you can replay it offline with zero mobile data.</p>
+          </div>
+        </div>
+        <div class="feature-bullet-item">
+          <div class="bullet-icon">🔄</div>
+          <div>
+            <strong>Smart 200-Song Cap (LRU)</strong>
+            <p>Protects your device storage. Automatically rotates out the oldest tracks you haven't played in a while.</p>
+          </div>
+        </div>
+        <div class="feature-bullet-item">
+          <div class="bullet-icon">🔒</div>
+          <div>
+            <strong>100% Local & Private</strong>
+            <p>Audio files stay solely on this device. You can turn this on/off or clear cache anytime in Profile.</p>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end; border-top: 1px solid var(--border-color); padding-top: 14px;">
+        <button class="btn btn-outline" id="btnSmartCacheKeepDisabled">Keep Disabled</button>
+        <button class="btn btn-primary" id="btnSmartCacheEnable">Enable Smart Cache</button>
       </div>
     </div>
   </div>

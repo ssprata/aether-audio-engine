@@ -29,11 +29,16 @@ if IS_ANDROID:
     BACKUP_FILE = os.path.join(android_files_dir, 'playlists_backup.json')
     UPLOADS_DIR = os.path.join(android_files_dir, 'uploads')
     HISTORY_FILE = os.path.join(android_files_dir, 'history.json')
+    DOWNLOADS_DIR = os.path.join(android_files_dir, 'downloads')
 else:
     CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'config.json')
     BACKUP_FILE = os.path.join(os.path.dirname(__file__), 'playlists_backup.json')
     UPLOADS_DIR = os.path.join(PUBLIC_DIR, 'uploads')
     HISTORY_FILE = os.path.join(os.path.dirname(__file__), 'history.json')
+    DOWNLOADS_DIR = os.path.join(os.path.dirname(__file__), 'downloads')
+
+OFFLINE_INDEX_FILE = os.path.join(DOWNLOADS_DIR, 'offline_index.json')
+os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
 def read_history():
     print("Reading history from:", HISTORY_FILE)
@@ -971,6 +976,246 @@ def resolve_soundcloud_playlist(url, limit=100):
         print("SoundCloud playlist resolve error:", e)
         return None
 
+# --- OFFLINE ENGINE HELPERS ---
+
+def read_offline_index():
+    if os.path.exists(OFFLINE_INDEX_FILE):
+        try:
+            with open(OFFLINE_INDEX_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if not isinstance(data, dict):
+                    data = {}
+                if 'settings' not in data:
+                    data['settings'] = {'smartCacheEnabled': False, 'smartCacheLimit': 200}
+                if 'tracks' not in data:
+                    data['tracks'] = {}
+                return data
+        except Exception as e:
+            print("Failed to read offline index:", e)
+    return {
+        'settings': {'smartCacheEnabled': False, 'smartCacheLimit': 200},
+        'tracks': {}
+    }
+
+def write_offline_index(data):
+    try:
+        temp_file = OFFLINE_INDEX_FILE + '.tmp'
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        if os.path.exists(OFFLINE_INDEX_FILE):
+            os.replace(temp_file, OFFLINE_INDEX_FILE)
+        else:
+            os.rename(temp_file, OFFLINE_INDEX_FILE)
+    except Exception as e:
+        print("Failed to write offline index:", e)
+
+def evict_lru_cache(index_data):
+    settings = index_data.get('settings', {})
+    limit = int(settings.get('smartCacheLimit', 200))
+    tracks = index_data.get('tracks', {})
+    
+    cached_items = [(k, v) for k, v in tracks.items() if v.get('isCache', False)]
+    if len(cached_items) > limit:
+        cached_items.sort(key=lambda item: item[1].get('lastPlayedAt', 0))
+        num_to_remove = len(cached_items) - limit
+        for i in range(num_to_remove):
+            song_id, track_info = cached_items[i]
+            filepath = track_info.get('filepath')
+            if filepath and os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except Exception as err:
+                    print(f"Error removing cached file {filepath}:", err)
+            if song_id in tracks:
+                del tracks[song_id]
+
+def get_offline_stats():
+    index = read_offline_index()
+    tracks = index.get('tracks', {})
+    total_bytes = 0
+    cache_bytes = 0
+    perm_bytes = 0
+    cache_count = 0
+    perm_count = 0
+    
+    to_delete = []
+    for sid, t in tracks.items():
+        fp = t.get('filepath')
+        if fp and os.path.exists(fp):
+            try:
+                size = os.path.getsize(fp)
+                t['size'] = size
+                total_bytes += size
+                if t.get('isCache', False):
+                    cache_bytes += size
+                    cache_count += 1
+                else:
+                    perm_bytes += size
+                    perm_count += 1
+            except Exception:
+                pass
+        else:
+            to_delete.append(sid)
+            
+    if to_delete:
+        for sid in to_delete:
+            del tracks[sid]
+        write_offline_index(index)
+        
+    return {
+        'totalBytes': total_bytes,
+        'cacheBytes': cache_bytes,
+        'permanentBytes': perm_bytes,
+        'cacheCount': cache_count,
+        'permanentCount': perm_count,
+        'totalCount': len(tracks),
+        'settings': index.get('settings', {'smartCacheEnabled': False, 'smartCacheLimit': 200})
+    }
+
+def download_track_offline(song_data, is_cache=False):
+    import yt_dlp
+    import time
+    
+    song_id = song_data.get('id')
+    if not song_id:
+        return {'success': False, 'error': 'Track ID is required'}
+
+    index = read_offline_index()
+    existing = index.get('tracks', {}).get(song_id)
+
+    # Check if already downloaded on disk
+    if existing and existing.get('filepath') and os.path.exists(existing['filepath']):
+        if existing.get('isCache', False) and not is_cache:
+            existing['isCache'] = False
+        existing['lastPlayedAt'] = int(time.time())
+        write_offline_index(index)
+        return {'success': True, 'track': existing, 'alreadyDownloaded': True}
+
+    target_url = None
+    platform = song_data.get('platform', 'youtube')
+    url = song_data.get('url', '')
+
+    if platform == 'youtube' and song_id:
+        target_url = f"https://www.youtube.com/watch?v={song_id}"
+    elif url and 'soundcloud.com' in url:
+        title = song_data.get('title', '')
+        artist = song_data.get('artist', '')
+        yt_match = search_youtube(f"{title} {artist}", limit=1)
+        if yt_match and yt_match[0].get('id'):
+            target_url = f"https://www.youtube.com/watch?v={yt_match[0]['id']}"
+        else:
+            target_url = url
+    else:
+        title = song_data.get('title', '')
+        artist = song_data.get('artist', '')
+        yt_match = search_youtube(f"{title} {artist}", limit=1)
+        if yt_match and yt_match[0].get('id'):
+            target_url = f"https://www.youtube.com/watch?v={yt_match[0]['id']}"
+        else:
+            target_url = f"ytsearch1:{title} {artist}"
+
+    safe_id = re.sub(r'[^a-zA-Z0-9_-]', '_', str(song_id))
+    outtmpl = os.path.join(DOWNLOADS_DIR, f"{safe_id}.%(ext)s")
+
+    ydl_opts = {
+        'format': 'ba/b',
+        'outtmpl': outtmpl,
+        'quiet': True,
+        'no_warnings': True,
+        'noplaylist': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'android', 'web']
+            }
+        }
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(target_url, download=True)
+            if isinstance(info, dict) and 'entries' in info and info['entries']:
+                info = info['entries'][0]
+            
+            ext = info.get('ext', 'mp4') if isinstance(info, dict) else 'mp4'
+            actual_filename = f"{safe_id}.{ext}"
+            actual_filepath = os.path.join(DOWNLOADS_DIR, actual_filename)
+            
+            if not os.path.exists(actual_filepath):
+                import glob
+                matches = glob.glob(os.path.join(DOWNLOADS_DIR, f"{safe_id}.*"))
+                matches = [m for m in matches if not m.endswith('.json') and not m.endswith('.tmp')]
+                if matches:
+                    actual_filepath = matches[0]
+                    actual_filename = os.path.basename(actual_filepath)
+                else:
+                    return {'success': False, 'error': 'Downloaded file not found on disk'}
+
+            file_size = os.path.getsize(actual_filepath)
+            now = int(time.time())
+
+            track_record = {
+                'id': song_id,
+                'title': song_data.get('title') or (info.get('title') if isinstance(info, dict) else 'Unknown Track'),
+                'artist': song_data.get('artist') or (info.get('uploader') or info.get('channel') if isinstance(info, dict) else 'Unknown Artist'),
+                'duration': song_data.get('duration') or (format_duration_ms(info.get('duration', 180) * 1000) if isinstance(info, dict) else '3:00'),
+                'thumbnail': song_data.get('thumbnail') or (info.get('thumbnail') if isinstance(info, dict) else ''),
+                'platform': platform,
+                'url': url or target_url,
+                'filename': actual_filename,
+                'filepath': actual_filepath,
+                'size': file_size,
+                'isCache': bool(is_cache),
+                'downloadedAt': now,
+                'lastPlayedAt': now
+            }
+
+            index['tracks'][song_id] = track_record
+            if is_cache:
+                evict_lru_cache(index)
+            write_offline_index(index)
+
+            return {'success': True, 'track': track_record}
+    except Exception as e:
+        print(f"Error downloading track {song_id}:", e)
+        return {'success': False, 'error': str(e)}
+
+def delete_offline_track(song_id):
+    index = read_offline_index()
+    if song_id in index.get('tracks', {}):
+        track_info = index['tracks'][song_id]
+        filepath = track_info.get('filepath')
+        if filepath and os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+            except Exception as e:
+                print(f"Error deleting file {filepath}:", e)
+        del index['tracks'][song_id]
+        write_offline_index(index)
+        return True
+    return False
+
+def clear_offline_storage(clear_type='cache'):
+    index = read_offline_index()
+    tracks = index.get('tracks', {})
+    to_delete = []
+    
+    for sid, t in tracks.items():
+        is_cache = t.get('isCache', False)
+        if clear_type == 'all' or (clear_type == 'cache' and is_cache) or (clear_type == 'permanent' and not is_cache):
+            fp = t.get('filepath')
+            if fp and os.path.exists(fp):
+                try:
+                    os.remove(fp)
+                except Exception as e:
+                    print(f"Error deleting file {fp}:", e)
+            to_delete.append(sid)
+            
+    for sid in to_delete:
+        del tracks[sid]
+        
+    write_offline_index(index)
+    return len(to_delete)
+
 # HTTP Request Handler Class
 class AetherPlayerHandler(SimpleHTTPRequestHandler):
     def translate_path(self, path):
@@ -989,8 +1234,8 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Range')
         self.end_headers()
 
     def do_GET(self):
@@ -1019,8 +1264,114 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                 self.send_error(404, "File not found")
             return
 
+        # Offline Audio Streaming & Tracks Management
+        if path == '/api/offline/tracks':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            stats = get_offline_stats()
+            index = read_offline_index()
+            track_list = list(index.get('tracks', {}).values())
+            track_list.sort(key=lambda t: t.get('lastPlayedAt', 0), reverse=True)
+            res = {
+                'tracks': track_list,
+                'stats': stats,
+                'settings': stats.get('settings', {'smartCacheEnabled': False, 'smartCacheLimit': 200})
+            }
+            self.wfile.write(json.dumps(res, ensure_ascii=False).encode('utf-8'))
+            return
+
+        elif path == '/api/offline/audio':
+            song_id = query_params.get('id', [''])[0].strip()
+            if not song_id:
+                self.send_error(400, "Track ID required")
+                return
+
+            index = read_offline_index()
+            track_info = index.get('tracks', {}).get(song_id)
+            if not track_info or not track_info.get('filepath') or not os.path.exists(track_info['filepath']):
+                safe_id = re.sub(r'[^a-zA-Z0-9_-]', '_', str(song_id))
+                import glob
+                matches = glob.glob(os.path.join(DOWNLOADS_DIR, f"{safe_id}.*"))
+                matches = [m for m in matches if not m.endswith('.json') and not m.endswith('.tmp')]
+                if matches and os.path.exists(matches[0]):
+                    filepath = matches[0]
+                else:
+                    self.send_error(404, "Offline audio file not found")
+                    return
+            else:
+                filepath = track_info['filepath']
+
+            import time
+            if track_info:
+                track_info['lastPlayedAt'] = int(time.time())
+                write_offline_index(index)
+
+            ext = os.path.splitext(filepath)[1].lower()
+            if ext in ('.mp4', '.m4a'):
+                content_type = 'audio/mp4'
+            elif ext == '.webm':
+                content_type = 'audio/webm'
+            elif ext == '.mp3':
+                content_type = 'audio/mpeg'
+            elif ext == '.ogg':
+                content_type = 'audio/ogg'
+            elif ext == '.opus':
+                content_type = 'audio/opus'
+            else:
+                content_type = 'application/octet-stream'
+
+            file_size = os.path.getsize(filepath)
+            range_header = self.headers.get('Range')
+
+            if range_header:
+                range_match = re.match(r'bytes=(\d+)-(\d*)', range_header)
+                if range_match:
+                    start = int(range_match.group(1))
+                    end = int(range_match.group(2)) if range_match.group(2) else file_size - 1
+                    end = min(end, file_size - 1)
+                    length = end - start + 1
+
+                    self.send_response(206)
+                    self.send_header('Content-Type', content_type)
+                    self.send_header('Content-Range', f'bytes {start}-{end}/{file_size}')
+                    self.send_header('Content-Length', str(length))
+                    self.send_header('Accept-Ranges', 'bytes')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+
+                    with open(filepath, 'rb') as f:
+                        f.seek(start)
+                        chunk_size = 65536
+                        remaining = length
+                        while remaining > 0:
+                            to_read = min(remaining, chunk_size)
+                            chunk = f.read(to_read)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            remaining -= len(chunk)
+                    return
+
+            self.send_response(200)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(file_size))
+            self.send_header('Accept-Ranges', 'bytes')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+
+            with open(filepath, 'rb') as f:
+                chunk_size = 65536
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+            return
+
         # API Endpoints
-        if path == '/api/settings':
+        elif path == '/api/settings':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -2283,6 +2634,73 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             except Exception as e:
                 print("Upload failed:", e)
                 self.wfile.write(f'{{"success": false, "error": "{str(e)}"}}'.encode('utf-8'))
+
+        elif path == '/api/offline/download':
+            try:
+                data = json.loads(post_data)
+                song = data.get('song', {})
+                is_cache = bool(data.get('isCache', False))
+                res = download_track_offline(song, is_cache=is_cache)
+                self.wfile.write(json.dumps(res, ensure_ascii=False).encode('utf-8'))
+            except Exception as e:
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+            return
+
+        elif path == '/api/offline/settings':
+            try:
+                data = json.loads(post_data)
+                index = read_offline_index()
+                if 'smartCacheEnabled' in data:
+                    index['settings']['smartCacheEnabled'] = bool(data['smartCacheEnabled'])
+                if 'smartCacheLimit' in data:
+                    index['settings']['smartCacheLimit'] = int(data['smartCacheLimit'])
+                write_offline_index(index)
+                self.wfile.write(b'{"success": true}')
+            except Exception as e:
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+            return
+
+        elif path == '/api/offline/delete':
+            try:
+                data = json.loads(post_data)
+                song_id = data.get('id')
+                if song_id and delete_offline_track(song_id):
+                    self.wfile.write(b'{"success": true}')
+                else:
+                    self.wfile.write(b'{"success": false, "error": "Track not found or failed to delete"}')
+            except Exception as e:
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+            return
+
+        elif path == '/api/offline/clear':
+            try:
+                data = json.loads(post_data)
+                clear_type = data.get('type', 'cache')
+                count = clear_offline_storage(clear_type)
+                self.wfile.write(json.dumps({'success': True, 'deletedCount': count}).encode('utf-8'))
+            except Exception as e:
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+            return
+
+    def do_DELETE(self):
+        url_parsed = urllib.parse.urlparse(self.path)
+        path = url_parsed.path
+        query_params = urllib.parse.parse_qs(url_parsed.query)
+
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+
+        if path == '/api/offline/track':
+            song_id = query_params.get('id', [''])[0].strip()
+            if song_id and delete_offline_track(song_id):
+                self.wfile.write(b'{"success": true}')
+            else:
+                self.wfile.write(b'{"success": false, "error": "Track not found"}')
+            return
+
+        self.wfile.write(b'{"error": "Endpoint not found"}')
 
 def get_local_ip():
     import socket

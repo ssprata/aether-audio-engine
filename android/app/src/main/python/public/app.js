@@ -47,6 +47,14 @@ let state = {
   repeat: 'none', // 'none', 'one', 'all'
   searchPlatforms: ['youtube', 'spotify', 'soundcloud'],
   customThemes: [],
+  downloadedTrackIds: new Set(),
+  offlineTracks: [],
+  offlineStats: { totalBytes: 0, cacheBytes: 0, permanentBytes: 0, cacheCount: 0, permanentCount: 0, totalCount: 0 },
+  smartCacheEnabled: false,
+  smartCacheLimit: 200,
+  downloadingTrackIds: new Set(),
+  isDownloadingPlaylist: false,
+  currentPlaybackType: null,
   profile: {
     username: 'Music Enthusiast',
     avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200&auto=format&fit=crop'
@@ -209,6 +217,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderPlaylists();
   loadServerSettings();
   loadServerPlaylists();
+  initOfflineEngine();
   switchTab('home');
 
   // Create first playlist if none exist
@@ -964,6 +973,14 @@ function setupEventListeners() {
 
   // Play Playlist songs
   document.getElementById('btnPlayPlaylist').addEventListener('click', () => {
+    if (state.currentPlaylistId === 'system_downloaded') {
+      if (state.offlineTracks && state.offlineTracks.length > 0) {
+        playSongList(state.offlineTracks, 0);
+      } else {
+        showToast('No downloaded songs yet');
+      }
+      return;
+    }
     const plist = state.playlists.find(p => p.id === state.currentPlaylistId);
     if (plist && plist.songs.length > 0) {
       playSongList(plist.songs, 0);
@@ -2136,6 +2153,34 @@ function openPlaylistDetails(playlistId) {
 
   switchTab('playlist-detail');
 
+  // Reset system playlist overrides
+  const deleteBtn = document.getElementById('btnDeletePlaylist');
+  const downloadBtn = document.getElementById('btnDownloadPlaylist');
+  const downloadBtnText = document.getElementById('btnDownloadPlaylistText');
+  if (deleteBtn) deleteBtn.style.display = '';
+  if (downloadBtn) downloadBtn.style.display = '';
+
+  const pinnedItem = document.getElementById('btnOpenDownloadedPlaylist');
+  if (pinnedItem) pinnedItem.classList.remove('active');
+
+  const detailTitleEl = document.getElementById('detailPlaylistName');
+  if (detailTitleEl) detailTitleEl.contentEditable = "true";
+
+  // Check if all songs in this playlist are already downloaded
+  if (downloadBtn && downloadBtnText && pl.songs && pl.songs.length > 0) {
+    const allDownloaded = pl.songs.every(s => state.downloadedTrackIds && state.downloadedTrackIds.has(s.id));
+    if (allDownloaded) {
+      downloadBtn.classList.add('is-downloaded');
+      downloadBtnText.textContent = "Downloaded";
+    } else {
+      downloadBtn.classList.remove('is-downloaded');
+      downloadBtnText.textContent = "Download Playlist";
+    }
+  } else if (downloadBtnText) {
+    downloadBtnText.textContent = "Download Playlist";
+    if (downloadBtn) downloadBtn.classList.remove('is-downloaded');
+  }
+
   // Highlight active playlist item
   document.querySelectorAll('#playlistsList li').forEach(li => {
     li.classList.toggle('active', li.dataset.playlistId === playlistId);
@@ -2176,6 +2221,7 @@ function openPlaylistDetails(playlistId) {
   pl.songs.forEach((song, idx) => {
     const row = document.createElement('div');
     row.className = 'song-row';
+    row.dataset.songId = song.id;
     if (state.currentSong && state.currentSong.id === song.id) {
       row.classList.add('active');
     }
@@ -2188,6 +2234,8 @@ function openPlaylistDetails(playlistId) {
       playSong(song, idx);
     });
 
+    const isDownloaded = state.downloadedTrackIds && state.downloadedTrackIds.has(song.id);
+
     const colNum = document.createElement('div');
     colNum.className = 'col-num';
     colNum.textContent = idx + 1;
@@ -2197,7 +2245,10 @@ function openPlaylistDetails(playlistId) {
     colTitle.innerHTML = `
       <img src="${song.thumbnail || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=200&auto=format&fit=crop'}" alt="Thumb">
       <div class="song-col-text">
-        <div class="song-col-title" title="${song.title}">${song.title}</div>
+        <div class="song-col-title" title="${song.title}">
+          ${song.title}
+          ${isDownloaded ? '<span class="download-check-icon" title="Downloaded on device"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>' : ''}
+        </div>
         <div class="song-col-artist clickable-artist">${song.artist || 'Unknown'}</div>
       </div>
     `;
@@ -2224,6 +2275,19 @@ function openPlaylistDetails(playlistId) {
 
     const colActions = document.createElement('div');
     colActions.className = 'col-actions';
+
+    // Download/Offline Button on individual song
+    const dlBtn = document.createElement('button');
+    dlBtn.className = `icon-btn btn-track-download ${isDownloaded ? 'downloaded' : ''}`;
+    dlBtn.title = isDownloaded ? 'Downloaded on device (Click to remove)' : 'Download song offline';
+    dlBtn.innerHTML = isDownloaded 
+      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #10b981;"><polyline points="20 6 9 17 4 12"></polyline></svg>`
+      : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
+    dlBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      downloadSingleTrack(song);
+    });
+    colActions.appendChild(dlBtn);
 
     const removeBtn = document.createElement('button');
     removeBtn.className = 'icon-btn';
@@ -2436,17 +2500,29 @@ function playSong(song, index) {
   activeLyricIndex = -1;
   fetchLyricsForTrack(song);
 
-  // Initialize playback depending on platform source
-  if (song.platform === 'youtube' || song.isFallback) {
+  // Initialize playback: check if downloaded locally or device is offline
+  const isLocalOffline = (state.downloadedTrackIds && state.downloadedTrackIds.has(song.id)) || !navigator.onLine;
+  if (isLocalOffline) {
+    playOfflineTrack(song);
+  } else if (song.platform === 'youtube' || song.isFallback) {
     playYouTubeTrack(song.id);
+    if (state.smartCacheEnabled && navigator.onLine) {
+      cacheStreamTrack(song);
+    }
   } else if (song.platform === 'spotify') {
     if (song.previewUrl) {
       playPreviewTrack(song.previewUrl);
     } else {
       playProxyFallback(song);
     }
+    if (state.smartCacheEnabled && navigator.onLine) {
+      cacheStreamTrack(song);
+    }
   } else if (song.platform === 'soundcloud') {
     playProxyFallback(song);
+    if (state.smartCacheEnabled && navigator.onLine) {
+      cacheStreamTrack(song);
+    }
   }
 
   // Update Play Button Icon
@@ -2562,7 +2638,9 @@ function togglePlayPause() {
     state.isPlaying = false;
     state.isUserPaused = true;
 
-    if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
+    if (state.currentPlaybackType === 'offline' || (activeAudio && (!ytPlayer || typeof ytPlayer.getPlayerState !== 'function' || ytPlayer.getPlayerState() !== 1))) {
+      if (activeAudio) activeAudio.pause();
+    } else if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
       if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
         ytPlayer.pauseVideo();
       }
@@ -2575,7 +2653,9 @@ function togglePlayPause() {
     state.isPlaying = true;
     state.isUserPaused = false;
 
-    if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
+    if (state.currentPlaybackType === 'offline' || (activeAudio && (!ytPlayer || typeof ytPlayer.getPlayerState !== 'function' || ytPlayer.getPlayerState() !== 1))) {
+      if (activeAudio) activeAudio.play();
+    } else if (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl) {
       if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
         ytPlayer.playVideo();
       }
@@ -2689,6 +2769,8 @@ function seekToPercentage(pct) {
   const seekSeconds = pct * state.duration;
   if (window.AndroidAudio && typeof window.AndroidAudio.seekTo === 'function') {
     window.AndroidAudio.seekTo(seekSeconds);
+  } else if (state.currentPlaybackType === 'offline' || (activeAudio && (!ytPlayer || typeof ytPlayer.getPlayerState !== 'function' || ytPlayer.getPlayerState() !== 1))) {
+    if (activeAudio) activeAudio.currentTime = seekSeconds;
   } else if (state.currentSong && (state.currentSong.platform === 'youtube' || !state.currentSong.previewUrl)) {
     if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
       ytPlayer.seekTo(seekSeconds, true);
@@ -2730,7 +2812,7 @@ function startProgressTimer(platform) {
     let currentSec = 0;
     if (platform === 'youtube' && ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
       currentSec = ytPlayer.getCurrentTime();
-    } else if (platform === 'preview' && activeAudio) {
+    } else if ((platform === 'preview' || platform === 'audio') && activeAudio) {
       currentSec = activeAudio.currentTime;
     }
 
@@ -4389,3 +4471,602 @@ async function loadHomeDashboard() {
     recGrid.innerHTML = '<div class="empty-state" style="grid-column:1/-1;">Error loading recommendations</div>';
   }
 }
+
+// ========================================================
+// OFFLINE ENGINE, STORAGE METER & SMART STREAM CACHE
+// ========================================================
+
+async function initOfflineEngine() {
+  setupOfflineEventListeners();
+  try {
+    const res = await fetch('/api/offline/tracks');
+    if (res.ok) {
+      const data = await res.json();
+      const tracks = data.tracks || [];
+      state.offlineTracks = tracks;
+      state.downloadedTrackIds = new Set(tracks.map(t => t.id));
+
+      if (data.settings) {
+        state.smartCacheEnabled = !!data.settings.smartCacheEnabled;
+        state.smartCacheLimit = data.settings.smartCacheLimit || 200;
+        const toggle = document.getElementById('toggleSmartCache');
+        if (toggle) toggle.checked = state.smartCacheEnabled;
+      }
+
+      updateStorageMeterUI(data.stats);
+      updateOfflineUIBadges();
+    }
+  } catch (e) {
+    console.warn("Could not load offline tracks on startup:", e);
+  }
+
+  // Check if first-run modal should be shown
+  checkSmartCacheFirstRunPrompt();
+}
+
+let offlineListenersAttached = false;
+function setupOfflineEventListeners() {
+  if (offlineListenersAttached) return;
+  offlineListenersAttached = true;
+
+  // Pinned sidebar item: Downloaded Music
+  const btnOpenDownloaded = document.getElementById('btnOpenDownloadedPlaylist');
+  if (btnOpenDownloaded) {
+    btnOpenDownloaded.addEventListener('click', () => {
+      openDownloadedMusicPlaylist();
+    });
+  }
+
+  // Download Playlist button
+  const btnDownloadPlaylist = document.getElementById('btnDownloadPlaylist');
+  if (btnDownloadPlaylist) {
+    btnDownloadPlaylist.addEventListener('click', () => {
+      downloadCurrentPlaylist();
+    });
+  }
+
+  // Smart Stream Cache toggle in Profile
+  const toggleSmartCache = document.getElementById('toggleSmartCache');
+  if (toggleSmartCache) {
+    toggleSmartCache.addEventListener('change', async () => {
+      state.smartCacheEnabled = toggleSmartCache.checked;
+      try {
+        await fetch('/api/offline/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ smartCacheEnabled: toggleSmartCache.checked, smartCacheLimit: state.smartCacheLimit || 200 })
+        });
+        showToast(toggleSmartCache.checked ? 'Smart Stream Cache enabled' : 'Smart Stream Cache disabled');
+      } catch (e) {
+        showToast('Failed to update settings');
+      }
+    });
+  }
+
+  // Clear Stream Cache button
+  const btnClearStreamCache = document.getElementById('btnClearStreamCache');
+  if (btnClearStreamCache) {
+    btnClearStreamCache.addEventListener('click', async () => {
+      const confirmed = await openConfirmModal(
+        'Clear Stream Cache?',
+        'This will remove all automatically cached streamed songs. Playlist downloads will NOT be removed.'
+      );
+      if (confirmed) {
+        try {
+          const res = await fetch('/api/offline/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'cache' })
+          });
+          const result = await res.json();
+          showToast(`Cache cleared (${result.deletedCount || 0} songs removed)`);
+          refreshOfflineStatsSilently();
+          if (state.currentPlaylistId === 'system_downloaded') {
+            openDownloadedMusicPlaylist();
+          }
+        } catch (e) {
+          showToast('Failed to clear stream cache');
+        }
+      }
+    });
+  }
+
+  // Remove All Downloads button
+  const btnClearAllDownloads = document.getElementById('btnClearAllDownloads');
+  if (btnClearAllDownloads) {
+    btnClearAllDownloads.addEventListener('click', async () => {
+      const confirmed = await openConfirmModal(
+        'Remove All Downloads?',
+        'This will delete ALL downloaded music and stream cache from this device. Are you sure?'
+      );
+      if (confirmed) {
+        try {
+          const res = await fetch('/api/offline/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'all' })
+          });
+          const result = await res.json();
+          showToast(`All downloads removed (${result.deletedCount || 0} songs deleted)`);
+          refreshOfflineStatsSilently();
+          if (state.currentPlaylistId === 'system_downloaded') {
+            openDownloadedMusicPlaylist();
+          }
+        } catch (e) {
+          showToast('Failed to remove downloads');
+        }
+      }
+    });
+  }
+
+  // First-run welcome modal actions
+  const btnEnableModal = document.getElementById('btnSmartCacheEnable');
+  if (btnEnableModal) {
+    btnEnableModal.addEventListener('click', async () => {
+      localStorage.setItem('aether_smart_cache_prompted', 'true');
+      const modal = document.getElementById('smartCacheFirstRunModal');
+      if (modal) modal.style.display = 'none';
+
+      state.smartCacheEnabled = true;
+      const toggle = document.getElementById('toggleSmartCache');
+      if (toggle) toggle.checked = true;
+
+      try {
+        await fetch('/api/offline/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ smartCacheEnabled: true, smartCacheLimit: 200 })
+        });
+        showToast('Smart Stream Cache enabled! Songs will auto-save as you listen.');
+      } catch (e) {
+        console.warn('Failed to update smart cache settings:', e);
+      }
+    });
+  }
+
+  const btnKeepDisabledModal = document.getElementById('btnSmartCacheKeepDisabled');
+  if (btnKeepDisabledModal) {
+    btnKeepDisabledModal.addEventListener('click', () => {
+      localStorage.setItem('aether_smart_cache_prompted', 'true');
+      const modal = document.getElementById('smartCacheFirstRunModal');
+      if (modal) modal.style.display = 'none';
+    });
+  }
+}
+
+function checkSmartCacheFirstRunPrompt() {
+  const prompted = localStorage.getItem('aether_smart_cache_prompted');
+  if (!prompted) {
+    const modal = document.getElementById('smartCacheFirstRunModal');
+    if (modal) {
+      modal.style.display = 'flex';
+    }
+  }
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return '0 MB';
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024) {
+    return (mb / 1024).toFixed(2) + ' GB';
+  }
+  return mb.toFixed(1) + ' MB';
+}
+
+function updateStorageMeterUI(stats) {
+  if (!stats) return;
+  state.offlineStats = stats;
+
+  const badge = document.getElementById('offlineStorageBadge');
+  const barPerm = document.getElementById('storageBarPerm');
+  const barCache = document.getElementById('storageBarCache');
+  const permLabel = document.getElementById('storagePermLabel');
+  const cacheLabel = document.getElementById('storageCacheLabel');
+  const sidebarBadge = document.getElementById('downloadedSidebarBadge');
+
+  const totalBytes = stats.totalBytes || 0;
+  const permBytes = stats.permanentBytes || 0;
+  const cacheBytes = stats.cacheBytes || 0;
+  const permCount = stats.permanentCount || 0;
+  const cacheCount = stats.cacheCount || 0;
+  const totalCount = stats.totalCount || 0;
+  const cacheLimit = (stats.settings && stats.settings.smartCacheLimit) || 200;
+
+  if (badge) badge.textContent = formatBytes(totalBytes);
+  if (sidebarBadge) sidebarBadge.textContent = `${totalCount} ${totalCount === 1 ? 'song' : 'songs'}`;
+
+  const scaleBase = Math.max(totalBytes, 300 * 1024 * 1024);
+  const permPct = Math.min(100, (permBytes / scaleBase) * 100);
+  const cachePct = Math.min(100, (cacheBytes / scaleBase) * 100);
+
+  if (barPerm) barPerm.style.width = `${permPct}%`;
+  if (barCache) barCache.style.width = `${cachePct}%`;
+
+  if (permLabel) {
+    permLabel.textContent = `${formatBytes(permBytes)} (${permCount} ${permCount === 1 ? 'song' : 'songs'})`;
+  }
+  if (cacheLabel) {
+    cacheLabel.textContent = `${formatBytes(cacheBytes)} (${cacheCount} / ${cacheLimit} songs)`;
+  }
+}
+
+async function refreshOfflineStatsSilently() {
+  try {
+    const res = await fetch('/api/offline/tracks');
+    if (res.ok) {
+      const data = await res.json();
+      const tracks = data.tracks || [];
+      state.offlineTracks = tracks;
+      state.downloadedTrackIds = new Set(tracks.map(t => t.id));
+      updateStorageMeterUI(data.stats);
+      updateOfflineUIBadges();
+    }
+  } catch (e) {
+    console.warn("Could not refresh offline stats:", e);
+  }
+}
+
+function updateOfflineUIBadges() {
+  const downloadBtn = document.getElementById('btnDownloadPlaylist');
+  const downloadBtnText = document.getElementById('btnDownloadPlaylistText');
+  if (downloadBtn && downloadBtnText && state.activeTab === 'playlist-detail' && state.currentPlaylistId && state.currentPlaylistId !== 'system_downloaded') {
+    const pl = state.playlists.find(p => p.id === state.currentPlaylistId);
+    if (pl && pl.songs && pl.songs.length > 0) {
+      const allDownloaded = pl.songs.every(s => state.downloadedTrackIds.has(s.id));
+      if (allDownloaded) {
+        downloadBtn.classList.add('is-downloaded');
+        downloadBtnText.textContent = "Downloaded";
+      } else {
+        downloadBtn.classList.remove('is-downloaded');
+        downloadBtnText.textContent = "Download Playlist";
+      }
+    }
+  }
+
+  document.querySelectorAll('#playlistSongsContainer .song-row').forEach(row => {
+    const songId = row.dataset.songId;
+    if (!songId) return;
+    const isDownloaded = state.downloadedTrackIds.has(songId);
+    const dlBtn = row.querySelector('.btn-track-download');
+    if (dlBtn) {
+      dlBtn.classList.toggle('downloaded', isDownloaded);
+      dlBtn.title = isDownloaded ? 'Downloaded on device (Click to remove)' : 'Download song offline';
+      dlBtn.innerHTML = isDownloaded
+        ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color: #10b981;"><polyline points="20 6 9 17 4 12"></polyline></svg>`
+        : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
+    }
+  });
+}
+
+function playOfflineTrack(song) {
+  stopActivePlayback();
+  state.currentPlaybackType = 'offline';
+
+  const audioUrl = `/api/offline/audio?id=${encodeURIComponent(song.id)}`;
+  activeAudio = new Audio(audioUrl);
+  activeAudio.volume = state.isMuted ? 0 : state.volume / 100;
+
+  activeAudio.onloadedmetadata = () => {
+    if (activeAudio.duration && isFinite(activeAudio.duration)) {
+      state.duration = Math.floor(activeAudio.duration);
+      document.getElementById('playerTotalDuration').textContent = formatSeconds(state.duration);
+      const mobileNpTotalDuration = document.getElementById('mobileNpTotalDuration');
+      if (mobileNpTotalDuration) mobileNpTotalDuration.textContent = formatSeconds(state.duration);
+    }
+  };
+
+  activeAudio.play().then(() => {
+    state.isPlaying = true;
+    updatePlayButtonUI(true);
+    startProgressTimer('audio');
+  }).catch(err => {
+    console.warn("Offline playback failed, attempting fallback:", err);
+    if (navigator.onLine) {
+      if (song.platform === 'youtube' || song.isFallback) {
+        playYouTubeTrack(song.id);
+      } else {
+        playProxyFallback(song);
+      }
+    } else {
+      showToast("Cannot play: Track not found offline and device is disconnected");
+    }
+  });
+
+  activeAudio.onended = () => {
+    playNext();
+  };
+}
+
+async function cacheStreamTrack(song) {
+  if (!state.smartCacheEnabled || !song || !song.id) return;
+  if (state.downloadedTrackIds.has(song.id) || state.downloadingTrackIds.has(song.id)) return;
+
+  state.downloadingTrackIds.add(song.id);
+  try {
+    const res = await fetch('/api/offline/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ song, isCache: true })
+    });
+    if (res.ok) {
+      const result = await res.json();
+      if (result.success && result.track) {
+        state.downloadedTrackIds.add(song.id);
+        updateOfflineUIBadges();
+        refreshOfflineStatsSilently();
+      }
+    }
+  } catch (e) {
+    console.warn("Smart cache error for track:", song.title, e);
+  } finally {
+    state.downloadingTrackIds.delete(song.id);
+  }
+}
+
+async function downloadSingleTrack(song) {
+  if (!song || !song.id) return;
+
+  if (state.downloadedTrackIds.has(song.id)) {
+    const confirmed = await openConfirmModal(
+      "Remove Download?",
+      `Do you want to remove "${song.title}" from your device storage?`
+    );
+    if (confirmed) {
+      await removeDownloadedTrack(song.id);
+    }
+    return;
+  }
+
+  showToast(`Downloading "${song.title}"...`);
+  state.downloadingTrackIds.add(song.id);
+  updateOfflineUIBadges();
+
+  try {
+    const res = await fetch('/api/offline/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ song, isCache: false })
+    });
+    const result = await res.json();
+    if (result.success) {
+      state.downloadedTrackIds.add(song.id);
+      showToast(`Downloaded "${song.title}"!`);
+      updateOfflineUIBadges();
+      refreshOfflineStatsSilently();
+    } else {
+      showToast(`Download failed: ${result.error || 'Unknown error'}`);
+    }
+  } catch (e) {
+    showToast(`Download failed: ${e.message}`);
+  } finally {
+    state.downloadingTrackIds.delete(song.id);
+    updateOfflineUIBadges();
+  }
+}
+
+async function removeDownloadedTrack(songId) {
+  try {
+    const res = await fetch('/api/offline/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: songId })
+    });
+    const result = await res.json();
+    if (result.success) {
+      state.downloadedTrackIds.delete(songId);
+      showToast('Track removed from device storage');
+      refreshOfflineStatsSilently();
+      if (state.currentPlaylistId === 'system_downloaded') {
+        openDownloadedMusicPlaylist();
+      }
+    } else {
+      showToast('Failed to remove track');
+    }
+  } catch (e) {
+    showToast('Failed to remove track');
+  }
+}
+
+async function downloadCurrentPlaylist() {
+  const pl = state.playlists.find(p => p.id === state.currentPlaylistId);
+  if (!pl || !pl.songs || pl.songs.length === 0) {
+    showToast("This playlist has no songs to download");
+    return;
+  }
+
+  const btn = document.getElementById('btnDownloadPlaylist');
+  const btnText = document.getElementById('btnDownloadPlaylistText');
+  if (state.isDownloadingPlaylist) {
+    showToast("Download already in progress");
+    return;
+  }
+
+  state.isDownloadingPlaylist = true;
+  if (btn) btn.classList.add('is-downloading');
+
+  const total = pl.songs.length;
+  let downloadedCount = 0;
+  let failCount = 0;
+
+  for (let i = 0; i < total; i++) {
+    const s = pl.songs[i];
+    if (btnText) btnText.textContent = `Downloading (${i + 1}/${total})...`;
+
+    try {
+      const res = await fetch('/api/offline/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ song: s, isCache: false })
+      });
+      const result = await res.json();
+      if (result.success) {
+        state.downloadedTrackIds.add(s.id);
+        downloadedCount++;
+      } else {
+        failCount++;
+      }
+    } catch (e) {
+      failCount++;
+    }
+    updateOfflineUIBadges();
+  }
+
+  state.isDownloadingPlaylist = false;
+  if (btn) {
+    btn.classList.remove('is-downloading');
+    btn.classList.add('is-downloaded');
+  }
+  if (btnText) btnText.textContent = "Downloaded";
+
+  refreshOfflineStatsSilently();
+  showToast(`Playlist download complete! (${downloadedCount} saved${failCount > 0 ? `, ${failCount} failed` : ''})`);
+}
+
+async function openDownloadedMusicPlaylist() {
+  state.currentPlaylistId = 'system_downloaded';
+  switchTab('playlist-detail');
+
+  document.getElementById('detailPlaylistName').textContent = "Downloaded Music";
+  document.getElementById('detailPlaylistName').contentEditable = "false";
+
+  const imgContent = document.getElementById('detailPlaylistImgContent');
+  imgContent.innerHTML = `
+    <div style="background: linear-gradient(135deg, #10b981 0%, #06b6d4 100%); width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: white;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 48px; height: 48px;">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="7 10 12 15 17 10"></polyline>
+        <line x1="12" y1="15" x2="12" y2="3"></line>
+      </svg>
+    </div>
+  `;
+
+  // Hide Delete Playlist and Download Playlist buttons for system playlist
+  const deleteBtn = document.getElementById('btnDeletePlaylist');
+  const downloadBtn = document.getElementById('btnDownloadPlaylist');
+  if (deleteBtn) deleteBtn.style.display = 'none';
+  if (downloadBtn) downloadBtn.style.display = 'none';
+
+  // Highlight pinned item in sidebar
+  document.querySelectorAll('#playlistsList li').forEach(li => li.classList.remove('active'));
+  const pinnedItem = document.getElementById('btnOpenDownloadedPlaylist');
+  if (pinnedItem) pinnedItem.classList.add('active');
+
+  const container = document.getElementById('playlistSongsContainer');
+  container.innerHTML = '<div class="empty-state">Loading downloaded songs...</div>';
+
+  try {
+    const res = await fetch('/api/offline/tracks');
+    if (res.ok) {
+      const data = await res.json();
+      const tracks = data.tracks || [];
+      state.offlineTracks = tracks;
+      state.downloadedTrackIds = new Set(tracks.map(t => t.id));
+
+      const stats = data.stats || {};
+      const totalMb = (stats.totalBytes / (1024 * 1024)).toFixed(1);
+      document.getElementById('detailPlaylistStats').textContent = `${tracks.length} songs • ${totalMb} MB stored on this device`;
+
+      renderDownloadedSongsList(tracks);
+    }
+  } catch (err) {
+    console.error("Error loading offline tracks:", err);
+    container.innerHTML = '<div class="empty-state">Failed to load downloaded music</div>';
+  }
+}
+
+function renderDownloadedSongsList(tracks) {
+  const container = document.getElementById('playlistSongsContainer');
+  container.innerHTML = '';
+
+  if (!tracks || tracks.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <h3>No downloaded music yet</h3>
+        <p>Click "Download Playlist" on any playlist or tap the download icon on individual tracks to save them for offline listening.</p>
+      </div>
+    `;
+    return;
+  }
+
+  tracks.forEach((song, idx) => {
+    const row = document.createElement('div');
+    row.className = 'song-row';
+    row.dataset.songId = song.id;
+    if (state.currentSong && state.currentSong.id === song.id) {
+      row.classList.add('active');
+    }
+
+    row.addEventListener('click', () => {
+      state.playQueue = tracks.map(s => ({ ...s }));
+      state.stationAnchor = tracks[tracks.length - 1] || song;
+      state.isRadioSession = false;
+      playSong(song, idx);
+    });
+
+    const colNum = document.createElement('div');
+    colNum.className = 'col-num';
+    colNum.textContent = idx + 1;
+
+    const colTitle = document.createElement('div');
+    colTitle.className = 'col-title';
+    colTitle.innerHTML = `
+      <img src="${song.thumbnail || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=200&auto=format&fit=crop'}" alt="Thumb">
+      <div class="song-col-text">
+        <div class="song-col-title" title="${song.title}">
+          ${song.title}
+          <span class="download-check-icon" title="Downloaded on device"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+        </div>
+        <div class="song-col-artist clickable-artist">${song.artist || 'Unknown'}</div>
+      </div>
+    `;
+
+    const colArtist = document.createElement('div');
+    colArtist.className = 'col-artist';
+    const artistSpan = document.createElement('span');
+    artistSpan.className = 'clickable-artist';
+    artistSpan.textContent = song.artist || 'Unknown';
+    artistSpan.title = 'View artist profile';
+    artistSpan.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openArtistProfile(song.artist, song.platform, song.artistId || song.artist_id);
+    });
+    colArtist.appendChild(artistSpan);
+
+    const colSource = document.createElement('div');
+    colSource.className = 'col-source';
+    const sizeStr = song.size ? formatBytes(song.size) : '';
+    const cacheTag = song.isCache ? '<span class="badge" style="background: rgba(168, 85, 247, 0.2); color: #c084fc; font-size: 0.68rem; margin-left: 4px;">Cache</span>' : '';
+    colSource.innerHTML = `<span class="song-card-badge badge-${song.platform}">${song.platform}</span>${cacheTag} ${sizeStr ? `<span style="font-size: 0.72rem; color: var(--text-secondary); margin-left: 6px;">${sizeStr}</span>` : ''}`;
+
+    const colDuration = document.createElement('div');
+    colDuration.className = 'col-duration';
+    colDuration.textContent = song.duration || '3:30';
+
+    const colActions = document.createElement('div');
+    colActions.className = 'col-actions';
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'icon-btn';
+    removeBtn.title = 'Remove from device storage';
+    removeBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+    removeBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const confirmed = await openConfirmModal("Remove Song?", `Remove "${song.title}" from device storage?`);
+      if (confirmed) {
+        await removeDownloadedTrack(song.id);
+      }
+    });
+
+    colActions.appendChild(removeBtn);
+
+    row.appendChild(colNum);
+    row.appendChild(colTitle);
+    row.appendChild(colArtist);
+    row.appendChild(colSource);
+    row.appendChild(colDuration);
+    row.appendChild(colActions);
+
+    container.appendChild(row);
+  });
+}
+
