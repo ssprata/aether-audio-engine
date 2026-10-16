@@ -613,6 +613,14 @@ function setupEventListeners() {
     });
   });
 
+  // Dedicated Go Back Button
+  const btnGoBack = document.getElementById('btnGoBack');
+  if (btnGoBack) {
+    btnGoBack.addEventListener('click', () => {
+      handleGoBack();
+    });
+  }
+
   // Platform filters selection
   document.querySelectorAll('.filter-chip').forEach(chip => {
     chip.addEventListener('click', () => {
@@ -1224,12 +1232,52 @@ function setupEventListeners() {
     });
   });
 
-  // Volume slider control
-  document.getElementById('playerVolume').addEventListener('input', (e) => {
-    const vol = parseInt(e.target.value);
-    state.volume = vol;
-    applyVolume();
-  });
+  // Volume slider control & bubble feedback
+  const volSlider = document.getElementById('playerVolume');
+  const volWrapper = document.getElementById('volumeSliderWrapper');
+  const volContainer = document.getElementById('playerVolumeContainer');
+
+  if (volSlider) {
+    volSlider.value = state.volume;
+    updateVolumeBubble(state.volume);
+
+    volSlider.addEventListener('input', (e) => {
+      const vol = parseInt(e.target.value, 10);
+      state.volume = vol;
+      updateVolumeBubble(vol);
+      applyVolume();
+    });
+
+    volSlider.addEventListener('mousedown', () => volWrapper?.classList.add('is-sliding'));
+    volSlider.addEventListener('touchstart', () => volWrapper?.classList.add('is-sliding'), { passive: true });
+    window.addEventListener('mouseup', () => volWrapper?.classList.remove('is-sliding'));
+    window.addEventListener('touchend', () => volWrapper?.classList.remove('is-sliding'));
+  }
+
+  // Right-click custom volume dialog
+  if (volContainer) {
+    volContainer.addEventListener('contextmenu', async (e) => {
+      e.preventDefault();
+      const input = await showPromptModal(
+        'Set Volume',
+        'Enter exact volume level (0 - 100):',
+        (state.volume || 70).toString()
+      );
+      if (input !== null && input !== '') {
+        const val = parseInt(input.trim(), 10);
+        if (!isNaN(val)) {
+          const clamped = Math.max(0, Math.min(100, val));
+          state.volume = clamped;
+          if (volSlider) volSlider.value = clamped;
+          updateVolumeBubble(clamped);
+          applyVolume();
+          showToast(`Volume set to ${clamped}%`);
+        } else {
+          showToast('Please enter a valid number between 0 and 100');
+        }
+      }
+    });
+  }
 
   document.getElementById('btnMute').addEventListener('click', () => {
     state.isMuted = !state.isMuted;
@@ -1238,19 +1286,26 @@ function setupEventListeners() {
     applyVolume();
   });
 
-  // Timeline seek control
-  document.getElementById('playerTimeline').addEventListener('input', (e) => {
-    // update current time label while dragging
-    const pct = parseFloat(e.target.value) / 100;
-    const seekSecs = pct * state.duration;
-    document.getElementById('playerCurrentTime').textContent = formatSeconds(seekSecs);
-    updateLyricsHighlight(seekSecs);
-  });
+  // Timeline seek controls (with debounce & desync prevention)
+  const timelineEl = document.getElementById('playerTimeline');
+  if (timelineEl) {
+    timelineEl.addEventListener('mousedown', () => { isUserSeeking = true; });
+    timelineEl.addEventListener('touchstart', () => { isUserSeeking = true; }, { passive: true });
+    timelineEl.addEventListener('input', (e) => {
+      isUserSeeking = true;
+      const pct = parseFloat(e.target.value) / 100;
+      const seekSecs = pct * state.duration;
+      const currTime = document.getElementById('playerCurrentTime');
+      if (currTime) currTime.textContent = formatSeconds(seekSecs);
+      updateLyricsHighlight(seekSecs);
+      seekToPercentage(pct);
+    });
 
-  document.getElementById('playerTimeline').addEventListener('change', (e) => {
-    const pct = parseFloat(e.target.value) / 100;
-    seekToPercentage(pct);
-  });
+    timelineEl.addEventListener('change', (e) => {
+      const pct = parseFloat(e.target.value) / 100;
+      seekToPercentage(pct);
+    });
+  }
 
   // Modal Playlist Select Closes
   document.getElementById('btnCloseModal').addEventListener('click', () => {
@@ -1612,15 +1667,6 @@ function setupEventListeners() {
     });
   }
 
-  const btnToggleCloudKeyMask = document.getElementById('btnToggleCloudKeyMask');
-  if (btnToggleCloudKeyMask) {
-    btnToggleCloudKeyMask.addEventListener('click', () => {
-      if (typeof CloudSync !== 'undefined' && typeof CloudSync.toggleKeyMask === 'function') {
-        CloudSync.toggleKeyMask();
-      }
-    });
-  }
-
   const btnCopyCloudKey = document.getElementById('btnCopyCloudKey');
   if (btnCopyCloudKey) {
     btnCopyCloudKey.addEventListener('click', () => {
@@ -1825,8 +1871,44 @@ function hexToRgbValues(hex) {
 }
 
 // --- NAVIGATION MANAGER ---
-function switchTab(tabName) {
+let navHistory = [];
+
+function updateBackButtonVisibility() {
+  const backNav = document.getElementById('mainBackNav');
+  if (!backNav) return;
+  if (navHistory.length > 0 || (state.activeTab && state.activeTab !== 'home')) {
+    backNav.style.display = 'flex';
+  } else {
+    backNav.style.display = 'none';
+  }
+}
+
+function handleGoBack() {
+  if (navHistory.length > 0) {
+    const prev = navHistory.pop();
+    if (prev.tab === 'playlist-detail' && prev.playlistId) {
+      openPlaylistDetails(prev.playlistId, { isBack: true });
+    } else {
+      switchTab(prev.tab, { isBack: true });
+    }
+  } else {
+    switchTab('home', { isBack: true });
+  }
+  updateBackButtonVisibility();
+}
+
+function switchTab(tabName, options = {}) {
+  const previousTab = state.activeTab;
+  if (!options.isBack && previousTab && previousTab !== tabName) {
+    navHistory.push({
+      tab: previousTab,
+      playlistId: state.currentPlaylistId
+    });
+    if (navHistory.length > 30) navHistory.shift();
+  }
+
   state.activeTab = tabName;
+  updateBackButtonVisibility();
 
   // Update sidebar active highlights
   document.querySelectorAll('[data-tab]').forEach(btn => {
@@ -2304,12 +2386,12 @@ function renderPlaylists() {
   });
 }
 
-function openPlaylistDetails(playlistId) {
+function openPlaylistDetails(playlistId, options = {}) {
   state.currentPlaylistId = playlistId;
   const pl = state.playlists.find(p => p.id === playlistId);
   if (!pl) return;
 
-  switchTab('playlist-detail');
+  switchTab('playlist-detail', options);
 
   // Reset system playlist overrides
   const deleteBtn = document.getElementById('btnDeletePlaylist');
@@ -2363,7 +2445,60 @@ function openPlaylistDetails(playlistId) {
     imgContent.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 48px; height: 48px;"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
   }
 
+  // Configure In-Playlist Search Bar
+  const searchContainer = document.getElementById('playlistSearchContainer');
+  const searchInput = document.getElementById('playlistSearchInput');
+  const clearBtn = document.getElementById('btnClearPlaylistSearch');
+  const countBadge = document.getElementById('playlistSearchBadge');
+
+  if (searchContainer) {
+    searchContainer.style.display = (pl.songs && pl.songs.length > 0) ? 'flex' : 'none';
+  }
+
+  if (searchInput) {
+    searchInput.value = '';
+    if (clearBtn) clearBtn.style.display = 'none';
+    if (countBadge) countBadge.style.display = 'none';
+
+    searchInput.oninput = (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      if (!q) {
+        if (clearBtn) clearBtn.style.display = 'none';
+        if (countBadge) countBadge.style.display = 'none';
+        renderPlaylistSongRows(pl, pl.songs);
+        return;
+      }
+      if (clearBtn) clearBtn.style.display = 'block';
+      const filtered = pl.songs.filter(s => {
+        const titleMatch = (s.title || '').toLowerCase().includes(q);
+        const artistMatch = (s.artist || '').toLowerCase().includes(q);
+        return titleMatch || artistMatch;
+      });
+      if (countBadge) {
+        countBadge.textContent = `${filtered.length} of ${pl.songs.length} songs`;
+        countBadge.style.display = 'inline-block';
+      }
+      renderPlaylistSongRows(pl, filtered);
+    };
+
+    if (clearBtn) {
+      clearBtn.onclick = () => {
+        searchInput.value = '';
+        clearBtn.style.display = 'none';
+        if (countBadge) countBadge.style.display = 'none';
+        renderPlaylistSongRows(pl, pl.songs);
+        searchInput.focus();
+      };
+    }
+  }
+
+  // Initial render of all songs
+  renderPlaylistSongRows(pl, pl.songs);
+}
+
+function renderPlaylistSongRows(pl, songsToDisplay) {
   const container = document.getElementById('playlistSongsContainer');
+  if (!container) return;
   container.innerHTML = '';
 
   if (pl.songs.length === 0) {
@@ -2376,7 +2511,21 @@ function openPlaylistDetails(playlistId) {
     return;
   }
 
-  pl.songs.forEach((song, idx) => {
+  if (songsToDisplay.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <h3>No matching songs found</h3>
+        <p>Try searching for a different title or artist name.</p>
+      </div>
+    `;
+    return;
+  }
+
+  songsToDisplay.forEach((song, displayIdx) => {
+    // Locate the song's real position in the full playlist
+    const realIdx = pl.songs.findIndex(s => s.id === song.id);
+    const resolvedOriginalIdx = realIdx !== -1 ? realIdx : displayIdx;
+
     const row = document.createElement('div');
     row.className = 'song-row';
     row.dataset.songId = song.id;
@@ -2385,18 +2534,18 @@ function openPlaylistDetails(playlistId) {
     }
 
     row.addEventListener('click', () => {
-      // Clone playlist songs to ensure recommendations NEVER pollute the playlist
+      // PROPER PLAYLIST CONTEXT: Always populate playQueue with the entire playlist array!
       state.playQueue = pl.songs.map(s => ({ ...s }));
       state.stationAnchor = pl.songs[pl.songs.length - 1] || song;
       state.isRadioSession = false;
-      playSong(song, idx);
+      playSong(song, resolvedOriginalIdx);
     });
 
     const isDownloaded = state.downloadedTrackIds && state.downloadedTrackIds.has(song.id);
 
     const colNum = document.createElement('div');
     colNum.className = 'col-num';
-    colNum.textContent = idx + 1;
+    colNum.textContent = resolvedOriginalIdx + 1;
 
     const colTitle = document.createElement('div');
     colTitle.className = 'col-title';
@@ -2453,7 +2602,7 @@ function openPlaylistDetails(playlistId) {
     removeBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
     removeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      removeSongFromPlaylist(playlistId, idx);
+      removeSongFromPlaylist(pl.id, resolvedOriginalIdx);
     });
 
     colActions.appendChild(removeBtn);
@@ -2702,6 +2851,9 @@ function playSong(song, index) {
 
   // Fetch and display similar song recommendations
   fetchAndRenderRecommendations(song);
+
+  // Preload / pre-resolve the upcoming track in the queue to minimize startup latency
+  preloadNextTrackInQueue(index);
 }
 
 function playYouTubeTrack(videoId) {
@@ -2737,7 +2889,52 @@ function playPreviewTrack(previewUrl) {
   };
 }
 
+async function preloadNextTrackInQueue(currentIndex) {
+  if (!state.playQueue || state.playQueue.length <= currentIndex + 1) return;
+  const nextTrack = state.playQueue[currentIndex + 1];
+  if (!nextTrack) return;
+
+  // 1. If next track is Spotify / SoundCloud without a YouTube ID, pre-resolve it in the background
+  if ((nextTrack.platform === 'spotify' || nextTrack.platform === 'soundcloud') && !nextTrack._preResolvedYtId) {
+    try {
+      const q = `${nextTrack.title} ${nextTrack.artist}`;
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&platform=youtube`);
+      if (res.ok) {
+        const results = await res.json();
+        if (results && results.length > 0) {
+          nextTrack._preResolvedYtId = results[0].id;
+          nextTrack._preResolvedThumb = results[0].thumbnail;
+          console.log(`[Preload] Next track "${nextTrack.title}" pre-resolved -> ${results[0].id}`);
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 2. If next track is offline/downloaded, pre-warm audio stream in memory
+  const isNextOffline = (state.downloadedTrackIds && state.downloadedTrackIds.has(nextTrack.id));
+  if (isNextOffline) {
+    try {
+      const warmAudio = new Audio();
+      warmAudio.preload = 'auto';
+      warmAudio.src = `/api/offline/stream?id=${encodeURIComponent(nextTrack.id)}`;
+    } catch (e) {}
+  }
+}
+
 async function playProxyFallback(song) {
+  // If we already pre-resolved the YouTube ID in the background, skip network search and play immediately!
+  if (song._preResolvedYtId) {
+    if (song._preResolvedThumb && (!song.thumbnail || song.thumbnail.includes('unsplash.com'))) {
+      song.thumbnail = song._preResolvedThumb;
+      const albumArtEl = document.getElementById('playerAlbumArt');
+      if (albumArtEl) albumArtEl.innerHTML = `<img src="${song.thumbnail}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src=DEFAULT_ALBUM_ART;">`;
+      const mobileCover = document.getElementById('mobileNpCoverImg');
+      if (mobileCover) mobileCover.src = song.thumbnail;
+    }
+    playYouTubeTrack(song._preResolvedYtId);
+    return;
+  }
+
   // Queries server search API for a YouTube equivalent of Spotify/SoundCloud items
   try {
     const query = `${song.title} ${song.artist}`;
@@ -2928,33 +3125,72 @@ function playPrev() {
   playSong(state.playQueue[prevIndex], prevIndex);
 }
 
+function updateVolumeBubble(val) {
+  const bubble = document.getElementById('volumeBubble');
+  if (!bubble) return;
+  const clamped = Math.max(0, Math.min(100, val));
+  bubble.textContent = `${clamped}%`;
+  bubble.style.left = `${clamped}%`;
+}
+
 function applyVolume() {
   const vol = state.isMuted ? 0 : state.volume;
+  // Spotify-style logarithmic perceptual taper (power of 2)
+  // Low slider values (e.g. 10%) yield truly quiet output (1% acoustic power) instead of blaring
+  const effectiveRatio = Math.pow(vol / 100, 2);
+  const effectiveYtVolume = Math.round(effectiveRatio * 100);
+
   if (window.AndroidAudio && typeof window.AndroidAudio.setVolume === 'function') {
-    window.AndroidAudio.setVolume(vol / 100);
+    try { window.AndroidAudio.setVolume(effectiveRatio); } catch (e) {}
   }
   if (ytPlayer && typeof ytPlayer.setVolume === 'function') {
-    ytPlayer.setVolume(vol);
+    try { ytPlayer.setVolume(effectiveYtVolume); } catch (e) {}
   }
   if (activeAudio) {
-    activeAudio.volume = vol / 100;
+    try { activeAudio.volume = effectiveRatio; } catch (e) {}
   }
 }
 
+let seekDebounceTimer = null;
+let isUserSeeking = false;
+
 function seekToPercentage(pct) {
-  const seekSeconds = pct * state.duration;
-  if (window.AndroidAudio && typeof window.AndroidAudio.seekTo === 'function') {
-    try { window.AndroidAudio.seekTo(seekSeconds); } catch (e) {}
-  } else if ((state.currentPlaybackType === 'offline' || state.currentPlaybackType === 'audio') && activeAudio) {
-    activeAudio.currentTime = seekSeconds;
-  } else if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
-    try { ytPlayer.seekTo(seekSeconds, true); } catch (e) {}
-  } else if (activeAudio) {
-    activeAudio.currentTime = seekSeconds;
+  const boundedPct = Math.min(1, Math.max(0, pct));
+  const seekSeconds = boundedPct * state.duration;
+
+  // Immediately reflect timestamp in UI without waiting
+  state.playbackPosition = seekSeconds;
+  const timeFormatted = formatSeconds(seekSeconds);
+  const currTime = document.getElementById('playerCurrentTime');
+  if (currTime) currTime.textContent = timeFormatted;
+  const mobileTime = document.getElementById('mobileNpCurrentTime');
+  if (mobileTime) mobileTime.textContent = timeFormatted;
+
+  isUserSeeking = true;
+  if (seekDebounceTimer) {
+    clearTimeout(seekDebounceTimer);
   }
+
+  // Throttle rapid click/drag spamming into a single clean seek instruction
+  seekDebounceTimer = setTimeout(() => {
+    if (window.AndroidAudio && typeof window.AndroidAudio.seekTo === 'function') {
+      try { window.AndroidAudio.seekTo(seekSeconds); } catch (e) {}
+    } else if ((state.currentPlaybackType === 'offline' || state.currentPlaybackType === 'audio') && activeAudio) {
+      try { activeAudio.currentTime = seekSeconds; } catch (e) {}
+    } else if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
+      try { ytPlayer.seekTo(seekSeconds, true); } catch (e) {}
+    } else if (activeAudio) {
+      try { activeAudio.currentTime = seekSeconds; } catch (e) {}
+    }
+    // Allow small cooldown before resume timer takes back timeline slider control
+    setTimeout(() => {
+      isUserSeeking = false;
+    }, 250);
+  }, 100);
 }
 
 function updateTimelineUI(currentSec) {
+  if (isUserSeeking) return; // Never fight or jerk slider thumb while user is scrubbing!
   if (currentSec === undefined) currentSec = state.playbackPosition;
   const pct = state.duration > 0 ? (currentSec / state.duration) * 100 : 0;
   const boundedPct = Math.min(100, Math.max(0, pct));
