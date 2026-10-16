@@ -21,6 +21,7 @@ const CloudSync = {
   _cachedKey: null,
   _cachedSaltStr: null,
   _cachedPasskey: null,
+  _isKeyMasked: false,
   deviceId: null,
 
   getDeviceId() {
@@ -94,6 +95,7 @@ const CloudSync = {
   // --- INITIALIZATION ---
 
   async init() {
+    this._isKeyMasked = localStorage.getItem('aether_cloud_key_masked') === 'true';
     const savedKey = localStorage.getItem('aether_cloud_sync_key');
     if (savedKey) {
       this.syncKey = savedKey;
@@ -263,32 +265,6 @@ const CloudSync = {
       await fbAuth.signInAnonymously();
     }
     return fbAuth.currentUser;
-  },
-
-  // --- INITIALIZATION ---
-
-  async init() {
-    const savedKey = localStorage.getItem('aether_cloud_sync_key');
-    if (savedKey) {
-      this.syncKey = savedKey;
-      this.mode = 'cloud';
-      this.status = 'syncing';
-      this.updateUI();
-
-      // Attempt initial fetch from cloud
-      try {
-        await this.ensureFirebaseAuth();
-        await this.pullFromCloud({ silent: true });
-      } catch (err) {
-        console.warn('[CloudSync] Initial fetch failed (possibly offline):', err);
-        this.status = 'offline';
-        this.updateUI();
-      }
-    } else {
-      this.mode = 'guest';
-      this.status = 'idle';
-      this.updateUI();
-    }
   },
 
   // --- GUEST / CLOUD MODE ACTIONS ---
@@ -658,7 +634,7 @@ const CloudSync = {
         cardStatusBadge.textContent = 'Cloud Synced (Encrypted)';
         cardStatusBadge.className = 'badge badge-success';
         if (keyDisplayBox) keyDisplayBox.style.display = 'flex';
-        if (currentKeyText) currentKeyText.textContent = this.syncKey || '';
+        this.updatePasskeyDisplay();
         if (guestActions) guestActions.style.display = 'none';
         if (connectedActions) connectedActions.style.display = 'flex';
         if (lastSyncEl) {
@@ -668,6 +644,366 @@ const CloudSync = {
         }
       }
     }
+  },
+
+  toggleKeyMask() {
+    this._isKeyMasked = !this._isKeyMasked;
+    localStorage.setItem('aether_cloud_key_masked', this._isKeyMasked ? 'true' : 'false');
+    this.updatePasskeyDisplay();
+    if (typeof showToast === 'function') {
+      showToast(this._isKeyMasked ? 'Passkey masked (stream-safe)' : 'Passkey revealed');
+    }
+  },
+
+  updatePasskeyDisplay() {
+    const currentKeyText = document.getElementById('cloudCurrentKeyText');
+    const btnToggleMask = document.getElementById('btnToggleCloudKeyMask');
+    const maskTextSpan = document.getElementById('btnToggleCloudKeyMaskText');
+    if (!currentKeyText) return;
+
+    const fullKey = (this.syncKey || localStorage.getItem('aether_cloud_sync_key') || '').trim();
+    if (!fullKey) {
+      currentKeyText.textContent = 'AETH-••••-••••-••••';
+      return;
+    }
+
+    if (this._isKeyMasked) {
+      const parts = fullKey.split('-');
+      if (parts.length === 4) {
+        currentKeyText.textContent = `${parts[0]}-••••-••••-••••`;
+      } else {
+        currentKeyText.textContent = '••••-••••-••••-••••';
+      }
+      if (btnToggleMask) {
+        btnToggleMask.title = 'Show Passkey';
+        btnToggleMask.setAttribute('aria-label', 'Show Passkey');
+      }
+      if (maskTextSpan) {
+        maskTextSpan.textContent = 'Show';
+      }
+      const iconContainer = btnToggleMask ? btnToggleMask.querySelector('svg') : null;
+      if (iconContainer) {
+        iconContainer.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>';
+      }
+    } else {
+      currentKeyText.textContent = fullKey;
+      if (btnToggleMask) {
+        btnToggleMask.title = 'Hide Passkey (Streamer Mode)';
+        btnToggleMask.setAttribute('aria-label', 'Hide Passkey');
+      }
+      if (maskTextSpan) {
+        maskTextSpan.textContent = 'Hide';
+      }
+      const iconContainer = btnToggleMask ? btnToggleMask.querySelector('svg') : null;
+      if (iconContainer) {
+        iconContainer.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line>';
+      }
+    }
+  },
+
+  // --- QR CODE DISPLAY & SCANNER METHODS ---
+  _scannerStream: null,
+  _scanAnimId: null,
+
+  setupCardCollapse() {
+    const card = document.getElementById('cloudSyncCard');
+    const toggleBtn = document.getElementById('btnToggleCloudCard');
+    if (!card || !toggleBtn) return;
+
+    // Check persisted state
+    const isCollapsed = localStorage.getItem('cloud_sync_card_collapsed') === 'true';
+    if (isCollapsed) {
+      card.classList.add('is-collapsed');
+    }
+
+    toggleBtn.addEventListener('click', () => {
+      const currentlyCollapsed = card.classList.toggle('is-collapsed');
+      localStorage.setItem('cloud_sync_card_collapsed', currentlyCollapsed ? 'true' : 'false');
+    });
+  },
+
+  showPasskeyQr(passkey = null) {
+    const savedKey = localStorage.getItem('aether_cloud_sync_key');
+    const domKeyEl = document.getElementById('cloudCurrentKeyText');
+    const cleanDomKey = (domKeyEl && !domKeyEl.textContent.includes('•')) ? domKeyEl.textContent : '';
+    const key = (passkey || this.syncKey || savedKey || cleanDomKey || '').trim().toUpperCase();
+    const modal = document.getElementById('modalCloudQrDisplay');
+    const container = document.getElementById('cloudQrContainer');
+    const keyText = document.getElementById('cloudQrPasskeyText');
+
+    if (!key) {
+      if (typeof showToast === 'function') {
+        showToast('Generate or connect a Cloud Passkey first to view QR code');
+      }
+      return;
+    }
+
+    if (keyText) keyText.textContent = key;
+    if (container) {
+      container.innerHTML = '';
+      if (typeof QRCode !== 'undefined') {
+        try {
+          new QRCode(container, {
+            text: key,
+            width: 200,
+            height: 200,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.M
+          });
+        } catch (e) {
+          console.warn('[CloudSync] QRCode library error, fallback:', e);
+          this._renderQrFallback(container, key);
+        }
+      } else {
+        this._renderQrFallback(container, key);
+      }
+    }
+
+    if (modal) {
+      modal.style.display = 'flex';
+      modal.classList.add('active');
+    }
+  },
+
+  _renderQrFallback(container, key) {
+    const img = document.createElement('img');
+    img.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(key)}`;
+    img.alt = `QR Code for ${key}`;
+    img.style.width = '200px';
+    img.style.height = '200px';
+    container.appendChild(img);
+  },
+
+  hidePasskeyQr() {
+    const modal = document.getElementById('modalCloudQrDisplay');
+    if (modal) {
+      modal.classList.remove('active');
+      modal.style.display = 'none';
+    }
+  },
+
+  async startQrScanner() {
+    const modal = document.getElementById('modalCloudQrScanner');
+    const video = document.getElementById('cloudQrVideo');
+    const canvas = document.getElementById('cloudQrCanvas');
+    const statusText = document.getElementById('cloudQrScanStatus');
+
+    if (modal) {
+      modal.style.display = 'flex';
+      modal.classList.add('active');
+    }
+    if (statusText) statusText.textContent = 'Starting camera...';
+
+    try {
+      let stream = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } }
+        });
+      } catch (e1) {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+
+      this._scannerStream = stream;
+      if (video) {
+        video.srcObject = stream;
+        video.setAttribute('playsinline', 'true');
+        await video.play();
+      }
+
+      if (statusText) statusText.textContent = 'Point camera at Passkey QR code';
+
+      // Check for native BarcodeDetector
+      let barcodeDetector = null;
+      if ('BarcodeDetector' in window) {
+        try {
+          barcodeDetector = new window.BarcodeDetector({ formats: ['qr_code'] });
+        } catch (e) {
+          barcodeDetector = null;
+        }
+      }
+
+      const scanLoop = async () => {
+        if (!this._scannerStream) return;
+
+        if (video && video.readyState >= video.HAVE_CURRENT_DATA) {
+          let detectedText = null;
+
+          if (barcodeDetector) {
+            try {
+              const barcodes = await barcodeDetector.detect(video);
+              if (barcodes && barcodes.length > 0) {
+                detectedText = barcodes[0].rawValue;
+              }
+            } catch (err) {}
+          }
+
+          if (!detectedText && typeof jsQR !== 'undefined' && canvas) {
+            canvas.width = video.videoWidth || 320;
+            canvas.height = video.videoHeight || 240;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(imgData.data, imgData.width, imgData.height, {
+              inversionAttempts: 'dontInvert'
+            });
+            if (code && code.data) {
+              detectedText = code.data;
+            }
+          }
+
+          if (detectedText) {
+            this._handleDetectedPasskey(detectedText);
+            return;
+          }
+        }
+
+        this._scanAnimId = requestAnimationFrame(scanLoop);
+      };
+
+      this._scanAnimId = requestAnimationFrame(scanLoop);
+
+    } catch (err) {
+      console.warn('[CloudSync] Camera access failed:', err);
+      if (statusText) {
+        statusText.textContent = 'Camera unavailable. Please choose an image file below.';
+      }
+    }
+  },
+
+  stopQrScanner() {
+    if (this._scanAnimId) {
+      cancelAnimationFrame(this._scanAnimId);
+      this._scanAnimId = null;
+    }
+    if (this._scannerStream) {
+      this._scannerStream.getTracks().forEach(track => track.stop());
+      this._scannerStream = null;
+    }
+    const video = document.getElementById('cloudQrVideo');
+    if (video) video.srcObject = null;
+
+    const modal = document.getElementById('modalCloudQrScanner');
+    if (modal) {
+      modal.classList.remove('active');
+      modal.style.display = 'none';
+    }
+  },
+
+  _handleDetectedPasskey(rawText) {
+    if (!rawText) return;
+    let clean = rawText.trim().toUpperCase();
+
+    // Extract AETH-XXXX-XXXX-XXXX if present
+    const aethMatch = clean.match(/AETH-[A-Z0-9]{3,5}-[A-Z0-9]{3,5}-[A-Z0-9]{3,5}/);
+    if (aethMatch) {
+      clean = aethMatch[0];
+    }
+
+    if (navigator.vibrate) {
+      try { navigator.vibrate([100, 50, 100]); } catch (e) {}
+    }
+
+    this.stopQrScanner();
+
+    const inputKey = document.getElementById('inputConnectKey');
+    if (inputKey) {
+      inputKey.value = clean;
+    }
+
+    if (typeof showToast === 'function') {
+      showToast(`Passkey scanned: ${clean}`);
+    }
+
+    const btnConnect = document.getElementById('btnConnectCloudAccount');
+    if (btnConnect) {
+      setTimeout(() => btnConnect.click(), 300);
+    }
+  },
+
+  scanFromImageFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = async () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+
+        let detected = null;
+        if ('BarcodeDetector' in window) {
+          try {
+            const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+            const barcodes = await detector.detect(canvas);
+            if (barcodes && barcodes.length > 0) {
+              detected = barcodes[0].rawValue;
+            }
+          } catch (err) {}
+        }
+
+        if (!detected && typeof jsQR !== 'undefined') {
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imgData.data, imgData.width, imgData.height);
+          if (code && code.data) detected = code.data;
+        }
+
+        if (detected) {
+          this._handleDetectedPasskey(detected);
+        } else {
+          if (typeof showToast === 'function') {
+            showToast('No QR code could be found in that image.');
+          }
+        }
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  },
+
+  setupQrAndCollapseEvents() {
+    this.setupCardCollapse();
+
+    // Toggle Passkey Mask (Hide/Show)
+    const btnToggleMask = document.getElementById('btnToggleCloudKeyMask');
+    if (btnToggleMask) {
+      btnToggleMask.addEventListener('click', () => this.toggleKeyMask());
+    }
+
+    // Show QR modal triggers
+    const btnShowQr = document.getElementById('btnShowCloudQr');
+    if (btnShowQr) {
+      btnShowQr.addEventListener('click', () => this.showPasskeyQr());
+    }
+
+    const btnCloseQrDisplay = document.getElementById('btnCloseCloudQrDisplay');
+    const btnDoneQrDisplay = document.getElementById('btnDoneCloudQrDisplay');
+    if (btnCloseQrDisplay) btnCloseQrDisplay.addEventListener('click', () => this.hidePasskeyQr());
+    if (btnDoneQrDisplay) btnDoneQrDisplay.addEventListener('click', () => this.hidePasskeyQr());
+
+    // Scanner triggers
+    const btnScanQr = document.getElementById('btnScanCloudQr');
+    if (btnScanQr) {
+      btnScanQr.addEventListener('click', () => this.startQrScanner());
+    }
+
+    const btnCloseScanner = document.getElementById('btnCloseCloudQrScanner');
+    const btnCancelScanner = document.getElementById('btnCancelCloudQrScanner');
+    if (btnCloseScanner) btnCloseScanner.addEventListener('click', () => this.stopQrScanner());
+    if (btnCancelScanner) btnCancelScanner.addEventListener('click', () => this.stopQrScanner());
+
+    // File input fallback
+    const fileInput = document.getElementById('inputQrImageFile');
+    if (fileInput) {
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files[0]) {
+          this.scanFromImageFile(e.target.files[0]);
+        }
+      });
+    }
   }
 };
 
@@ -676,5 +1012,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Give Firebase a short tick to initialize
   setTimeout(() => {
     CloudSync.init();
+    CloudSync.setupQrAndCollapseEvents();
   }, 100);
 });

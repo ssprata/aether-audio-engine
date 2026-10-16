@@ -66,6 +66,8 @@ let state = {
   lyrics: null,
   lyricsSynced: false,
   lyricsOpen: false,
+  cachedLyricsTrackId: null,
+  lyricsDebounceTimer: null,
   playlistStyle: 'image-name', // 'image-name', 'image-only', 'name-only'
   lyricsMode: 0, // 0 = off, 1 = drawer, 2 = widget
   lyricsFontSize: 18,
@@ -556,6 +558,51 @@ function rgbToHex(rgbStr) {
   return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 }
 
+// Settings Sub-Tabs Management
+function switchProfileSubtab(subtabId) {
+  const nav = document.getElementById('settingsSubtabsNav');
+  if (!nav) return;
+  const buttons = nav.querySelectorAll('.settings-subtab-pill');
+  const panes = document.querySelectorAll('.settings-subtab-content');
+
+  buttons.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.subtab === subtabId);
+  });
+
+  panes.forEach(pane => {
+    const isTarget = pane.id === `settingsPane-${subtabId}`;
+    pane.classList.toggle('active', isTarget);
+    pane.style.display = isTarget ? 'block' : 'none';
+  });
+
+  try {
+    localStorage.setItem('aether_settings_subtab', subtabId);
+  } catch (e) {}
+}
+
+function setupProfileSubtabs() {
+  const nav = document.getElementById('settingsSubtabsNav');
+  if (!nav) return;
+
+  nav.querySelectorAll('.settings-subtab-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const subtab = btn.dataset.subtab;
+      if (subtab) switchProfileSubtab(subtab);
+    });
+  });
+
+  const btnExportPlaylistsProfile = document.getElementById('btnExportPlaylistsProfile');
+  if (btnExportPlaylistsProfile) {
+    btnExportPlaylistsProfile.addEventListener('click', () => {
+      const btnExport = document.getElementById('btnExportPlaylists');
+      if (btnExport) btnExport.click();
+    });
+  }
+
+  const savedSubtab = localStorage.getItem('aether_settings_subtab') || 'profile';
+  switchProfileSubtab(savedSubtab);
+}
+
 // --- EVENT LISTENERS SYSTEM ---
 function setupEventListeners() {
   // Navigation Tabs Switching
@@ -847,23 +894,26 @@ function setupEventListeners() {
       link = 'https://' + link;
     }
 
-    // Ask user how many songs to import (default: 100)
-    const limitInput = await showPromptModal(
-      'Import Song Limit',
-      'How many songs would you like to import? (Default: 100):',
-      '100'
-    );
-    if (limitInput === null) return; // User cancelled
+    // Check if the link is an infinite YouTube Mix or Radio
+    const isMixUrl = /list=RD|start_radio=1|radio=1|list=UL/i.test(link);
+    let limit = 100;
 
-    let limit = parseInt(limitInput, 10);
-    if (isNaN(limit) || limit <= 0) {
-      limit = 100;
-    }
-    if (limit > 300) {
-      limit = 300;
+    // Only prompt for song limit if importing an infinite YouTube Mix
+    if (isMixUrl) {
+      const limitInput = await showPromptModal(
+        'Import Song Limit',
+        'How many songs would you like to import from this YouTube Mix? (Default: 100):',
+        '100'
+      );
+      if (limitInput === null) return; // User cancelled
+
+      const parsedLimit = parseInt(limitInput, 10);
+      if (!isNaN(parsedLimit) && parsedLimit > 0) {
+        limit = Math.min(parsedLimit, 300);
+      }
     }
 
-    showToast(`Analyzing link and importing up to ${limit} songs...`);
+    showToast(isMixUrl ? `Importing YouTube Mix (up to ${limit} songs)...` : 'Analyzing playlist link...');
 
     try {
       const response = await fetch(`/api/resolve-link?url=${encodeURIComponent(link)}&limit=${limit}&allow_mix=1`);
@@ -883,11 +933,21 @@ function setupEventListeners() {
         } else if (data.type === 'track') {
           const wantMix = await showConfirmModal(
             'Single Track Detected',
-            `"${data.song.title}" is a single track. Would you like to generate and import a ${limit}-song YouTube Mix based on it?`
+            `"${data.song.title}" is a single track. Would you like to generate and import a YouTube Mix based on it?`
           );
           if (wantMix) {
+            const mixLimitInput = await showPromptModal(
+              'Import Song Limit',
+              'How many songs would you like to generate in this Mix? (Default: 100):',
+              '100'
+            );
+            if (mixLimitInput === null) return;
+            let mixLimit = parseInt(mixLimitInput, 10);
+            if (isNaN(mixLimit) || mixLimit <= 0) mixLimit = 100;
+            mixLimit = Math.min(mixLimit, 300);
+
             showToast(`Generating mix from "${data.song.title}"...`);
-            const mixResp = await fetch(`/api/resolve-link?url=${encodeURIComponent(link)}&limit=${limit}&allow_mix=1`);
+            const mixResp = await fetch(`/api/resolve-link?url=${encodeURIComponent(link)}&limit=${mixLimit}&allow_mix=1`);
             if (mixResp.ok) {
               const mixData = await mixResp.json();
               if (mixData.type === 'playlist' && mixData.songs && mixData.songs.length > 0) {
@@ -993,15 +1053,38 @@ function setupEventListeners() {
   });
 
   // Export/Import Playlist files
-  document.getElementById('btnExportPlaylists').addEventListener('click', () => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state.playlists));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `playlists_backup_${new Date().toISOString().slice(0, 10)}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
-    showToast('Playlists exported to JSON');
+  document.getElementById('btnExportPlaylists').addEventListener('click', async () => {
+    try {
+      showToast('Exporting playlists...');
+      const response = await fetch('/api/export-playlists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(state.playlists)
+      });
+      const resData = await response.json();
+      if (resData.success && resData.savedToDownloads) {
+        showToast(`Saved to Downloads: ${resData.filename}`);
+      } else {
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state.playlists, null, 2));
+        const downloadAnchor = document.createElement('a');
+        downloadAnchor.setAttribute("href", dataStr);
+        downloadAnchor.setAttribute("download", resData.filename || `playlists_backup_${new Date().toISOString().slice(0, 10)}.json`);
+        document.body.appendChild(downloadAnchor);
+        downloadAnchor.click();
+        downloadAnchor.remove();
+        showToast('Playlists exported to JSON');
+      }
+    } catch (err) {
+      console.error('Export error:', err);
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state.playlists, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `playlists_backup_${new Date().toISOString().slice(0, 10)}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      showToast('Playlists exported to JSON');
+    }
   });
 
   document.getElementById('btnImportPlaylists').addEventListener('click', () => {
@@ -1088,13 +1171,19 @@ function setupEventListeners() {
         body: JSON.stringify({ spotifyClientId: clientId, spotifyClientSecret: effectiveSecret })
       });
       if (response.ok) {
+        state.spotifyConfigured = Boolean(clientId && effectiveSecret);
+        if (effectiveSecret) {
+          document.getElementById('spotifyClientSecret').value = '••••••••••••••••';
+        }
         showToast('Spotify settings saved!');
-        checkSpotifyConfig();
         if (typeof CloudSync !== 'undefined' && CloudSync.mode === 'cloud') {
           CloudSync.debouncedPush();
         }
+      } else {
+        showToast('Failed to save Spotify settings');
       }
     } catch (e) {
+      console.error('Error saving Spotify settings:', e);
       showToast('Failed to save Spotify settings');
     }
   });
@@ -1224,7 +1313,7 @@ function setupEventListeners() {
     state.lyricsMode = 1;
     const drawer = document.getElementById('lyricsDrawer');
     if (drawer) drawer.classList.add('active');
-    if (state.currentSong) fetchLyricsForTrack(state.currentSong);
+    if (state.currentSong) ensureLyricsLoaded(state.currentSong);
     closeMobileNowPlaying();
   });
   document.getElementById('btnExpandLyricsModal')?.addEventListener('click', (e) => {
@@ -1232,7 +1321,7 @@ function setupEventListeners() {
     state.lyricsMode = 1;
     const drawer = document.getElementById('lyricsDrawer');
     if (drawer) drawer.classList.add('active');
-    if (state.currentSong) fetchLyricsForTrack(state.currentSong);
+    if (state.currentSong) ensureLyricsLoaded(state.currentSong);
     closeMobileNowPlaying();
   });
   document.getElementById('btnMobileNpFollowArtist')?.addEventListener('click', (e) => {
@@ -1286,14 +1375,14 @@ function setupEventListeners() {
       drawer.classList.add('active');
       btn.classList.add('active');
       state.lyricsOpen = true;
-      if (state.currentSong) fetchLyricsForTrack(state.currentSong);
+      if (state.currentSong) ensureLyricsLoaded(state.currentSong);
     } else if (state.lyricsMode === 2) {
       widget.style.display = 'flex';
       btn.classList.add('active');
       btn.style.color = 'var(--accent-color)';
       state.lyricsOpen = true;
       if (state.currentSong) {
-        fetchLyricsForTrack(state.currentSong);
+        ensureLyricsLoaded(state.currentSong);
       } else {
         updateLyricsHighlight(0); // Show song info placeholder
       }
@@ -1460,6 +1549,7 @@ function setupEventListeners() {
   if (headerCloudBtn) {
     headerCloudBtn.addEventListener('click', () => {
       switchTab('profile');
+      switchProfileSubtab('cloud');
       const cloudCard = document.getElementById('cloudSyncCard');
       if (cloudCard) {
         cloudCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1522,11 +1612,21 @@ function setupEventListeners() {
     });
   }
 
+  const btnToggleCloudKeyMask = document.getElementById('btnToggleCloudKeyMask');
+  if (btnToggleCloudKeyMask) {
+    btnToggleCloudKeyMask.addEventListener('click', () => {
+      if (typeof CloudSync !== 'undefined' && typeof CloudSync.toggleKeyMask === 'function') {
+        CloudSync.toggleKeyMask();
+      }
+    });
+  }
+
   const btnCopyCloudKey = document.getElementById('btnCopyCloudKey');
   if (btnCopyCloudKey) {
     btnCopyCloudKey.addEventListener('click', () => {
-      if (CloudSync.syncKey) {
-        navigator.clipboard.writeText(CloudSync.syncKey).then(() => {
+      const fullKey = (CloudSync && CloudSync.syncKey) || localStorage.getItem('aether_cloud_sync_key');
+      if (fullKey) {
+        navigator.clipboard.writeText(fullKey).then(() => {
           const txt = document.getElementById('btnCopyCloudKeyText');
           if (txt) txt.textContent = 'Copied!';
           showToast('Passkey copied to clipboard!');
@@ -1534,7 +1634,7 @@ function setupEventListeners() {
             if (txt) txt.textContent = 'Copy';
           }, 2000);
         }).catch(() => {
-          showToast('Could not copy automatically. Passkey: ' + CloudSync.syncKey);
+          showToast('Could not copy automatically. Passkey: ' + fullKey);
         });
       }
     });
@@ -1551,12 +1651,24 @@ function setupEventListeners() {
 
   const btnDisconnectCloud = document.getElementById('btnDisconnectCloud');
   if (btnDisconnectCloud) {
-    btnDisconnectCloud.addEventListener('click', () => {
-      if (confirm('Disconnect from Cloud Sync? Your local playlists and settings will remain on this device.')) {
+    btnDisconnectCloud.addEventListener('click', async () => {
+      const confirmed = await showConfirmModal(
+        'Disconnect Cloud Sync',
+        'Disconnect from Cloud Sync? Your local playlists and settings will remain safely on this device.',
+        {
+          confirmText: 'Disconnect',
+          cancelText: 'Cancel',
+          isDanger: true
+        }
+      );
+      if (confirmed) {
         CloudSync.disconnect();
       }
     });
   }
+
+  // Profile Settings Sub-Tabs
+  setupProfileSubtabs();
 }
 
 // --- DYNAMIC THEME SYSTEM IMPLEMENTATION ---
@@ -1730,6 +1842,10 @@ function switchTab(tabName) {
     document.getElementById(`tab-${tabName}`).classList.add('active');
     if (tabName === 'home') {
       loadHomeDashboard();
+    }
+    if (tabName === 'profile') {
+      const activeSubtab = localStorage.getItem('aether_settings_subtab') || 'profile';
+      switchProfileSubtab(activeSubtab);
     }
     if (tabName !== 'album-detail' && tabName !== 'artist-profile' && tabName !== 'home') {
       // de-highlight lists active states
@@ -2017,37 +2133,75 @@ function showPromptModal(title, message, defaultValue = '') {
   });
 }
 
-function showConfirmModal(title, message) {
+function showConfirmModal(title, message, options = {}) {
   return new Promise((resolve) => {
     const modal = document.getElementById('confirmModal');
     const titleEl = document.getElementById('confirmModalTitle');
     const msgEl = document.getElementById('confirmModalMessage');
     const btnCancel = document.getElementById('btnConfirmCancel');
     const btnConfirm = document.getElementById('btnConfirmConfirm');
+    const btnClose = document.getElementById('btnCloseConfirmModal');
 
-    titleEl.textContent = title;
-    msgEl.textContent = message;
+    if (!modal) {
+      resolve(false);
+      return;
+    }
+
+    titleEl.textContent = title || 'Are you sure?';
+    msgEl.textContent = message || '';
+
+    btnConfirm.textContent = options.confirmText || 'Confirm';
+    btnCancel.textContent = options.cancelText || 'Cancel';
+
+    if (options.isDanger) {
+      btnConfirm.className = 'btn btn-danger btn-sm';
+    } else {
+      btnConfirm.className = 'btn btn-primary btn-sm';
+    }
 
     modal.classList.add('active');
 
+    let resolved = false;
     const cleanup = () => {
       modal.classList.remove('active');
       btnConfirm.removeEventListener('click', onConfirm);
       btnCancel.removeEventListener('click', onCancel);
+      if (btnClose) btnClose.removeEventListener('click', onCancel);
+      modal.removeEventListener('click', onOverlayClick);
+      document.removeEventListener('keydown', onKeyDown);
     };
 
     const onConfirm = () => {
+      if (resolved) return;
+      resolved = true;
       cleanup();
       resolve(true);
     };
 
     const onCancel = () => {
+      if (resolved) return;
+      resolved = true;
       cleanup();
       resolve(false);
     };
 
+    const onOverlayClick = (e) => {
+      if (e.target === modal) {
+        onCancel();
+      }
+    };
+
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        onCancel();
+      }
+    };
+
     btnConfirm.addEventListener('click', onConfirm);
     btnCancel.addEventListener('click', onCancel);
+    if (btnClose) btnClose.addEventListener('click', onCancel);
+    modal.addEventListener('click', onOverlayClick);
+    document.addEventListener('keydown', onKeyDown);
   });
 }
 window.openConfirmModal = showConfirmModal;
@@ -2500,9 +2654,9 @@ function playSong(song, index) {
     }
   }
 
-  // Reset lyrics index and trigger fetch for lyrics box
+  // Reset lyrics index and trigger debounced fetch for lyrics box
   activeLyricIndex = -1;
-  fetchLyricsForTrack(song);
+  ensureLyricsLoaded(song);
 
   // Initialize playback: check if downloaded locally or device is offline
   const isLocalOffline = (state.downloadedTrackIds && state.downloadedTrackIds.has(song.id)) || !navigator.onLine;
@@ -2989,12 +3143,37 @@ function showToast(message) {
 }
 
 // --- LYRICS ENGINE ---
-async function fetchLyricsForTrack(song) {
+function ensureLyricsLoaded(song, force = false) {
+  if (!song) return;
   const container = document.getElementById('lyricsDrawerBody');
-  container.innerHTML = '<div class="lyrics-placeholder">Loading lyrics...</div>';
+  // If we already have lyrics loaded for this specific song and not forcing a re-fetch:
+  if (!force && state.cachedLyricsTrackId === song.id && state.lyrics !== null) {
+    if (state.lyricsSynced && Array.isArray(state.lyrics)) {
+      renderSyncedLyrics(state.lyrics);
+    } else if (container && typeof state.lyrics === 'string') {
+      container.innerHTML = `<div class="lyric-plain-text">${state.lyrics}</div>`;
+    }
+    updateLyricsHighlight(state.playbackPosition || 0);
+    return;
+  }
+
+  // Debounce the actual network fetch so skipping tracks doesn't flood the API
+  clearTimeout(state.lyricsDebounceTimer);
+  state.lyricsDebounceTimer = setTimeout(() => {
+    fetchLyricsForTrack(song);
+  }, 400);
+}
+
+async function fetchLyricsForTrack(song) {
+  if (!song) return;
+  const container = document.getElementById('lyricsDrawerBody');
+  if (container) {
+    container.innerHTML = '<div class="lyrics-placeholder">Loading lyrics...</div>';
+  }
 
   state.lyrics = null;
   state.lyricsSynced = false;
+  state.cachedLyricsTrackId = song.id;
 
   try {
     const response = await fetch(`/api/lyrics?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist || '')}`);
@@ -3002,7 +3181,9 @@ async function fetchLyricsForTrack(song) {
 
     const data = await response.json();
     if (data.error) {
-      container.innerHTML = `<div class="lyrics-placeholder">${data.error}</div>`;
+      if (container) {
+        container.innerHTML = `<div class="lyrics-placeholder">${data.error}</div>`;
+      }
       return;
     }
 
@@ -3015,15 +3196,21 @@ async function fetchLyricsForTrack(song) {
       // Plain lyrics exist
       state.lyrics = data.lyrics;
       state.lyricsSynced = false;
-      container.innerHTML = `<div class="lyric-plain-text">${data.lyrics}</div>`;
+      if (container) {
+        container.innerHTML = `<div class="lyric-plain-text">${data.lyrics}</div>`;
+      }
     } else {
-      container.innerHTML = '<div class="lyrics-placeholder">No lyrics found for this song.</div>';
+      if (container) {
+        container.innerHTML = '<div class="lyrics-placeholder">No lyrics found for this song.</div>';
+      }
     }
   } catch (err) {
     console.error('Failed to fetch lyrics:', err);
-    container.innerHTML = '<div class="lyrics-placeholder">Failed to load lyrics.</div>';
+    if (container) {
+      container.innerHTML = '<div class="lyrics-placeholder">Failed to load lyrics.</div>';
+    }
   } finally {
-    updateLyricsHighlight(state.playbackPosition);
+    updateLyricsHighlight(state.playbackPosition || 0);
   }
 }
 
@@ -4524,10 +4711,58 @@ async function initOfflineEngine() {
   checkSmartCacheFirstRunPrompt();
 }
 
+function updateOfflineVisibility(enabled) {
+  if (typeof enabled !== 'boolean') {
+    enabled = localStorage.getItem('offline_music_enabled') !== 'false';
+  }
+  const pinnedItem = document.getElementById('btnOpenDownloadedPlaylist');
+  if (pinnedItem) {
+    pinnedItem.style.display = enabled ? 'flex' : 'none';
+  }
+
+  const offlineBody = document.getElementById('offlineCardBody');
+  if (offlineBody) {
+    offlineBody.style.opacity = enabled ? '1' : '0.45';
+    offlineBody.style.pointerEvents = enabled ? 'auto' : 'none';
+  }
+
+  // If user was viewing Downloaded Music playlist and disables the feature, switch away
+  if (!enabled && state.currentPlaylistId === 'system_downloaded') {
+    if (state.playlists && state.playlists.length > 0) {
+      selectPlaylist(state.playlists[0].id);
+    } else {
+      showTab('home');
+    }
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => updateOfflineVisibility());
+} else {
+  updateOfflineVisibility();
+}
+
 let offlineListenersAttached = false;
 function setupOfflineEventListeners() {
   if (offlineListenersAttached) return;
   offlineListenersAttached = true;
+
+  // Master switch: Enable/Disable Offline Music & Storage
+  const toggleOffline = document.getElementById('toggleOfflineMusicEnabled');
+  if (toggleOffline) {
+    const isOfflineEnabled = localStorage.getItem('offline_music_enabled') !== 'false';
+    toggleOffline.checked = isOfflineEnabled;
+    updateOfflineVisibility(isOfflineEnabled);
+
+    toggleOffline.addEventListener('change', () => {
+      const enabled = toggleOffline.checked;
+      localStorage.setItem('offline_music_enabled', enabled ? 'true' : 'false');
+      updateOfflineVisibility(enabled);
+      showToast(enabled ? 'Offline Music & Storage enabled' : 'Offline Music & Storage disabled');
+    });
+  } else {
+    updateOfflineVisibility();
+  }
 
   // Pinned sidebar item: Downloaded Music
   const btnOpenDownloaded = document.getElementById('btnOpenDownloadedPlaylist');

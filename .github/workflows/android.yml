@@ -33,6 +33,7 @@ jobs:
       run: |
         mkdir -p android/app/src/main/python
         cp server.py android/app/src/main/python/server.py
+        rm -rf android/app/src/main/python/public
         cp -r public android/app/src/main/python/public
 
     - name: Build with Gradle

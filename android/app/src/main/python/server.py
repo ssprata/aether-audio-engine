@@ -18,10 +18,56 @@ try:
 except ImportError:
     pass
 
+def _migrate_legacy_data(legacy_dir, new_data_dir):
+    """Automatically move existing user data from previous exe folder to AppData."""
+    if not legacy_dir or legacy_dir == new_data_dir:
+        return
+    import shutil
+    try:
+        os.makedirs(new_data_dir, exist_ok=True)
+        # Migrate files
+        for fname in ['config.json', 'playlists_backup.json', 'history.json']:
+            old_p = os.path.join(legacy_dir, fname)
+            new_p = os.path.join(new_data_dir, fname)
+            if os.path.exists(old_p):
+                if not os.path.exists(new_p):
+                    shutil.move(old_p, new_p)
+                else:
+                    try:
+                        os.remove(old_p)
+                    except Exception:
+                        pass
+        # Migrate folders (uploads, downloads)
+        for dname in ['uploads', 'downloads']:
+            old_d = os.path.join(legacy_dir, dname)
+            new_d = os.path.join(new_data_dir, dname)
+            if os.path.exists(old_d) and os.path.isdir(old_d):
+                os.makedirs(new_d, exist_ok=True)
+                for item in os.listdir(old_d):
+                    s = os.path.join(old_d, item)
+                    d = os.path.join(new_d, item)
+                    if not os.path.exists(d):
+                        shutil.move(s, d)
+                try:
+                    if not os.listdir(old_d):
+                        os.rmdir(old_d)
+                except Exception:
+                    pass
+    except Exception as e:
+        print("[Migration Warning]", e)
+
 # Handle PyInstaller frozen executable environment
 if getattr(sys, 'frozen', False):
     BUNDLE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-    DATA_DIR = os.path.dirname(sys.executable)
+    appdata = os.getenv('APPDATA')
+    if appdata:
+        DATA_DIR = os.path.join(appdata, 'AetherPlayer')
+    else:
+        DATA_DIR = os.path.join(os.path.expanduser('~'), '.aetherplayer')
+    
+    # Auto-migrate any stray files from the exe directory
+    exe_dir = os.path.dirname(sys.executable)
+    _migrate_legacy_data(exe_dir, DATA_DIR)
 else:
     BUNDLE_DIR = os.path.dirname(os.path.abspath(__file__))
     DATA_DIR = BUNDLE_DIR
@@ -49,6 +95,54 @@ else:
 OFFLINE_INDEX_FILE = os.path.join(DOWNLOADS_DIR, 'offline_index.json')
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 os.makedirs(UPLOADS_DIR, exist_ok=True)
+
+# In-memory lyrics cache & rate-limit cooldown
+LYRICS_CACHE = {}
+LYRICS_RATE_LIMIT_COOLDOWN = 0
+
+def clean_track_metadata_for_lyrics(raw_title, raw_artist):
+    """Clean noisy YouTube/platform metadata into clean artist and track title for LrcLib."""
+    t = raw_title or ''
+    # Strip common bracketed tags e.g. [Official Video], (4K 60fps), (Lyric Video), [MV]
+    noise_patterns = [
+        r'\(.*?(?:official|video|audio|lyric|visualizer|remaster|live|version|edit|prod|feat|ft\.).*?\)',
+        r'\[.*?(?:official|video|audio|lyric|visualizer|remaster|live|version|edit|prod|feat|ft\.).*?\]',
+        r'\(.*?\)',
+        r'\[.*?\]',
+        r'(?i)\b(?:official\s*(?:video|audio|music\s*video)|lyric\s*video|visualizer|remastered|remaster|hd|4k)\b'
+    ]
+    for pat in noise_patterns:
+        t = re.sub(pat, '', t, flags=re.I).strip()
+
+    a = raw_artist or ''
+    # Strip YouTube topic channel tags (e.g. "Dua Lipa - Topic" -> "Dua Lipa")
+    a = re.sub(r'\s*-\s*topic\b', '', a, flags=re.I).strip()
+    a = re.sub(r'\(.*?\)|\[.*?\]', '', a).strip()
+
+    # If title has "Artist - Title", split it
+    if ' - ' in t:
+        parts = t.split(' - ', 1)
+        potential_artist = parts[0].strip()
+        potential_title = parts[1].strip()
+        if potential_artist and potential_title:
+            if not a or 'topic' in (raw_artist or '').lower() or 'vevo' in (raw_artist or '').lower() or a.lower() in potential_artist.lower():
+                a = potential_artist
+            t = potential_title
+
+    t = re.sub(r'\s+', ' ', t).strip()
+    a = re.sub(r'\s+', ' ', a).strip()
+    return t, a
+
+def get_cached_lyrics(clean_t, clean_a):
+    key = f"{clean_t.lower()}|{clean_a.lower()}"
+    return LYRICS_CACHE.get(key)
+
+def set_cached_lyrics(clean_t, clean_a, lyrics_obj):
+    key = f"{clean_t.lower()}|{clean_a.lower()}"
+    LYRICS_CACHE[key] = lyrics_obj
+    if len(LYRICS_CACHE) > 500:
+        first_key = next(iter(LYRICS_CACHE))
+        del LYRICS_CACHE[first_key]
 
 def read_history():
     print("Reading history from:", HISTORY_FILE)
@@ -707,7 +801,39 @@ def resolve_spotify_track(track_id):
         except Exception as e:
             print("Spotify API track fetch failed, falling back to scrape:", e)
             
-    # Fallback: scrape Spotify track page
+    # Fallback 1: Try Spotify Embed track scraping (requires no credentials)
+    try:
+        embed_url = f"https://open.spotify.com/embed/track/{track_id}"
+        embed_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        req_embed = urllib.request.Request(embed_url, headers=embed_headers)
+        with urllib.request.urlopen(req_embed, timeout=8) as res_embed:
+            html_embed = res_embed.read().decode('utf-8')
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html_embed, re.DOTALL)
+        if m:
+            data = json.loads(m.group(1))
+            entity = data.get('props', {}).get('pageProps', {}).get('state', {}).get('data', {}).get('entity', {})
+            if entity:
+                title = entity.get('title', 'Spotify Track')
+                artist = entity.get('subtitle', 'Unknown Artist')
+                duration_ms = entity.get('duration', 180000)
+                cover_art = entity.get('coverArt', {}).get('sources', [{}])[0].get('url', '')
+                preview_url = entity.get('audioPreview', {}).get('url') if entity.get('audioPreview') else None
+                return {
+                    'id': track_id,
+                    'title': title,
+                    'artist': artist,
+                    'duration': format_duration_ms(duration_ms),
+                    'thumbnail': cover_art,
+                    'url': f"https://open.spotify.com/track/{track_id}",
+                    'platform': 'spotify',
+                    'previewUrl': preview_url
+                }
+    except Exception as e:
+        print("Spotify embed track scrape fallback error:", e)
+
+    # Fallback 2: scrape Spotify track page
     try:
         url = f"https://open.spotify.com/track/{track_id}"
         headers = {
@@ -808,88 +934,128 @@ def get_youtube_audio_url(video_id):
         print("YouTube audio stream extraction error:", e)
     return None
 
+def scrape_spotify_embed_playlist(playlist_id, limit=100):
+    try:
+        url = f"https://open.spotify.com/embed/playlist/{playlist_id}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as res:
+            html = res.read().decode('utf-8')
+
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
+        if not m:
+            return None
+
+        data = json.loads(m.group(1))
+        entity = data.get('props', {}).get('pageProps', {}).get('state', {}).get('data', {}).get('entity', {})
+        if not entity:
+            return None
+
+        name = entity.get('title') or entity.get('name') or 'Imported Spotify Playlist'
+        cover_art = entity.get('coverArt', {}).get('sources', [{}])[0].get('url', '')
+        track_list = entity.get('trackList', [])
+
+        tracks = []
+        for t in track_list:
+            t_id = t.get('uri', '').replace('spotify:track:', '') or t.get('id', '')
+            t_title = t.get('title', '')
+            t_artist = t.get('subtitle', 'Unknown Artist')
+            duration_ms = t.get('duration', 180000)
+            preview_url = t.get('audioPreview', {}).get('url') if t.get('audioPreview') else None
+
+            tracks.append({
+                'id': t_id,
+                'title': t_title,
+                'artist': t_artist,
+                'duration': format_duration_ms(duration_ms),
+                'thumbnail': cover_art or 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=200&auto=format&fit=crop',
+                'url': f"https://open.spotify.com/track/{t_id}",
+                'platform': 'spotify',
+                'previewUrl': preview_url
+            })
+            if len(tracks) >= limit:
+                break
+
+        if tracks:
+            return {
+                'name': name,
+                'tracks': tracks
+            }
+    except Exception as e:
+        print("Spotify embed playlist scrape failed:", e)
+    return None
+
 def resolve_spotify_playlist(playlist_id, limit=100):
     config = read_config()
     client_id = config.get('spotifyClientId')
     client_secret = config.get('spotifyClientSecret')
     token = get_spotify_access_token(client_id, client_secret)
     
-    if not token:
+    if token:
         try:
-            url = f"https://open.spotify.com/playlist/{playlist_id}"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            req = urllib.request.Request(url, headers=headers)
+            url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
+            req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
             with urllib.request.urlopen(req) as res:
-                html = res.read().decode('utf-8')
-            
-            name_match = re.search(r'<meta\s+property="og:title"\s+content="([^"]+)"', html)
-            name = name_match.group(1) if name_match else 'Imported Spotify Playlist'
-            
-            return {
-                'name': name,
-                'tracks': [],
-                'error': 'Spotify API Credentials are required to import playlists. Please add them in the User Profile tab.'
-            }
-        except Exception as e:
-            return None
-
-    try:
-        url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
-        req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
-        with urllib.request.urlopen(req) as res:
-            playlist_data = json.loads(res.read().decode('utf-8'))
-            
-        name = playlist_data.get('name', 'Imported Spotify Playlist')
-        tracks = []
-        
-        tracks_obj = playlist_data.get('tracks', {})
-        items = tracks_obj.get('items', [])
-        next_url = tracks_obj.get('next')
-        
-        while True:
-            for item in items:
-                t = item.get('track')
-                if not t:
-                    continue
-                artists = ", ".join([a['name'] for a in t.get('artists', [])])
-                thumbnail = t.get('album', {}).get('images', [{}])[0].get('url', 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=200&auto=format&fit=crop')
+                playlist_data = json.loads(res.read().decode('utf-8'))
                 
-                tracks.append({
-                    'id': t.get('id'),
-                    'title': t.get('name'),
-                    'artist': artists,
-                    'duration': format_duration_ms(t.get('duration_ms', 180000)),
-                    'thumbnail': thumbnail,
-                    'url': t.get('external_urls', {}).get('spotify', ''),
-                    'platform': 'spotify',
-                    'previewUrl': t.get('preview_url'),
-                    'albumId': t.get('album', {}).get('id') if t.get('album') else None,
-                    'albumName': t.get('album', {}).get('name') if t.get('album') else None
-                })
-                if len(tracks) >= limit:
+            name = playlist_data.get('name', 'Imported Spotify Playlist')
+            tracks = []
+            
+            tracks_obj = playlist_data.get('tracks', {})
+            items = tracks_obj.get('items', [])
+            next_url = tracks_obj.get('next')
+            
+            while True:
+                for item in items:
+                    t = item.get('track')
+                    if not t:
+                        continue
+                    artists = ", ".join([a['name'] for a in t.get('artists', [])])
+                    thumbnail = t.get('album', {}).get('images', [{}])[0].get('url', 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=200&auto=format&fit=crop')
+                    
+                    tracks.append({
+                        'id': t.get('id'),
+                        'title': t.get('name'),
+                        'artist': artists,
+                        'duration': format_duration_ms(t.get('duration_ms', 180000)),
+                        'thumbnail': thumbnail,
+                        'url': t.get('external_urls', {}).get('spotify', ''),
+                        'platform': 'spotify',
+                        'previewUrl': t.get('preview_url'),
+                        'albumId': t.get('album', {}).get('id') if t.get('album') else None,
+                        'albumName': t.get('album', {}).get('name') if t.get('album') else None
+                    })
+                    if len(tracks) >= limit:
+                        break
+                
+                if len(tracks) >= limit or not next_url:
                     break
-            
-            if len(tracks) >= limit or not next_url:
-                break
-                
-            try:
-                req_next = urllib.request.Request(next_url, headers={'Authorization': f'Bearer {token}'})
-                with urllib.request.urlopen(req_next) as res_next:
-                    next_data = json.loads(res_next.read().decode('utf-8'))
-                items = next_data.get('items', [])
-                next_url = next_data.get('next')
-            except Exception:
-                break
-                
-        return {
-            'name': name,
-            'tracks': tracks
-        }
-    except Exception as e:
-        print("Spotify playlist resolve error:", e)
-        return None
+                    
+                try:
+                    req_next = urllib.request.Request(next_url, headers={'Authorization': f'Bearer {token}'})
+                    with urllib.request.urlopen(req_next) as res_next:
+                        next_data = json.loads(res_next.read().decode('utf-8'))
+                    items = next_data.get('items', [])
+                    next_url = next_data.get('next')
+                except Exception:
+                    break
+                    
+            if tracks:
+                return {
+                    'name': name,
+                    'tracks': tracks
+                }
+        except Exception as e:
+            print("Spotify API playlist fetch failed, falling back to embed scrape:", e)
+
+    # Fallback: scrape Spotify playlist via embed without requiring API credentials
+    embed_res = scrape_spotify_embed_playlist(playlist_id, limit=limit)
+    if embed_res and embed_res.get('tracks'):
+        return embed_res
+
+    return None
 
 def resolve_soundcloud_track(url):
     try:
@@ -1452,6 +1618,14 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(b'[]')
             return
 
+        elif path == '/api/ping':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(b'{"status": "ok", "app": "AetherPlayer"}')
+            return
+
         elif path == '/api/lyrics':
             title = query_params.get('title', [''])[0].strip()
             artist = query_params.get('artist', [''])[0].strip()
@@ -1467,46 +1641,84 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
 
-            # Clean query strings to improve search matching on LrcLib
-            # Remove terms like (Official Video), (Lyric Video), [MV], etc.
-            clean_title = re.sub(r'\(.*?\)|\[.*?\]|official video|official audio|lyric video|video|mv|audio', '', title, flags=re.I).strip()
-            clean_artist = re.sub(r'\(.*?\)|\[.*?\]', '', artist, flags=re.I).strip() if artist else ''
+            # Clean noisy YouTube/platform metadata into clean artist and track title
+            clean_title, clean_artist = clean_track_metadata_for_lyrics(title, artist)
+
+            # 1. Check in-memory cache first
+            cached = get_cached_lyrics(clean_title, clean_artist)
+            if cached:
+                self.wfile.write(json.dumps(cached).encode('utf-8'))
+                return
+
+            import time
+            global LYRICS_RATE_LIMIT_COOLDOWN
+            now = time.time()
+            if now < LYRICS_RATE_LIMIT_COOLDOWN:
+                # Still in cooldown period from previous 429
+                self.wfile.write(b'{"error": "Lyrics service is temporarily busy. Will retry shortly...", "isRateLimited": true}')
+                return
+
+            lrclib_headers = {
+                'User-Agent': 'AetherPlayer/1.0 (https://github.com/ssprata/Multi-music-tool; contact: desktop-app)'
+            }
 
             try:
-                # 1. Try exact matching using LrcLib API /api/get
-                get_url = f"https://lrclib.net/api/get?track_name={urllib.parse.quote(clean_title)}&artist_name={urllib.parse.quote(clean_artist)}"
-                req = urllib.request.Request(get_url, headers={'User-Agent': 'AetherPlayer/1.0'})
+                # 2. Try exact matching using LrcLib API /api/get
+                get_url = f"https://lrclib.net/api/get?track_name={urllib.parse.quote(clean_title)}"
+                if clean_artist:
+                    get_url += f"&artist_name={urllib.parse.quote(clean_artist)}"
+                
+                req = urllib.request.Request(get_url, headers=lrclib_headers)
                 try:
-                    with urllib.request.urlopen(req) as res:
+                    with urllib.request.urlopen(req, timeout=5) as res:
                         data = json.loads(res.read().decode('utf-8'))
-                        self.wfile.write(json.dumps({
+                        result = {
                             'synced': bool(data.get('syncedLyrics')),
                             'lyrics': data.get('plainLyrics', ''),
                             'syncedLyrics': data.get('syncedLyrics', '')
-                        }).encode('utf-8'))
+                        }
+                        set_cached_lyrics(clean_title, clean_artist, result)
+                        self.wfile.write(json.dumps(result).encode('utf-8'))
                         return
                 except urllib.error.HTTPError as he:
-                    if he.code != 404:
+                    if he.code == 429:
+                        LYRICS_RATE_LIMIT_COOLDOWN = time.time() + 45
+                        self.wfile.write(b'{"error": "Lyrics service is busy right now. Will retry shortly...", "isRateLimited": true}')
+                        return
+                    elif he.code != 404:
                         raise he
 
-                # 2. Try search/fuzzy matching if exact match was 404
-                search_url = f"https://lrclib.net/api/search?q={urllib.parse.quote(clean_title + ' ' + clean_artist)}"
-                req_search = urllib.request.Request(search_url, headers={'User-Agent': 'AetherPlayer/1.0'})
-                with urllib.request.urlopen(req_search) as res_search:
-                    search_results = json.loads(res_search.read().decode('utf-8'))
-                    if search_results and len(search_results) > 0:
-                        best_match = search_results[0]
-                        self.wfile.write(json.dumps({
-                            'synced': bool(best_match.get('syncedLyrics')),
-                            'lyrics': best_match.get('plainLyrics', ''),
-                            'syncedLyrics': best_match.get('syncedLyrics', '')
-                        }).encode('utf-8'))
+                # 3. Try search/fuzzy matching if exact match was 404
+                search_query = f"{clean_title} {clean_artist}".strip()
+                search_url = f"https://lrclib.net/api/search?q={urllib.parse.quote(search_query)}"
+                req_search = urllib.request.Request(search_url, headers=lrclib_headers)
+                try:
+                    with urllib.request.urlopen(req_search, timeout=6) as res_search:
+                        search_results = json.loads(res_search.read().decode('utf-8'))
+                        if search_results and len(search_results) > 0:
+                            best_match = search_results[0]
+                            result = {
+                                'synced': bool(best_match.get('syncedLyrics')),
+                                'lyrics': best_match.get('plainLyrics', ''),
+                                'syncedLyrics': best_match.get('syncedLyrics', '')
+                            }
+                            set_cached_lyrics(clean_title, clean_artist, result)
+                            self.wfile.write(json.dumps(result).encode('utf-8'))
+                            return
+                except urllib.error.HTTPError as he:
+                    if he.code == 429:
+                        LYRICS_RATE_LIMIT_COOLDOWN = time.time() + 45
+                        self.wfile.write(b'{"error": "Lyrics service is busy right now. Will retry shortly...", "isRateLimited": true}')
                         return
 
-                self.wfile.write(b'{"error": "No lyrics found"}')
+                self.wfile.write(b'{"error": "No lyrics found for this song."}')
             except Exception as err:
                 print("Lyrics search error:", err)
-                self.wfile.write(f'{{"error": "{str(err)}"}}'.encode('utf-8'))
+                if "429" in str(err):
+                    LYRICS_RATE_LIMIT_COOLDOWN = time.time() + 45
+                    self.wfile.write(b'{"error": "Lyrics service is busy right now. Will retry shortly...", "isRateLimited": true}')
+                else:
+                    self.wfile.write(b'{"error": "Could not retrieve lyrics."}')
             return
 
 
@@ -2655,6 +2867,51 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             except Exception as e:
                 self.wfile.write(f'{{"success": false, "error": "{str(e)}"}}'.encode('utf-8'))
 
+        elif path == '/api/export-playlists':
+            try:
+                import datetime
+                date_str = datetime.date.today().isoformat()
+                filename = f"playlists_backup_{date_str}.json"
+                
+                playlists_data = None
+                if post_data and post_data.strip():
+                    try:
+                        playlists_data = json.loads(post_data)
+                    except Exception:
+                        pass
+                if playlists_data is None and os.path.exists(BACKUP_FILE):
+                    try:
+                        with open(BACKUP_FILE, 'r', encoding='utf-8') as bf:
+                            playlists_data = json.load(bf)
+                    except Exception:
+                        pass
+                if playlists_data is None:
+                    playlists_data = []
+
+                saved_to_disk = False
+                saved_path = ""
+                # In standalone desktop mode, save directly to user's standard Downloads folder
+                try:
+                    downloads_folder = os.path.join(os.path.expanduser('~'), 'Downloads')
+                    if os.path.exists(downloads_folder) and os.path.isdir(downloads_folder):
+                        target_path = os.path.join(downloads_folder, filename)
+                        with open(target_path, 'w', encoding='utf-8') as out_f:
+                            json.dump(playlists_data, out_f, indent=2, ensure_ascii=False)
+                        saved_to_disk = True
+                        saved_path = target_path
+                except Exception as ex:
+                    print("Could not write to user Downloads folder:", ex)
+
+                res_obj = {
+                    'success': True,
+                    'filename': filename,
+                    'savedToDownloads': saved_to_disk,
+                    'savedPath': saved_path
+                }
+                self.wfile.write(json.dumps(res_obj, ensure_ascii=False).encode('utf-8'))
+            except Exception as e:
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+
         elif path == '/api/upload-bg' or path == '/api/upload-avatar':
             try:
                 data = json.loads(post_data)
@@ -2776,12 +3033,18 @@ def start_android_server():
             return
         raise e
 
-def run_server():
-    server_address = ('', PORT)
-    httpd = HTTPServer(server_address, AetherPlayerHandler)
-    print("AetherPlayer server is running!")
-    print(f"  - Local access:   http://localhost:{PORT}")
-    print(f"  - Network access: http://{get_local_ip()}:{PORT}")
+def run_server(port=None):
+    if port is None:
+        port = int(os.environ.get('PORT', PORT))
+    
+    class ReusableServer(HTTPServer):
+        allow_reuse_address = True
+
+    server_address = ('', port)
+    httpd = ReusableServer(server_address, AetherPlayerHandler)
+    print(f"AetherPlayer server is running on port {port}!")
+    print(f"  - Local access:   http://localhost:{port}")
+    print(f"  - Network access: http://{get_local_ip()}:{port}")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
