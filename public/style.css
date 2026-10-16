@@ -2858,25 +2858,82 @@ input[type="range"]::-webkit-slider-thumb:hover {
     display: none !important;
   }
   
-  /* Sidebar as tab */
+  /* Global mobile typography & content scaling */
+  html {
+    font-size: 14px !important;
+  }
+
+  h1 { font-size: 1.45rem !important; }
+  h2 { font-size: 1.25rem !important; }
+  h3 { font-size: 1.05rem !important; }
+  h4 { font-size: 0.92rem !important; }
+
+  /* Reset tab-content double borders and inner padding on mobile */
+  .tab-content {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 0 16px 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: auto !important;
+  }
+
+  /* Playlists Sidebar as Full-View Tab: cleanly bounded above mini-player */
   .app-sidebar {
     grid-area: main !important;
     display: none;
-    position: absolute !important;
-    top: 60px;
-    left: 0;
-    right: 0;
-    bottom: 135px;
-    z-index: 10;
-    background: var(--glass-bg);
-    backdrop-filter: blur(var(--glass-blur));
-    -webkit-backdrop-filter: blur(var(--glass-blur));
+    position: fixed !important;
+    top: 60px !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: calc(58px + env(safe-area-inset-bottom, 0px) + 68px + 8px) !important;
+    height: auto !important;
+    max-height: calc(100vh - 60px - 134px - env(safe-area-inset-bottom, 0px)) !important;
+    z-index: 20 !important;
+    background: rgba(12, 10, 20, 0.96) !important;
+    backdrop-filter: blur(var(--glass-blur)) !important;
+    -webkit-backdrop-filter: blur(var(--glass-blur)) !important;
     width: 100% !important;
-    height: calc(100% - 195px) !important;
+    box-sizing: border-box !important;
+    padding: 14px 14px 8px 14px !important;
+    margin: 0 !important;
+    overflow: hidden !important;
   }
   
   .app-sidebar.active {
     display: flex !important;
+    flex-direction: column !important;
+  }
+
+  .app-sidebar .sidebar-scroll {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    margin-right: 0 !important;
+    padding-right: 2px !important;
+    padding-bottom: 8px !important;
+  }
+
+  .app-sidebar .sidebar-footer {
+    flex-shrink: 0 !important;
+    margin-top: 8px !important;
+    padding: 10px 0 0 0 !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+    display: flex !important;
+    gap: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .app-sidebar .sidebar-footer .btn {
+    flex: 1 !important;
+    justify-content: center !important;
+    padding: 8px 10px !important;
+    font-size: 0.82rem !important;
   }
 
   .app-right-sidebar:not(.mobile-open) {
@@ -2885,7 +2942,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   
   /* Main Content Area */
   .app-main-content {
-    padding: 16px 16px 145px 16px !important;
+    padding: 12px 12px 145px 12px !important;
     width: 100% !important;
     box-sizing: border-box !important;
   }
@@ -2909,18 +2966,417 @@ input[type="range"]::-webkit-slider-thumb:hover {
     font-size: 0.65rem !important;
   }
 
-  .profile-grid {
-    grid-template-columns: 1fr !important;
-    gap: 12px !important;
+  /* Theme Creator Centered & Responsive Full Width */
+  #tab-customizer {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+    padding: 0 0 20px 0 !important;
+    box-sizing: border-box !important;
   }
 
-  .card, .profile-card, .cloud-sync-card, .spotify-settings-card {
-    padding: 14px 16px !important;
+  .customizer-hero {
+    text-align: center !important;
+    margin-bottom: 14px !important;
+    padding: 0 4px !important;
+  }
+
+  .customizer-hero h1 {
+    font-size: 1.45rem !important;
+    margin-bottom: 4px !important;
+    text-align: center !important;
+  }
+
+  .customizer-hero p {
+    font-size: 0.82rem !important;
+    line-height: 1.4 !important;
+    text-align: center !important;
+  }
+
+  .customizer-grid {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+    gap: 12px !important;
+    box-sizing: border-box !important;
+  }
+
+  .customization-card {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    margin: 0 !important;
+    padding: 14px 14px !important;
+    border-radius: 14px !important;
+    gap: 14px !important;
+  }
+
+  .customization-card h3 {
+    font-size: 1.05rem !important;
+    margin-bottom: 6px !important;
+    padding-bottom: 6px !important;
+  }
+
+  .presets-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .presets-grid .btn {
+    font-size: 0.78rem !important;
+    padding: 8px 6px !important;
+    white-space: nowrap !important;
+    justify-content: center !important;
+  }
+
+  .bg-type-selector {
+    display: flex !important;
+    width: 100% !important;
+    gap: 4px !important;
+    box-sizing: border-box !important;
+  }
+
+  .bg-type-selector .btn {
+    flex: 1 !important;
+    font-size: 0.78rem !important;
+    padding: 6px 4px !important;
+    text-align: center !important;
+    justify-content: center !important;
+  }
+
+  .gradients-grid {
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .form-group-slider {
+    gap: 4px !important;
+    margin-bottom: 6px !important;
+  }
+
+  .slider-header span {
+    font-size: 0.8rem !important;
+  }
+
+  .colors-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .color-picker-item {
+    font-size: 0.78rem !important;
+  }
+
+  .layout-toggle-group {
+    display: flex !important;
+    width: 100% !important;
+    gap: 6px !important;
+    box-sizing: border-box !important;
+  }
+
+  .layout-toggle-group .btn {
+    flex: 1 !important;
+    font-size: 0.78rem !important;
+    padding: 6px 4px !important;
+    text-align: center !important;
+    justify-content: center !important;
+  }
+
+  .theme-save-wrapper {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .theme-save-wrapper input {
+    width: 100% !important;
+    box-sizing: border-box !important;
+    font-size: 0.85rem !important;
+    padding: 9px 12px !important;
+  }
+
+  .theme-save-wrapper #btnSaveCustomTheme {
+    width: 100% !important;
+    box-sizing: border-box !important;
+    padding: 9px 14px !important;
+    font-size: 0.85rem !important;
+    justify-content: center !important;
+  }
+
+  /* Profile View Mobile Revamp */
+  #tab-profile {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+    padding: 0 0 20px 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .profile-hero {
+    text-align: center !important;
+    margin-bottom: 12px !important;
+    padding: 0 4px !important;
+  }
+
+  .profile-hero h1 {
+    font-size: 1.45rem !important;
+    margin-bottom: 4px !important;
+    text-align: center !important;
+  }
+
+  .profile-hero p {
+    font-size: 0.82rem !important;
+    line-height: 1.4 !important;
+    text-align: center !important;
+  }
+
+  .settings-subtabs-nav {
+    width: 100% !important;
+    max-width: 100% !important;
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    gap: 6px !important;
+    padding: 4px 6px !important;
+    margin: 10px 0 16px 0 !important;
+    box-sizing: border-box !important;
+    scrollbar-width: none !important;
+    border-radius: 24px !important;
+  }
+
+  .settings-subtabs-nav::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  .settings-subtab-pill {
+    flex-shrink: 0 !important;
+    padding: 7px 12px !important;
+    font-size: 0.8rem !important;
+    gap: 6px !important;
+    border-radius: 18px !important;
+    white-space: nowrap !important;
+  }
+
+  .settings-subtab-pill svg {
+    width: 14px !important;
+    height: 14px !important;
+  }
+
+  .settings-panes-wrapper {
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .card, 
+  .settings-focused-card,
+  .profile-card,
+  .backup-card,
+  .cloud-sync-card,
+  .spotify-settings-card {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    margin: 0 0 14px 0 !important;
+    padding: 16px 14px !important;
+    border-radius: 14px !important;
+  }
+
+  .profile-identity-header {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    text-align: center !important;
+    gap: 12px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
   }
 
   .avatar-container {
-    width: 76px !important;
-    height: 76px !important;
+    width: 72px !important;
+    height: 72px !important;
+    min-width: 72px !important;
+    margin: 0 auto !important;
+    border-radius: 50% !important;
+  }
+
+  .profile-identity-info {
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 8px !important;
+    box-sizing: border-box !important;
+  }
+
+  .profile-badge-row {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    flex-wrap: wrap !important;
+  }
+
+  .profile-badge-row .badge {
+    font-size: 0.72rem !important;
+    padding: 3px 8px !important;
+  }
+
+  .profile-status-dot {
+    font-size: 0.72rem !important;
+  }
+
+  .profile-edit-name-row {
+    width: 100% !important;
+    max-width: 100% !important;
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 8px !important;
+    box-sizing: border-box !important;
+  }
+
+  .profile-edit-name-row input {
+    flex: 1 !important;
+    min-width: 0 !important;
+    font-size: 0.95rem !important;
+    padding: 8px 12px !important;
+    border-radius: 8px !important;
+    box-sizing: border-box !important;
+  }
+
+  .profile-edit-name-row #btnSaveUsername {
+    font-size: 0.82rem !important;
+    padding: 8px 14px !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+  }
+
+  .profile-identity-hint {
+    font-size: 0.72rem !important;
+    text-align: center !important;
+    margin: 2px 0 0 0 !important;
+    line-height: 1.35 !important;
+    color: var(--text-secondary) !important;
+  }
+
+  .backup-grid-row {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+    width: 100% !important;
+    margin: 12px 0 14px 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .backup-action-box {
+    padding: 12px 12px !important;
+    border-radius: 12px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 6px !important;
+    text-align: left !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
+  }
+
+  .backup-action-box h4 {
+    font-size: 0.95rem !important;
+    margin: 0 !important;
+  }
+
+  .backup-action-box p {
+    font-size: 0.78rem !important;
+    margin: 0 0 6px 0 !important;
+    line-height: 1.35 !important;
+    color: var(--text-secondary) !important;
+  }
+
+  .backup-action-box .btn {
+    width: 100% !important;
+    padding: 8px 12px !important;
+    font-size: 0.82rem !important;
+    justify-content: center !important;
+  }
+
+  .backup-footer-status {
+    font-size: 0.78rem !important;
+    padding: 8px 10px !important;
+    margin-top: 8px !important;
+  }
+
+  .cloud-header {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+    margin-bottom: 12px !important;
+  }
+
+  .cloud-title-group {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+  }
+
+  .cloud-title-group h3 {
+    font-size: 1.05rem !important;
+    margin: 0 !important;
+  }
+
+  .cloud-desc-box {
+    padding: 10px 12px !important;
+    font-size: 0.78rem !important;
+    line-height: 1.4 !important;
+    border-radius: 10px !important;
+    margin-bottom: 12px !important;
+    box-sizing: border-box !important;
+  }
+
+  .cloud-connect-row {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .cloud-connect-row .cloud-input {
+    width: 100% !important;
+    box-sizing: border-box !important;
+    font-size: 0.85rem !important;
+    padding: 9px 12px !important;
+  }
+
+  .cloud-connect-row .btn {
+    width: 100% !important;
+    font-size: 0.82rem !important;
+    padding: 9px 12px !important;
+    justify-content: center !important;
+  }
+
+  /* Scan Passkey QR Modal Mobile Polish */
+  #modalCloudQrScanner .modal-card {
+    width: calc(100% - 24px) !important;
+    max-width: 360px !important;
+    margin: auto !important;
+    padding: 16px 14px !important;
+    box-sizing: border-box !important;
+  }
+
+  .qr-scanner-viewport {
+    width: 100% !important;
+    max-width: 280px !important;
+    height: 220px !important;
+    margin: 0 auto !important;
   }
 
   /* Compact Spotify-style Search & Artist Track Results on Mobile */
@@ -5984,48 +6440,48 @@ input:checked + .slider:before {
 
 @media (max-width: 600px) {
   .settings-subtabs-nav {
-    width: 100%;
-    justify-content: flex-start;
+    width: 100% !important;
+    justify-content: flex-start !important;
   }
   .settings-subtab-pill {
-    padding: 8px 14px;
-    font-size: 0.85rem;
+    padding: 7px 12px !important;
+    font-size: 0.8rem !important;
   }
   .offline-master-switch-card {
-    padding: 14px 16px;
+    padding: 14px 14px !important;
   }
   #confirmModal .modal-card {
-    width: 100%;
-    max-width: 100%;
-    margin: 0;
-    padding: 20px 18px;
+    width: calc(100% - 24px) !important;
+    max-width: 360px !important;
+    margin: auto !important;
+    padding: 16px 14px !important;
   }
   #confirmModalActions {
-    width: 100%;
-    display: flex;
-    gap: 10px;
+    width: 100% !important;
+    display: flex !important;
+    gap: 8px !important;
   }
   #confirmModalActions .btn {
-    flex: 1;
-    justify-content: center;
-    padding: 11px 14px;
-    font-size: 0.92rem;
+    flex: 1 !important;
+    justify-content: center !important;
+    padding: 9px 12px !important;
+    font-size: 0.85rem !important;
   }
   .cloud-key-display-box .key-value-row {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
   }
   .cloud-key-actions-row {
-    width: 100%;
-    display: flex;
-    gap: 8px;
+    width: 100% !important;
+    display: flex !important;
+    gap: 8px !important;
   }
   .cloud-key-actions-row .btn {
-    flex: 1;
-    justify-content: center;
-    padding: 8px 10px;
-    font-size: 0.8rem;
+    flex: 1 !important;
+    justify-content: center !important;
+    padding: 8px 10px !important;
+    font-size: 0.8rem !important;
   }
 }
 

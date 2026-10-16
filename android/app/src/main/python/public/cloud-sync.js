@@ -807,9 +807,34 @@ const CloudSync = {
 
       this._scannerStream = stream;
       if (video) {
-        video.srcObject = stream;
+        video.muted = true;
+        video.defaultMuted = true;
+        video.playsInline = true;
         video.setAttribute('playsinline', 'true');
-        await video.play();
+        video.setAttribute('webkit-playsinline', 'true');
+        video.setAttribute('autoplay', 'true');
+        video.setAttribute('muted', 'true');
+        video.srcObject = stream;
+
+        video.onloadedmetadata = () => {
+          video.play().catch(e => console.warn('[CloudSync] Play on metadata error:', e));
+          if (statusText) statusText.textContent = 'Point camera at Passkey QR code';
+        };
+
+        try {
+          await video.play();
+        } catch (playErr) {
+          console.warn('[CloudSync] Initial play error:', playErr);
+        }
+      }
+
+      const viewport = document.getElementById('qrScannerViewport');
+      if (viewport && video) {
+        viewport.onclick = () => {
+          if (video.paused) {
+            video.play().catch(e => console.warn('[CloudSync] User tap play error:', e));
+          }
+        };
       }
 
       if (statusText) statusText.textContent = 'Point camera at Passkey QR code';
@@ -867,7 +892,10 @@ const CloudSync = {
     } catch (err) {
       console.warn('[CloudSync] Camera access failed:', err);
       if (statusText) {
-        statusText.textContent = 'Camera unavailable. Please choose an image file below.';
+        statusText.innerHTML = `
+          <span style="color: #f87171;">Camera permission or device unavailable.</span><br>
+          <span style="font-size: 0.78rem; opacity: 0.8;">Check Android camera permission or choose an image below.</span>
+        `;
       }
     }
   },

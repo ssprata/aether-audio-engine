@@ -48,21 +48,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var webView: BackgroundAudioWebView
+    private var pendingWebPermissionRequest: PermissionRequest? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         instance = this
         
-        // Request Notification permission on Android 13+ (API 33+)
+        // Request runtime permissions cleanly together on startup
+        val permissionsToRequest = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
+                permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
-
-        // Request Camera permission for QR scanning
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 102)
+            permissionsToRequest.add(Manifest.permission.CAMERA)
+        }
+        if (permissionsToRequest.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, permissionsToRequest.toTypedArray(), 100)
         }
 
         // Request system audio focus to keep audio channel open during screen-off
@@ -165,7 +168,48 @@ class MainActivity : AppCompatActivity() {
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest?) {
-                request?.grant(request.resources)
+                if (request == null) return
+                val requestedResources = request.resources
+                var needsCamera = false
+                for (resource in requestedResources) {
+                    if (resource == PermissionRequest.RESOURCE_VIDEO_CAPTURE) {
+                        needsCamera = true
+                        break
+                    }
+                }
+
+                runOnUiThread {
+                    if (needsCamera) {
+                        if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                            request.grant(requestedResources)
+                        } else {
+                            pendingWebPermissionRequest = request
+                            ActivityCompat.requestPermissions(
+                                this@MainActivity,
+                                arrayOf(Manifest.permission.CAMERA),
+                                102
+                            )
+                        }
+                    } else {
+                        request.grant(requestedResources)
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 100 || requestCode == 102) {
+            val cameraIndex = permissions.indexOf(Manifest.permission.CAMERA)
+            val cameraGranted = cameraIndex != -1 && grantResults.isNotEmpty() && grantResults[cameraIndex] == PackageManager.PERMISSION_GRANTED
+            runOnUiThread {
+                if (cameraGranted) {
+                    pendingWebPermissionRequest?.grant(pendingWebPermissionRequest?.resources ?: arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
+                } else {
+                    pendingWebPermissionRequest?.deny()
+                }
+                pendingWebPermissionRequest = null
             }
         }
     }
