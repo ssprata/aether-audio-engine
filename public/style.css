@@ -1439,7 +1439,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 18px 20px !important;
+  padding: 24px 26px;
 }
 
 .avatar-container {
@@ -4786,7 +4786,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .cloud-icon-circle {
   width: 44px;
   height: 44px;
-  border-radius: 12px;
+  border-radius: calc(var(--border-radius, 16px) * 0.75);
   background: linear-gradient(135deg, rgba(124, 58, 237, 0.3) 0%, rgba(16, 185, 129, 0.25) 100%);
   border: 1px solid rgba(255, 255, 255, 0.15);
   display: flex;
@@ -4829,13 +4829,14 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 .cloud-desc-box {
   background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 12px;
-  padding: 14px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: calc(var(--border-radius, 16px) * 0.85);
+  padding: 16px 20px;
   font-size: 0.88rem;
   line-height: 1.5;
   color: var(--text-secondary, #cbd5e1);
   margin-bottom: 20px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .cloud-desc-box strong {
@@ -4898,12 +4899,12 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .cloud-key-display-box {
   background: rgba(15, 23, 42, 0.65);
   border: 1px solid rgba(124, 58, 237, 0.4);
-  border-radius: 12px;
-  padding: 16px;
+  border-radius: calc(var(--border-radius, 16px) * 0.85);
+  padding: 18px 20px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .cloud-key-display-box .key-label {
@@ -5042,17 +5043,18 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 .storage-meter-section {
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
-  border-radius: 12px;
-  padding: 16px;
-  margin: 16px 0;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: calc(var(--border-radius, 16px) * 0.85);
+  padding: 20px 22px;
+  margin: 20px 0 22px 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .storage-meter-bar-container {
   width: 100%;
   height: 12px;
-  border-radius: 6px;
+  border-radius: calc(var(--border-radius, 16px) * 0.45);
   background: rgba(255, 255, 255, 0.08);
   overflow: hidden;
   margin-bottom: 14px;
@@ -5092,7 +5094,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .legend-color {
   width: 10px;
   height: 10px;
-  border-radius: 3px;
+  border-radius: calc(var(--border-radius, 16px) * 0.25);
   flex-shrink: 0;
 }
 
@@ -5114,11 +5116,12 @@ input[type="range"]::-webkit-slider-thumb:hover {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 16px;
+  padding: 18px 22px;
   background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
-  border-radius: 12px;
-  margin-bottom: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: calc(var(--border-radius, 16px) * 0.85);
+  margin-bottom: 22px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .toggle-info h4 {
@@ -5230,9 +5233,9 @@ input:checked + .slider:before {
 .active-download-banner {
   background: linear-gradient(135deg, rgba(59, 130, 246, 0.12) 0%, rgba(139, 92, 246, 0.12) 100%);
   border: 1px solid rgba(59, 130, 246, 0.3);
-  border-radius: 12px;
-  padding: 14px 16px;
-  margin: 14px 0;
+  border-radius: calc(var(--border-radius, 16px) * 0.85);
+  padding: 16px 20px;
+  margin: 16px 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -5484,16 +5487,18 @@ input:checked + .slider:before {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 18px auto 26px auto;
-  padding: 6px;
+  margin: 18px 0 24px 0;
+  padding: 6px 8px;
   background: rgba(255, 255, 255, 0.04);
   backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
+  border-radius: var(--border-radius, 14px);
   width: fit-content;
   max-width: 100%;
   overflow-x: auto;
   scrollbar-width: none;
+  transition: border-radius 0.2s ease;
 }
 
 .settings-subtabs-nav::-webkit-scrollbar {
@@ -5505,7 +5510,7 @@ input:checked + .slider:before {
   align-items: center;
   gap: 8px;
   padding: 9px 18px;
-  border-radius: 10px;
+  border-radius: calc(var(--border-radius, 14px) * 0.72);
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-secondary, #94a3b8);
@@ -5566,10 +5571,19 @@ input:checked + .slider:before {
 }
 
 .settings-focused-card {
-  max-width: 720px;
-  margin: 0 auto;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.1));
+  max-width: 780px;
+  width: 100%;
+  margin: 0 0 32px 0;
+  padding: 30px 32px !important;
+  border-radius: var(--border-radius, 16px) !important;
+  background: var(--glass-bg, rgba(15, 17, 28, 0.75));
+  backdrop-filter: blur(var(--glass-blur, 20px));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 20px));
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+  box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.5), 
+              inset 0 1px 0 rgba(255, 255, 255, 0.08),
+              0 0 min(var(--neon-glow-intensity), 8px) var(--neon-glow-color);
+  transition: border-radius 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 /* REDESIGNED OFFLINE MASTER SWITCH ROW */
@@ -5578,12 +5592,13 @@ input:checked + .slider:before {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px 20px;
-  margin-bottom: 20px;
+  padding: 18px 22px;
+  margin-bottom: 22px;
   background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(6, 182, 212, 0.04) 100%);
-  border: 1px solid rgba(16, 185, 129, 0.22);
-  border-radius: 14px;
-  transition: border-color 0.2s;
+  border: 1px solid rgba(16, 185, 129, 0.24);
+  border-radius: calc(var(--border-radius, 16px) * 0.85);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: border-color 0.2s ease, border-radius 0.2s ease;
 }
 
 .offline-master-switch-card:hover {
