@@ -1421,12 +1421,13 @@
   <!-- CUSTOM ASYNC CONFIRM MODAL -->
   <div class="modal-overlay" id="confirmModal">
     <div class="modal-card">
-      <div class="modal-header">
-        <h3 id="confirmModalTitle">Are you sure?</h3>
+      <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+        <h3 id="confirmModalTitle" style="margin: 0; font-size: 1.15rem;">Are you sure?</h3>
+        <button class="btn btn-sm btn-icon-only" id="btnCloseConfirmModal" aria-label="Close modal" style="background: none; border: none; font-size: 1.4rem; color: var(--text-secondary); cursor: pointer; padding: 0 4px; line-height: 1;">&times;</button>
       </div>
       <div class="modal-body">
-        <p id="confirmModalMessage" style="margin-bottom: 16px; font-size: 0.95rem; line-height: 1.4; color: var(--text-secondary);"></p>
-        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <p id="confirmModalMessage" style="margin-bottom: 20px; font-size: 0.95rem; line-height: 1.5; color: var(--text-secondary);"></p>
+        <div style="display: flex; gap: 10px; justify-content: flex-end;" id="confirmModalActions">
           <button class="btn btn-outline btn-sm" id="btnConfirmCancel">Cancel</button>
           <button class="btn btn-primary btn-sm" id="btnConfirmConfirm">Confirm</button>
         </div>

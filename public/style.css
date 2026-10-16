@@ -1995,6 +1995,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   bottom: 0;
   background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   z-index: 2500 !important; /* Higher than full screen sheets (1000) and lyrics (1050) */
   display: flex;
   align-items: center;
@@ -2002,6 +2003,8 @@ input[type="range"]::-webkit-slider-thumb:hover {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.3s ease;
+  padding: 16px;
+  box-sizing: border-box;
 }
 
 .modal-overlay.active {
@@ -5800,6 +5803,23 @@ input:checked + .slider:before {
   }
   .offline-master-switch-card {
     padding: 14px 16px;
+  }
+  #confirmModal .modal-card {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 20px 18px;
+  }
+  #confirmModalActions {
+    width: 100%;
+    display: flex;
+    gap: 10px;
+  }
+  #confirmModalActions .btn {
+    flex: 1;
+    justify-content: center;
+    padding: 11px 14px;
+    font-size: 0.92rem;
   }
 }
 

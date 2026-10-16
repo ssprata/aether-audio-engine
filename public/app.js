@@ -1641,8 +1641,17 @@ function setupEventListeners() {
 
   const btnDisconnectCloud = document.getElementById('btnDisconnectCloud');
   if (btnDisconnectCloud) {
-    btnDisconnectCloud.addEventListener('click', () => {
-      if (confirm('Disconnect from Cloud Sync? Your local playlists and settings will remain on this device.')) {
+    btnDisconnectCloud.addEventListener('click', async () => {
+      const confirmed = await showConfirmModal(
+        'Disconnect Cloud Sync',
+        'Disconnect from Cloud Sync? Your local playlists and settings will remain safely on this device.',
+        {
+          confirmText: 'Disconnect',
+          cancelText: 'Cancel',
+          isDanger: true
+        }
+      );
+      if (confirmed) {
         CloudSync.disconnect();
       }
     });
@@ -2114,37 +2123,75 @@ function showPromptModal(title, message, defaultValue = '') {
   });
 }
 
-function showConfirmModal(title, message) {
+function showConfirmModal(title, message, options = {}) {
   return new Promise((resolve) => {
     const modal = document.getElementById('confirmModal');
     const titleEl = document.getElementById('confirmModalTitle');
     const msgEl = document.getElementById('confirmModalMessage');
     const btnCancel = document.getElementById('btnConfirmCancel');
     const btnConfirm = document.getElementById('btnConfirmConfirm');
+    const btnClose = document.getElementById('btnCloseConfirmModal');
 
-    titleEl.textContent = title;
-    msgEl.textContent = message;
+    if (!modal) {
+      resolve(false);
+      return;
+    }
+
+    titleEl.textContent = title || 'Are you sure?';
+    msgEl.textContent = message || '';
+
+    btnConfirm.textContent = options.confirmText || 'Confirm';
+    btnCancel.textContent = options.cancelText || 'Cancel';
+
+    if (options.isDanger) {
+      btnConfirm.className = 'btn btn-danger btn-sm';
+    } else {
+      btnConfirm.className = 'btn btn-primary btn-sm';
+    }
 
     modal.classList.add('active');
 
+    let resolved = false;
     const cleanup = () => {
       modal.classList.remove('active');
       btnConfirm.removeEventListener('click', onConfirm);
       btnCancel.removeEventListener('click', onCancel);
+      if (btnClose) btnClose.removeEventListener('click', onCancel);
+      modal.removeEventListener('click', onOverlayClick);
+      document.removeEventListener('keydown', onKeyDown);
     };
 
     const onConfirm = () => {
+      if (resolved) return;
+      resolved = true;
       cleanup();
       resolve(true);
     };
 
     const onCancel = () => {
+      if (resolved) return;
+      resolved = true;
       cleanup();
       resolve(false);
     };
 
+    const onOverlayClick = (e) => {
+      if (e.target === modal) {
+        onCancel();
+      }
+    };
+
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        onCancel();
+      }
+    };
+
     btnConfirm.addEventListener('click', onConfirm);
     btnCancel.addEventListener('click', onCancel);
+    if (btnClose) btnClose.addEventListener('click', onCancel);
+    modal.addEventListener('click', onOverlayClick);
+    document.addEventListener('keydown', onKeyDown);
   });
 }
 window.openConfirmModal = showConfirmModal;
