@@ -319,7 +319,159 @@ function loadData() {
   } else {
     state.currentTheme = { ...PRESET_THEMES.midnight };
   }
+
+  // Restore previous playback queue and timestamp from local session
+  restorePlaybackSession();
 }
+
+// --- PERSISTENT PLAYBACK QUEUE & SESSION RECOVERY ---
+let lastSessionSaveTime = 0;
+function throttledSavePlaybackSession() {
+  const now = Date.now();
+  if (now - lastSessionSaveTime > 3500) {
+    lastSessionSaveTime = now;
+    savePlaybackSession();
+  }
+}
+
+function savePlaybackSession() {
+  if (!state.playQueue || state.playQueue.length === 0) return;
+  const session = {
+    playQueue: state.playQueue,
+    currentQueueIndex: state.currentQueueIndex,
+    currentSong: state.currentSong,
+    playbackPosition: state.playbackPosition || 0,
+    duration: state.duration || 0,
+    currentPlaylistId: state.currentPlaylistId || null,
+    shuffle: !!state.shuffle,
+    repeat: state.repeat || 'none',
+    savedAt: Date.now()
+  };
+
+  try {
+    localStorage.setItem('aether_playback_session', JSON.stringify(session));
+  } catch (e) {
+    console.warn("Failed to save playback session to localStorage:", e);
+  }
+
+  // Also persist to backend cache asynchronously without blocking
+  try {
+    fetch('/api/queue-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(session)
+    }).catch(() => {});
+  } catch (e) {}
+}
+
+async function restorePlaybackSession() {
+  let session = null;
+  // 1. Try localStorage for instantaneous synchronous restoration
+  try {
+    const raw = localStorage.getItem('aether_playback_session');
+    if (raw) session = JSON.parse(raw);
+  } catch (e) {
+    console.warn("Error reading localStorage playback session:", e);
+  }
+
+  // 2. Fallback to server session if localStorage was cleared
+  if (!session || !session.playQueue || session.playQueue.length === 0) {
+    try {
+      const res = await fetch('/api/queue-session');
+      if (res.ok) {
+        const remote = await res.json();
+        if (remote && Array.isArray(remote.playQueue) && remote.playQueue.length > 0) {
+          session = remote;
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (!session || !Array.isArray(session.playQueue) || session.playQueue.length === 0) {
+    return;
+  }
+
+  state.playQueue = session.playQueue;
+  state.currentQueueIndex = (typeof session.currentQueueIndex === 'number' && session.currentQueueIndex >= 0 && session.currentQueueIndex < session.playQueue.length)
+    ? session.currentQueueIndex
+    : 0;
+  state.currentSong = session.currentSong || state.playQueue[state.currentQueueIndex] || null;
+  state.playbackPosition = typeof session.playbackPosition === 'number' ? session.playbackPosition : 0;
+  state.duration = session.duration || 180;
+  state.currentPlaylistId = session.currentPlaylistId || null;
+  state.shuffle = !!session.shuffle;
+  state.repeat = session.repeat || 'none';
+
+  if (state.currentSong) {
+    // Restore UI without playing sound (ready in paused state)
+    state.isPlaying = false;
+    state.isUserPaused = true;
+    updatePlayButtonUI(false);
+    updateRepeatUI();
+    
+    // Update player title & artist
+    const titleEl = document.getElementById('playerSongTitle');
+    const artistEl = document.getElementById('playerSongArtist');
+    const badgeEl = document.getElementById('playerPlatformBadge');
+    const artEl = document.getElementById('playerAlbumArt');
+    if (titleEl) titleEl.textContent = state.currentSong.title;
+    if (artistEl) artistEl.textContent = state.currentSong.artist || 'Unknown';
+    if (badgeEl) {
+      badgeEl.textContent = state.currentSong.platform || 'music';
+      badgeEl.style.display = 'inline-block';
+    }
+    if (artEl) {
+      artEl.innerHTML = state.currentSong.thumbnail 
+        ? `<img src="${state.currentSong.thumbnail}" alt="Art">`
+        : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
+    }
+    
+    // Set restored time & seekbar
+    const currTime = document.getElementById('playerCurrentTime');
+    const totalDur = document.getElementById('playerTotalDuration');
+    const timeline = document.getElementById('playerTimeline');
+    if (currTime) currTime.textContent = formatSeconds(state.playbackPosition);
+    if (totalDur) totalDur.textContent = state.currentSong.duration || formatSeconds(state.duration);
+    if (timeline && state.duration > 0) {
+      timeline.value = (state.playbackPosition / state.duration) * 100;
+    }
+
+    // Sync Mobile player
+    const mobTitle = document.getElementById('mobileNpTitle');
+    const mobArtist = document.getElementById('mobileNpArtist');
+    const mobTime = document.getElementById('mobileNpCurrentTime');
+    const mobDur = document.getElementById('mobileNpTotalDuration');
+    const mobTimeline = document.getElementById('mobileNpTimeline');
+    const mobImg = document.getElementById('mobileNpCoverImg');
+    if (mobTitle) mobTitle.textContent = state.currentSong.title;
+    if (mobArtist) mobArtist.textContent = state.currentSong.artist || 'Unknown';
+    if (mobTime) mobTime.textContent = formatSeconds(state.playbackPosition);
+    if (mobDur) mobDur.textContent = state.currentSong.duration || formatSeconds(state.duration);
+    if (mobTimeline && state.duration > 0) {
+      mobTimeline.value = (state.playbackPosition / state.duration) * 100;
+    }
+    if (mobImg && state.currentSong.thumbnail) {
+      mobImg.src = state.currentSong.thumbnail;
+      mobImg.style.display = 'block';
+    }
+
+    if (typeof renderQueueUI === 'function') {
+      renderQueueUI();
+    }
+    if (typeof updateRightSidebar === 'function') {
+      updateRightSidebar(state.currentSong);
+    }
+  }
+}
+
+window.addEventListener('beforeunload', () => {
+  savePlaybackSession();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    savePlaybackSession();
+  }
+});
 
 function savePlaylists() {
   localStorage.setItem('playlists', JSON.stringify(state.playlists));
@@ -1240,6 +1392,8 @@ function setupEventListeners() {
   if (volSlider) {
     volSlider.value = state.volume;
     updateVolumeBubble(state.volume);
+    setTimeout(() => updateVolumeBubble(state.volume), 100);
+    window.addEventListener('resize', () => updateVolumeBubble(state.volume));
 
     volSlider.addEventListener('input', (e) => {
       const vol = parseInt(e.target.value, 10);
@@ -2694,7 +2848,7 @@ function playSongList(songs, startIndex) {
   }
 }
 
-function playSong(song, index) {
+function playSong(song, index, initialSeekSeconds = 0) {
   // Stop existing playback
   stopActivePlayback();
 
@@ -2707,6 +2861,9 @@ function playSong(song, index) {
   setTimeout(() => {
     state.isTransitioning = false;
   }, 1200);
+
+  // Persist session state across crashes / restarts
+  savePlaybackSession();
 
   // Log listening history
   logPlayHistory(song);
@@ -2834,6 +2991,14 @@ function playSong(song, index) {
 
   // Update Play Button Icon
   updatePlayButtonUI(true);
+
+  if (initialSeekSeconds > 0) {
+    setTimeout(() => {
+      if (state.duration > 0) {
+        seekToPercentage(initialSeekSeconds / state.duration);
+      }
+    }, 700);
+  }
 
   // Sync native Android system notification & lockscreen media widget
   if (window.AndroidAudio && typeof window.AndroidAudio.updateMetadata === 'function') {
@@ -3021,6 +3186,13 @@ function togglePlayPause() {
     }
     updatePlayButtonUI(false);
   } else {
+    // If resuming from a restored saved session where the player hasn't loaded the stream yet:
+    const isPlaybackActive = (activeAudio && activeAudio.src) || (ytPlayer && typeof ytPlayer.getPlayerState === 'function' && ytPlayer.getPlayerState() !== -1);
+    if (!isPlaybackActive && state.currentSong) {
+      playSong(state.currentSong, state.currentQueueIndex >= 0 ? state.currentQueueIndex : 0, state.playbackPosition || 0);
+      return;
+    }
+
     // User explicitly played
     state.isPlaying = true;
     state.isUserPaused = false;
@@ -3044,6 +3216,7 @@ window.onNativeAudioProgress = function(currentSec, totalSec) {
   if (!state.isPlaying) return;
   state.playbackPosition = currentSec;
   if (totalSec && totalSec > 0) state.duration = totalSec;
+  throttledSavePlaybackSession();
 
   updateLyricsHighlight(currentSec);
 
@@ -3127,18 +3300,38 @@ function playPrev() {
 
 function updateVolumeBubble(val) {
   const bubble = document.getElementById('volumeBubble');
+  const slider = document.getElementById('playerVolume');
   if (!bubble) return;
   const clamped = Math.max(0, Math.min(100, val));
   bubble.textContent = `${clamped}%`;
-  bubble.style.left = `${clamped}%`;
+
+  if (slider && slider.offsetWidth) {
+    const sliderWidth = slider.offsetWidth;
+    // Standard input[type=range] thumb width is ~15px
+    const thumbWidth = 15;
+    const ratio = clamped / 100;
+    const centerPx = (thumbWidth / 2) + ratio * (sliderWidth - thumbWidth);
+    bubble.style.left = `${centerPx}px`;
+    bubble.style.transform = 'translateX(-50%)';
+  } else {
+    // Dynamic calc compensation for thumb edge margins
+    bubble.style.left = `calc(${clamped}% + ${(0.5 - clamped / 100) * 15}px)`;
+    bubble.style.transform = 'translateX(-50%)';
+  }
 }
 
 function applyVolume() {
   const vol = state.isMuted ? 0 : state.volume;
-  // Spotify-style logarithmic perceptual taper (power of 2)
-  // Low slider values (e.g. 10%) yield truly quiet output (1% acoustic power) instead of blaring
-  const effectiveRatio = Math.pow(vol / 100, 2);
-  const effectiveYtVolume = Math.round(effectiveRatio * 100);
+  let effectiveRatio = 0;
+  let effectiveYtVolume = 0;
+
+  if (vol > 0) {
+    // Perceptual dynamic curve down to 1% without cutoffs
+    // Eliminates silent dropout below 7% while retaining natural quiet scaling
+    const ratio = vol / 100;
+    effectiveRatio = Math.max(0.005, Math.pow(ratio, 2.2));
+    effectiveYtVolume = Math.max(1, Math.min(100, Math.round(Math.pow(ratio, 2.2) * 99 + 1)));
+  }
 
   if (window.AndroidAudio && typeof window.AndroidAudio.setVolume === 'function') {
     try { window.AndroidAudio.setVolume(effectiveRatio); } catch (e) {}
@@ -3227,6 +3420,7 @@ function startProgressTimer(platform) {
     }
 
     state.playbackPosition = currentSec;
+    throttledSavePlaybackSession();
 
     // Background track-end detector:
     // When the phone is locked, YouTube IFrame API can occasionally fail to dispatch onStateChange: ENDED.
@@ -4648,12 +4842,6 @@ function logPlayHistory(song) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(song)
   })
-  .then(res => res.json())
-  .then(data => {
-    if (data.success && state.activeTab === 'home') {
-      loadHomeDashboard();
-    }
-  })
   .catch(err => console.error("Failed to log play history:", err));
 }
 
@@ -4782,59 +4970,71 @@ async function loadHomeDashboard() {
   madeGrid.innerHTML = '<div class="spinner" style="grid-column:1/-1; margin:20px auto;"></div>';
   recGrid.innerHTML = '<div class="spinner" style="grid-column:1/-1; margin:20px auto;"></div>';
 
-  // 1. Fetch History
+  // 1. Fetch Most Listened This Week (Recency-Weighted Momentum)
   try {
-    const res = await fetch('/api/history');
-    if (res.ok) {
-      const history = await res.json();
-      quickGrid.innerHTML = '';
-      
-      if (history && history.length > 0) {
-        const uniqueRecents = [];
+    let weeklyTracks = [];
+    try {
+      const weekRes = await fetch('/api/most-listened-week');
+      if (weekRes.ok) {
+        weeklyTracks = await weekRes.json();
+      }
+    } catch (e) {
+      console.warn("Could not fetch weekly momentum, falling back to history:", e);
+    }
+
+    // Fallback to recent history if no weekly plays are logged yet
+    if (!weeklyTracks || weeklyTracks.length === 0) {
+      const histRes = await fetch('/api/history');
+      if (histRes.ok) {
+        const history = await histRes.json();
         const seen = new Set();
-        for (const item of history) {
+        for (const item of (history || [])) {
           if (!seen.has(item.id)) {
             seen.add(item.id);
-            uniqueRecents.push(item);
+            weeklyTracks.push(item);
           }
-          if (uniqueRecents.length === 8) break;
+          if (weeklyTracks.length === 8) break;
         }
-
-        uniqueRecents.forEach(song => {
-          const card = document.createElement('div');
-          card.className = 'quick-recent-card';
-          card.innerHTML = `
-            <img src="${song.thumbnail || DEFAULT_ALBUM_ART}" class="quick-recent-art" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src=DEFAULT_ALBUM_ART;">
-            <div class="quick-recent-info">
-              <div class="quick-recent-title">${song.title}</div>
-              <div class="quick-recent-subtitle">${song.artist || 'Unknown'}</div>
-            </div>
-            <div class="quick-recent-play-btn">
-              <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-            </div>
-          `;
-          card.addEventListener('click', () => {
-            state.currentPlaylistId = null;
-            state.stationAnchor = song;
-            state.isRadioSession = true;
-            state.playQueue = [{ ...song }];
-            state.currentQueueIndex = 0;
-            playSong(song, 0);
-            fetchStationVibesForSong(song, { isInitial: true });
-          });
-          quickGrid.appendChild(card);
-        });
-      } else {
-        quickGrid.innerHTML = `
-          <div class="empty-state" style="grid-column: 1/-1; text-align: center; padding: 20px;">
-            <p>Your listening history will appear here. Start playing songs!</p>
-          </div>
-        `;
       }
     }
+
+    quickGrid.innerHTML = '';
+    
+    if (weeklyTracks && weeklyTracks.length > 0) {
+      weeklyTracks.forEach(song => {
+        const card = document.createElement('div');
+        card.className = 'quick-recent-card';
+        card.innerHTML = `
+          <img src="${song.thumbnail || DEFAULT_ALBUM_ART}" class="quick-recent-art" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src=DEFAULT_ALBUM_ART;">
+          <div class="quick-recent-info">
+            <div class="quick-recent-title">${song.title}</div>
+            <div class="quick-recent-subtitle">${song.artist || 'Unknown'}</div>
+          </div>
+          <div class="quick-recent-play-btn">
+            <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          </div>
+        `;
+        card.addEventListener('click', () => {
+          state.currentPlaylistId = null;
+          state.stationAnchor = song;
+          state.isRadioSession = true;
+          state.playQueue = [{ ...song }];
+          state.currentQueueIndex = 0;
+          playSong(song, 0);
+          fetchStationVibesForSong(song, { isInitial: true });
+        });
+        quickGrid.appendChild(card);
+      });
+    } else {
+      quickGrid.innerHTML = `
+        <div class="empty-state" style="grid-column: 1/-1; text-align: center; padding: 20px;">
+          <p>Your weekly leaderboard will appear here. Start playing songs!</p>
+        </div>
+      `;
+    }
   } catch (e) {
-    console.error("Failed to load history:", e);
-    quickGrid.innerHTML = '<div class="empty-state" style="grid-column:1/-1;">Error loading history</div>';
+    console.error("Failed to load weekly momentum:", e);
+    quickGrid.innerHTML = '<div class="empty-state" style="grid-column:1/-1;">Could not load weekly tracks.</div>';
   }
 
   // 2. Fetch Made For You Mixes

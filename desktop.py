@@ -14,6 +14,34 @@ import subprocess
 import threading
 import server
 
+WINMM_WAVEOUT_HANDLE = None
+
+def init_windows_audio_session():
+    """Ensure an active Windows audio session (WASAPI / standard endpoint) is tied to AetherPlayer
+    so Windows Volume Mixer exposes an independent volume slider for the process."""
+    global WINMM_WAVEOUT_HANDLE
+    if sys.platform != 'win32':
+        return
+    try:
+        import ctypes
+        import struct
+        # WAVEFORMATEX structure: 44.1kHz, 16-bit, stereo
+        wfx = struct.pack('<HHIIHHH', 1, 2, 44100, 44100 * 4, 4, 16, 0)
+        h_waveout = ctypes.c_void_p()
+        res = ctypes.windll.winmm.waveOutOpen(ctypes.byref(h_waveout), -1, wfx, 0, 0, 0)
+        if res == 0:
+            WINMM_WAVEOUT_HANDLE = h_waveout
+            print("Windows Audio Session initialized (WASAPI/WinMM endpoint active for Volume Mixer).")
+    except Exception as e:
+        print("Note: Could not init direct winmm audio endpoint:", e)
+
+# Route WebView2 audio sessions directly to host process so Volume Mixer controls it
+if sys.platform == 'win32':
+    existing_args = os.environ.get('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', '')
+    flag = '--disable-features=AudioServiceOutOfProcess'
+    if flag not in existing_args:
+        os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = (existing_args + ' ' + flag).strip()
+
 DEFAULT_START_PORT = 38241
 ACTIVE_PORT = DEFAULT_START_PORT
 SERVER_PROCESS = None
@@ -140,11 +168,18 @@ def launch_desktop():
 
 def main():
     try:
+        init_windows_audio_session()
         start_server()
         launch_desktop()
     except Exception as e:
         print("Error launching desktop app:", e)
     finally:
+        if WINMM_WAVEOUT_HANDLE:
+            try:
+                import ctypes
+                ctypes.windll.winmm.waveOutClose(WINMM_WAVEOUT_HANDLE)
+            except Exception:
+                pass
         if SERVER_PROCESS:
             print("Shutting down background server...")
             SERVER_PROCESS.terminate()

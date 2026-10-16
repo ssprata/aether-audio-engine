@@ -2095,14 +2095,21 @@ input[type="range"]::-webkit-slider-thumb:hover {
   background: rgba(18, 15, 28, 0.96);
   border: 1px solid var(--accent-color, #7c3aed);
   color: #ffffff;
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  padding: 2px 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  min-width: 32px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  line-height: 1;
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6), 0 0 8px rgba(var(--accent-rgb, 124, 58, 237), 0.35);
   pointer-events: none;
   opacity: 0;
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition: opacity 0.15s ease;
   white-space: nowrap;
   z-index: 100;
 }
@@ -3892,9 +3899,38 @@ input[type="range"]::-webkit-slider-thumb:hover {
   box-shadow: 0 0 10px rgba(124, 58, 237, 0.4);
 }
 
-/* Quick Recents Grid (8 cards) */
+/* Quick Recents / Most Listened This Week Grid (8 cards) */
 .quick-recents-section {
   margin-bottom: 32px;
+}
+
+.quick-recents-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.quick-recents-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.quick-recents-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent-color, #a855f7);
+  background: rgba(168, 85, 247, 0.12);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  padding: 3px 8px;
+  border-radius: 12px;
 }
 
 .quick-recents-grid {

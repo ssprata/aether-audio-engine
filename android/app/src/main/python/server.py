@@ -85,12 +85,18 @@ if IS_ANDROID:
     UPLOADS_DIR = os.path.join(android_files_dir, 'uploads')
     HISTORY_FILE = os.path.join(android_files_dir, 'history.json')
     DOWNLOADS_DIR = os.path.join(android_files_dir, 'downloads')
+    WEEKLY_PLAYS_FILE = os.path.join(android_files_dir, 'weekly_plays.json')
+    WEEKLY_RANKING_FILE = os.path.join(android_files_dir, 'weekly_ranking_cache.json')
+    QUEUE_SESSION_FILE = os.path.join(android_files_dir, 'queue_session.json')
 else:
     CONFIG_FILE = os.path.join(DATA_DIR, 'config.json')
     BACKUP_FILE = os.path.join(DATA_DIR, 'playlists_backup.json')
     UPLOADS_DIR = os.path.join(DATA_DIR, 'uploads')
     HISTORY_FILE = os.path.join(DATA_DIR, 'history.json')
     DOWNLOADS_DIR = os.path.join(DATA_DIR, 'downloads')
+    WEEKLY_PLAYS_FILE = os.path.join(DATA_DIR, 'weekly_plays.json')
+    WEEKLY_RANKING_FILE = os.path.join(DATA_DIR, 'weekly_ranking_cache.json')
+    QUEUE_SESSION_FILE = os.path.join(DATA_DIR, 'queue_session.json')
 
 OFFLINE_INDEX_FILE = os.path.join(DOWNLOADS_DIR, 'offline_index.json')
 os.makedirs(DOWNLOADS_DIR, exist_ok=True)
@@ -164,6 +170,134 @@ def write_history(history):
             json.dump(history, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print("Failed to write history:", e)
+
+def append_weekly_play(song_data):
+    """Store track play event with timestamp in local cache directory. Prunes entries older than 8 days."""
+    if not song_data or not song_data.get('id'):
+        return
+    now = int(time.time())
+    entry = {
+        'id': song_data.get('id'),
+        'title': song_data.get('title') or 'Unknown Title',
+        'artist': song_data.get('artist') or 'Unknown Artist',
+        'thumbnail': song_data.get('thumbnail') or '',
+        'duration': song_data.get('duration') or '3:00',
+        'platform': song_data.get('platform') or 'youtube',
+        'timestamp': now
+    }
+    plays = []
+    if os.path.exists(WEEKLY_PLAYS_FILE):
+        try:
+            with open(WEEKLY_PLAYS_FILE, 'r', encoding='utf-8') as f:
+                plays = json.load(f)
+        except Exception:
+            plays = []
+    
+    # Prune plays older than 8 days (8 * 86400 = 691200 seconds)
+    cutoff = now - 691200
+    plays = [p for p in plays if isinstance(p, dict) and p.get('timestamp', 0) >= cutoff]
+    plays.append(entry)
+    
+    # Cap maximum history count to 3000 to keep file fast
+    if len(plays) > 3000:
+        plays = plays[-3000:]
+        
+    try:
+        with open(WEEKLY_PLAYS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(plays, f, ensure_ascii=False)
+    except Exception as e:
+        print("Failed to write weekly plays:", e)
+
+def get_most_listened_this_week():
+    """Calculate and update the ranking once per day (or at app startup) using recency-weighted decay:
+    Weight(delta_t) = 2^(-delta_t / 1.8), where recent listens weigh significantly heavier than older ones."""
+    import datetime
+    today_str = datetime.date.today().isoformat()
+    
+    # 1. Check if ranking was already computed today
+    if os.path.exists(WEEKLY_RANKING_FILE):
+        try:
+            with open(WEEKLY_RANKING_FILE, 'r', encoding='utf-8') as f:
+                cached = json.load(f)
+                if isinstance(cached, dict) and cached.get('date') == today_str and cached.get('tracks'):
+                    return cached.get('tracks')
+        except Exception:
+            pass
+            
+    # 2. Recalculate ranking once for today
+    plays = []
+    if os.path.exists(WEEKLY_PLAYS_FILE):
+        try:
+            with open(WEEKLY_PLAYS_FILE, 'r', encoding='utf-8') as f:
+                plays = json.load(f)
+        except Exception:
+            plays = []
+            
+    now = int(time.time())
+    scores = {}
+    track_meta = {}
+    
+    for p in plays:
+        if not isinstance(p, dict) or not p.get('id'):
+            continue
+        ts = p.get('timestamp', now)
+        delta_days = (now - ts) / 86400.0
+        if delta_days <= 7.0:
+            # Recency-weighted decay: half-life ~1.8 days
+            weight = 2.0 ** (-max(0.0, delta_days) / 1.8)
+            tid = p['id']
+            scores[tid] = scores.get(tid, 0.0) + weight
+            if tid not in track_meta:
+                track_meta[tid] = {
+                    'id': tid,
+                    'title': p.get('title', 'Unknown'),
+                    'artist': p.get('artist', 'Unknown'),
+                    'thumbnail': p.get('thumbnail', ''),
+                    'duration': p.get('duration', '3:00'),
+                    'platform': p.get('platform', 'youtube')
+                }
+                
+    # Sort tracks descending by momentum score
+    ranked_ids = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)
+    top_tracks = [track_meta[k] for k in ranked_ids[:8]]
+    
+    # If fewer than 8 tracks have been logged this week, supplement with recent history
+    if len(top_tracks) < 8:
+        history = read_history()
+        seen_ids = set(t['id'] for t in top_tracks)
+        for h in history:
+            if h.get('id') and h['id'] not in seen_ids:
+                seen_ids.add(h['id'])
+                top_tracks.append(h)
+                if len(top_tracks) >= 8:
+                    break
+                    
+    # Cache today's calculated ranking
+    try:
+        with open(WEEKLY_RANKING_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'date': today_str, 'tracks': top_tracks}, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print("Failed to cache weekly ranking:", e)
+        
+    return top_tracks
+
+def read_queue_session():
+    if os.path.exists(QUEUE_SESSION_FILE):
+        try:
+            with open(QUEUE_SESSION_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return None
+    return None
+
+def write_queue_session(session_data):
+    try:
+        with open(QUEUE_SESSION_FILE, 'w', encoding='utf-8') as f:
+            json.dump(session_data, f, ensure_ascii=False)
+        return True
+    except Exception as e:
+        print("Failed to save queue session:", e)
+        return False
 
 # Initialize YouTube Music API client
 ytmusic = YTMusic()
@@ -2148,6 +2282,24 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(history).encode('utf-8'))
             return
 
+        elif path == '/api/most-listened-week':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            top_tracks = get_most_listened_this_week()
+            self.wfile.write(json.dumps(top_tracks).encode('utf-8'))
+            return
+
+        elif path == '/api/queue-session':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            session = read_queue_session()
+            self.wfile.write(json.dumps(session or {}).encode('utf-8'))
+            return
+
         elif path == '/api/dashboard-recommendations':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -2822,6 +2974,10 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
         if path == '/api/history':
             try:
                 data = json.loads(post_data)
+                
+                # Append to rolling weekly play history with timestamp for momentum decay ranking
+                append_weekly_play(data)
+
                 history = read_history()
                 
                 # Remove prior entries of the same item ID to bubble it to the top of recents
@@ -2840,6 +2996,15 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(b'{"success": true}')
             except Exception as e:
                 print("Failed to save history:", e)
+                self.wfile.write(f'{{"success": false, "error": "{str(e)}"}}'.encode('utf-8'))
+            return
+
+        elif path == '/api/queue-session':
+            try:
+                data = json.loads(post_data)
+                write_queue_session(data)
+                self.wfile.write(b'{"success": true}')
+            except Exception as e:
                 self.wfile.write(f'{{"success": false, "error": "{str(e)}"}}'.encode('utf-8'))
             return
 
