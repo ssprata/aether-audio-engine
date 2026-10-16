@@ -6,7 +6,7 @@ import base64
 import urllib.request
 import urllib.parse
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from ytmusicapi import YTMusic
+# ytmusicapi is lazy-loaded on demand below to eliminate startup delay
 
 PORT = 3000
 
@@ -299,8 +299,27 @@ def write_queue_session(session_data):
         print("Failed to save queue session:", e)
         return False
 
-# Initialize YouTube Music API client
-ytmusic = YTMusic()
+# Initialize YouTube Music API client lazily to eliminate startup block
+_ytmusic_instance = None
+
+def get_ytmusic():
+    global _ytmusic_instance
+    if _ytmusic_instance is None:
+        try:
+            from ytmusicapi import YTMusic
+            _ytmusic_instance = YTMusic()
+        except Exception as e:
+            print("Failed to initialize YTMusic:", e)
+    return _ytmusic_instance
+
+class LazyYTMusic:
+    def __getattr__(self, name):
+        inst = get_ytmusic()
+        if inst is None:
+            raise RuntimeError("YTMusic client is not initialized")
+        return getattr(inst, name)
+
+ytmusic = LazyYTMusic()
 
 # Create necessary folders
 os.makedirs(UPLOADS_DIR, exist_ok=True)

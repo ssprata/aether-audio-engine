@@ -396,13 +396,20 @@ async function restorePlaybackSession() {
     ? session.currentQueueIndex
     : 0;
   state.currentSong = session.currentSong || state.playQueue[state.currentQueueIndex] || null;
-  state.playbackPosition = typeof session.playbackPosition === 'number' ? session.playbackPosition : 0;
+  // Reset restored track's playback position to 0:00 to eliminate stale stream seek errors
+  state.playbackPosition = 0;
   state.duration = session.duration || 180;
   state.currentPlaylistId = session.currentPlaylistId || null;
   state.shuffle = !!session.shuffle;
   state.repeat = session.repeat || 'none';
 
   if (state.currentSong) {
+    // Refresh audio stream URL / clear stale stream tokens so fresh tokens are acquired on resume
+    delete state.currentSong._preResolvedYtId;
+    if (state.currentSong.platform === 'spotify' || state.currentSong.platform === 'soundcloud') {
+      delete state.currentSong.previewUrl;
+    }
+
     // Restore UI without playing sound (ready in paused state)
     state.isPlaying = false;
     state.isUserPaused = true;
@@ -426,14 +433,14 @@ async function restorePlaybackSession() {
         : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
     }
     
-    // Set restored time & seekbar
+    // Set restored time & seekbar cleanly at 0:00
     const currTime = document.getElementById('playerCurrentTime');
     const totalDur = document.getElementById('playerTotalDuration');
     const timeline = document.getElementById('playerTimeline');
-    if (currTime) currTime.textContent = formatSeconds(state.playbackPosition);
+    if (currTime) currTime.textContent = '0:00';
     if (totalDur) totalDur.textContent = state.currentSong.duration || formatSeconds(state.duration);
-    if (timeline && state.duration > 0) {
-      timeline.value = (state.playbackPosition / state.duration) * 100;
+    if (timeline) {
+      timeline.value = 0;
     }
 
     // Sync Mobile player
@@ -445,10 +452,10 @@ async function restorePlaybackSession() {
     const mobImg = document.getElementById('mobileNpCoverImg');
     if (mobTitle) mobTitle.textContent = state.currentSong.title;
     if (mobArtist) mobArtist.textContent = state.currentSong.artist || 'Unknown';
-    if (mobTime) mobTime.textContent = formatSeconds(state.playbackPosition);
+    if (mobTime) mobTime.textContent = '0:00';
     if (mobDur) mobDur.textContent = state.currentSong.duration || formatSeconds(state.duration);
-    if (mobTimeline && state.duration > 0) {
-      mobTimeline.value = (state.playbackPosition / state.duration) * 100;
+    if (mobTimeline) {
+      mobTimeline.value = 0;
     }
     if (mobImg && state.currentSong.thumbnail) {
       mobImg.src = state.currentSong.thumbnail;
@@ -2848,7 +2855,7 @@ function playSongList(songs, startIndex) {
   }
 }
 
-function playSong(song, index, initialSeekSeconds = 0) {
+function playSong(song, index) {
   // Stop existing playback
   stopActivePlayback();
 
@@ -2991,14 +2998,7 @@ function playSong(song, index, initialSeekSeconds = 0) {
 
   // Update Play Button Icon
   updatePlayButtonUI(true);
-
-  if (initialSeekSeconds > 0) {
-    setTimeout(() => {
-      if (state.duration > 0) {
-        seekToPercentage(initialSeekSeconds / state.duration);
-      }
-    }, 700);
-  }
+  playerErrorRetryCount = 0;
 
   // Sync native Android system notification & lockscreen media widget
   if (window.AndroidAudio && typeof window.AndroidAudio.updateMetadata === 'function') {
@@ -3289,8 +3289,27 @@ function playNext() {
   playSong(state.playQueue[nextIndex], nextIndex);
 }
 
+let lastPrevClickTimestamp = 0;
+
 function playPrev() {
-  if (state.playQueue.length === 0) return;
+  if (!state.playQueue || state.playQueue.length === 0) return;
+
+  const now = Date.now();
+  const isRapidSecondClick = (now - lastPrevClickTimestamp < 1800);
+  lastPrevClickTimestamp = now;
+
+  // Standard media player logic:
+  // 1. If currently playing beyond 3 seconds and not a double-click: restart current song from 0:00
+  // 2. If within first 3 seconds OR rapid second click: navigate to actual previous track
+  if (state.playbackPosition > 3 && !isRapidSecondClick) {
+    seekToPercentage(0);
+    state.playbackPosition = 0;
+    if (!state.isPlaying) {
+      togglePlayPause();
+    }
+    return;
+  }
+
   let prevIndex = state.currentQueueIndex - 1;
   if (prevIndex < 0) {
     prevIndex = state.playQueue.length - 1;
@@ -3467,8 +3486,20 @@ function onPlayerStateChange(event) {
   }
 }
 
+let playerErrorRetryCount = 0;
+
 function onPlayerError(event) {
   console.error('YouTube player error:', event.data);
+  // Auto-recovery: if stream URL/token is stale or expired, attempt fallback search once
+  if (playerErrorRetryCount < 1 && state.currentSong) {
+    playerErrorRetryCount++;
+    console.log("Attempting fallback stream resolution due to player error...");
+    showToast('Reconnecting audio stream...');
+    delete state.currentSong._preResolvedYtId;
+    playProxyFallback(state.currentSong);
+    return;
+  }
+  playerErrorRetryCount = 0;
   showToast('Playback error, skipping song...');
   setTimeout(playNext, 1500);
 }
