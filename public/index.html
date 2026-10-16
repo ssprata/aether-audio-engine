@@ -567,41 +567,104 @@
         <div class="settings-panes-wrapper">
           <!-- SUB-TAB 1: USER PROFILE & BACKUPS -->
           <div class="settings-subtab-content active" id="settingsPane-profile">
+            <!-- Profile Identity Card -->
             <div class="card profile-card settings-focused-card">
-              <div class="avatar-container">
-                <img src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200&auto=format&fit=crop" id="profileAvatar" alt="User Avatar">
-                <div class="avatar-overlay" id="avatarUploadTrigger">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+              <div class="profile-identity-header">
+                <div class="avatar-container" id="avatarUploadTrigger" title="Click to upload profile avatar">
+                  <img src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200&auto=format&fit=crop" id="profileAvatar" alt="User Avatar">
+                  <div class="avatar-overlay">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                  </div>
+                  <input type="file" id="avatarFileInput" accept="image/*" style="display: none;">
                 </div>
-                <input type="file" id="avatarFileInput" accept="image/*" style="display: none;">
+                <div class="profile-identity-info">
+                  <div class="profile-badge-row">
+                    <span class="badge" style="background: rgba(124, 58, 237, 0.2); color: #c4b5fd; border: 1px solid rgba(124, 58, 237, 0.35);">Local User Profile</span>
+                    <span class="profile-status-dot">Active Session</span>
+                  </div>
+                  <div class="profile-edit-name-row">
+                    <input type="text" id="profileUsernameInput" value="Music Enthusiast" placeholder="Your Display Name">
+                    <button class="btn btn-primary" id="btnSaveUsername">Save Name</button>
+                  </div>
+                  <p class="profile-identity-hint">Click avatar photo to replace • Your username is used across local playlists and cloud sync</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Library & Playlist Backups Card -->
+            <div class="card backup-card settings-focused-card">
+              <div class="cloud-header" style="margin-bottom: 20px;">
+                <div class="cloud-title-group">
+                  <div class="cloud-icon-circle backup-icon-circle">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="17 8 12 3 7 8"></polyline>
+                      <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                  </div>
+                  <div>
+                    <h3>Playlist Backups & Export</h3>
+                    <p class="card-subtitle">Automatic daily device snapshots and local backup archives</p>
+                  </div>
+                </div>
+                <div class="backup-status-pill" id="backupStatusPill">
+                  <span class="status-indicator-green"></span>
+                  <span>Auto-Sync Active</span>
+                </div>
               </div>
 
-              <div class="profile-edit-name">
-                <input type="text" id="profileUsernameInput" value="Music Enthusiast" placeholder="Your Display Name">
-                <button class="btn btn-sm btn-outline" id="btnSaveUsername">Save Name</button>
-              </div>
-
-              <div class="sidebar-divider" style="width: 100%; margin: 24px 0;"></div>
-
-              <!-- BACKUP & EXPORT ACTIONS -->
-              <div class="backup-actions-container">
-                <h3>Playlist Backups & Export</h3>
-                <p>Your playlists are stored on this device. You can synchronize automatic daily snapshots or export your entire library to your Downloads folder.</p>
-                
-                <div class="backup-buttons">
+              <div class="backup-grid-row">
+                <div class="backup-action-box">
+                  <div class="action-box-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="17 8 12 3 7 8"></polyline>
+                      <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                  </div>
+                  <h4>Instant Snapshot</h4>
+                  <p>Save the current state of all playlists to internal local storage immediately.</p>
                   <button class="btn btn-primary" id="btnForceBackup">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                    Sync Backup File
-                  </button>
-                  <button class="btn btn-success" id="btnRestoreBackup">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                    Restore From Backup
-                  </button>
-                  <button class="btn btn-outline" id="btnExportPlaylistsProfile">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                    Export to Downloads
+                    <span>Sync Backup File</span>
                   </button>
                 </div>
+
+                <div class="backup-action-box">
+                  <div class="action-box-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="7 10 12 15 17 10"></polyline>
+                      <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                  </div>
+                  <h4>Restore Library</h4>
+                  <p>Load playlists from a previous backup file (.json) to recover your library.</p>
+                  <button class="btn btn-success" id="btnRestoreBackup">
+                    <span>Restore From Backup</span>
+                  </button>
+                </div>
+
+                <div class="backup-action-box">
+                  <div class="action-box-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path>
+                      <path d="M12 12v9"></path>
+                      <path d="m8 17 4 4 4-4"></path>
+                    </svg>
+                  </div>
+                  <h4>Export to Downloads</h4>
+                  <p>Export a clean JSON copy of all playlists directly to your Downloads folder.</p>
+                  <button class="btn btn-outline" id="btnExportPlaylistsProfile">
+                    <span>Export to Downloads</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="backup-footer-status">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 15px; height: 15px; opacity: 0.7;">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
                 <div class="backup-status-text" id="backupStatusText">Daily backup is automatically synchronized.</div>
               </div>
             </div>
