@@ -21,6 +21,7 @@ const CloudSync = {
   _cachedKey: null,
   _cachedSaltStr: null,
   _cachedPasskey: null,
+  _isKeyMasked: false,
   deviceId: null,
 
   getDeviceId() {
@@ -94,6 +95,7 @@ const CloudSync = {
   // --- INITIALIZATION ---
 
   async init() {
+    this._isKeyMasked = localStorage.getItem('aether_cloud_key_masked') === 'true';
     const savedKey = localStorage.getItem('aether_cloud_sync_key');
     if (savedKey) {
       this.syncKey = savedKey;
@@ -263,32 +265,6 @@ const CloudSync = {
       await fbAuth.signInAnonymously();
     }
     return fbAuth.currentUser;
-  },
-
-  // --- INITIALIZATION ---
-
-  async init() {
-    const savedKey = localStorage.getItem('aether_cloud_sync_key');
-    if (savedKey) {
-      this.syncKey = savedKey;
-      this.mode = 'cloud';
-      this.status = 'syncing';
-      this.updateUI();
-
-      // Attempt initial fetch from cloud
-      try {
-        await this.ensureFirebaseAuth();
-        await this.pullFromCloud({ silent: true });
-      } catch (err) {
-        console.warn('[CloudSync] Initial fetch failed (possibly offline):', err);
-        this.status = 'offline';
-        this.updateUI();
-      }
-    } else {
-      this.mode = 'guest';
-      this.status = 'idle';
-      this.updateUI();
-    }
   },
 
   // --- GUEST / CLOUD MODE ACTIONS ---
@@ -658,7 +634,7 @@ const CloudSync = {
         cardStatusBadge.textContent = 'Cloud Synced (Encrypted)';
         cardStatusBadge.className = 'badge badge-success';
         if (keyDisplayBox) keyDisplayBox.style.display = 'flex';
-        if (currentKeyText) currentKeyText.textContent = this.syncKey || '';
+        this.updatePasskeyDisplay();
         if (guestActions) guestActions.style.display = 'none';
         if (connectedActions) connectedActions.style.display = 'flex';
         if (lastSyncEl) {
@@ -666,6 +642,61 @@ const CloudSync = {
             ? 'Last synced: ' + this.lastSyncTime.toLocaleTimeString()
             : 'Synchronized with cloud';
         }
+      }
+    }
+  },
+
+  toggleKeyMask() {
+    this._isKeyMasked = !this._isKeyMasked;
+    localStorage.setItem('aether_cloud_key_masked', this._isKeyMasked ? 'true' : 'false');
+    this.updatePasskeyDisplay();
+    if (typeof showToast === 'function') {
+      showToast(this._isKeyMasked ? 'Passkey masked (stream-safe)' : 'Passkey revealed');
+    }
+  },
+
+  updatePasskeyDisplay() {
+    const currentKeyText = document.getElementById('cloudCurrentKeyText');
+    const btnToggleMask = document.getElementById('btnToggleCloudKeyMask');
+    const maskTextSpan = document.getElementById('btnToggleCloudKeyMaskText');
+    if (!currentKeyText) return;
+
+    const fullKey = (this.syncKey || localStorage.getItem('aether_cloud_sync_key') || '').trim();
+    if (!fullKey) {
+      currentKeyText.textContent = 'AETH-••••-••••-••••';
+      return;
+    }
+
+    if (this._isKeyMasked) {
+      const parts = fullKey.split('-');
+      if (parts.length === 4) {
+        currentKeyText.textContent = `${parts[0]}-••••-••••-••••`;
+      } else {
+        currentKeyText.textContent = '••••-••••-••••-••••';
+      }
+      if (btnToggleMask) {
+        btnToggleMask.title = 'Show Passkey';
+        btnToggleMask.setAttribute('aria-label', 'Show Passkey');
+      }
+      if (maskTextSpan) {
+        maskTextSpan.textContent = 'Show';
+      }
+      const iconContainer = btnToggleMask ? btnToggleMask.querySelector('svg') : null;
+      if (iconContainer) {
+        iconContainer.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>';
+      }
+    } else {
+      currentKeyText.textContent = fullKey;
+      if (btnToggleMask) {
+        btnToggleMask.title = 'Hide Passkey (Streamer Mode)';
+        btnToggleMask.setAttribute('aria-label', 'Hide Passkey');
+      }
+      if (maskTextSpan) {
+        maskTextSpan.textContent = 'Hide';
+      }
+      const iconContainer = btnToggleMask ? btnToggleMask.querySelector('svg') : null;
+      if (iconContainer) {
+        iconContainer.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line>';
       }
     }
   },
@@ -935,6 +966,12 @@ const CloudSync = {
 
   setupQrAndCollapseEvents() {
     this.setupCardCollapse();
+
+    // Toggle Passkey Mask (Hide/Show)
+    const btnToggleMask = document.getElementById('btnToggleCloudKeyMask');
+    if (btnToggleMask) {
+      btnToggleMask.addEventListener('click', () => this.toggleKeyMask());
+    }
 
     // Show QR modal triggers
     const btnShowQr = document.getElementById('btnShowCloudQr');

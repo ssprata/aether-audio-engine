@@ -5087,7 +5087,15 @@ input[type="range"]::-webkit-slider-thumb:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.cloud-key-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .cloud-key-code {
@@ -5820,6 +5828,22 @@ input:checked + .slider:before {
     justify-content: center;
     padding: 11px 14px;
     font-size: 0.92rem;
+  }
+  .cloud-key-display-box .key-value-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .cloud-key-actions-row {
+    width: 100%;
+    display: flex;
+    gap: 8px;
+  }
+  .cloud-key-actions-row .btn {
+    flex: 1;
+    justify-content: center;
+    padding: 8px 10px;
+    font-size: 0.8rem;
   }
 }
 

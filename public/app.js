@@ -1612,11 +1612,21 @@ function setupEventListeners() {
     });
   }
 
+  const btnToggleCloudKeyMask = document.getElementById('btnToggleCloudKeyMask');
+  if (btnToggleCloudKeyMask) {
+    btnToggleCloudKeyMask.addEventListener('click', () => {
+      if (typeof CloudSync !== 'undefined' && typeof CloudSync.toggleKeyMask === 'function') {
+        CloudSync.toggleKeyMask();
+      }
+    });
+  }
+
   const btnCopyCloudKey = document.getElementById('btnCopyCloudKey');
   if (btnCopyCloudKey) {
     btnCopyCloudKey.addEventListener('click', () => {
-      if (CloudSync.syncKey) {
-        navigator.clipboard.writeText(CloudSync.syncKey).then(() => {
+      const fullKey = (CloudSync && CloudSync.syncKey) || localStorage.getItem('aether_cloud_sync_key');
+      if (fullKey) {
+        navigator.clipboard.writeText(fullKey).then(() => {
           const txt = document.getElementById('btnCopyCloudKeyText');
           if (txt) txt.textContent = 'Copied!';
           showToast('Passkey copied to clipboard!');
@@ -1624,7 +1634,7 @@ function setupEventListeners() {
             if (txt) txt.textContent = 'Copy';
           }, 2000);
         }).catch(() => {
-          showToast('Could not copy automatically. Passkey: ' + CloudSync.syncKey);
+          showToast('Could not copy automatically. Passkey: ' + fullKey);
         });
       }
     });
