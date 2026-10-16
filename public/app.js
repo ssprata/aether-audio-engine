@@ -995,15 +995,38 @@ function setupEventListeners() {
   });
 
   // Export/Import Playlist files
-  document.getElementById('btnExportPlaylists').addEventListener('click', () => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state.playlists));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `playlists_backup_${new Date().toISOString().slice(0, 10)}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
-    showToast('Playlists exported to JSON');
+  document.getElementById('btnExportPlaylists').addEventListener('click', async () => {
+    try {
+      showToast('Exporting playlists...');
+      const response = await fetch('/api/export-playlists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(state.playlists)
+      });
+      const resData = await response.json();
+      if (resData.success && resData.savedToDownloads) {
+        showToast(`Saved to Downloads: ${resData.filename}`);
+      } else {
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state.playlists, null, 2));
+        const downloadAnchor = document.createElement('a');
+        downloadAnchor.setAttribute("href", dataStr);
+        downloadAnchor.setAttribute("download", resData.filename || `playlists_backup_${new Date().toISOString().slice(0, 10)}.json`);
+        document.body.appendChild(downloadAnchor);
+        downloadAnchor.click();
+        downloadAnchor.remove();
+        showToast('Playlists exported to JSON');
+      }
+    } catch (err) {
+      console.error('Export error:', err);
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state.playlists, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `playlists_backup_${new Date().toISOString().slice(0, 10)}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      showToast('Playlists exported to JSON');
+    }
   });
 
   document.getElementById('btnImportPlaylists').addEventListener('click', () => {
@@ -1090,13 +1113,19 @@ function setupEventListeners() {
         body: JSON.stringify({ spotifyClientId: clientId, spotifyClientSecret: effectiveSecret })
       });
       if (response.ok) {
+        state.spotifyConfigured = Boolean(clientId && effectiveSecret);
+        if (effectiveSecret) {
+          document.getElementById('spotifyClientSecret').value = '••••••••••••••••';
+        }
         showToast('Spotify settings saved!');
-        checkSpotifyConfig();
         if (typeof CloudSync !== 'undefined' && CloudSync.mode === 'cloud') {
           CloudSync.debouncedPush();
         }
+      } else {
+        showToast('Failed to save Spotify settings');
       }
     } catch (e) {
+      console.error('Error saving Spotify settings:', e);
       showToast('Failed to save Spotify settings');
     }
   });
@@ -4559,10 +4588,58 @@ async function initOfflineEngine() {
   checkSmartCacheFirstRunPrompt();
 }
 
+function updateOfflineVisibility(enabled) {
+  if (typeof enabled !== 'boolean') {
+    enabled = localStorage.getItem('offline_music_enabled') !== 'false';
+  }
+  const pinnedItem = document.getElementById('btnOpenDownloadedPlaylist');
+  if (pinnedItem) {
+    pinnedItem.style.display = enabled ? 'flex' : 'none';
+  }
+
+  const offlineBody = document.getElementById('offlineCardBody');
+  if (offlineBody) {
+    offlineBody.style.opacity = enabled ? '1' : '0.45';
+    offlineBody.style.pointerEvents = enabled ? 'auto' : 'none';
+  }
+
+  // If user was viewing Downloaded Music playlist and disables the feature, switch away
+  if (!enabled && state.currentPlaylistId === 'system_downloaded') {
+    if (state.playlists && state.playlists.length > 0) {
+      selectPlaylist(state.playlists[0].id);
+    } else {
+      showTab('home');
+    }
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => updateOfflineVisibility());
+} else {
+  updateOfflineVisibility();
+}
+
 let offlineListenersAttached = false;
 function setupOfflineEventListeners() {
   if (offlineListenersAttached) return;
   offlineListenersAttached = true;
+
+  // Master switch: Enable/Disable Offline Music & Storage
+  const toggleOffline = document.getElementById('toggleOfflineMusicEnabled');
+  if (toggleOffline) {
+    const isOfflineEnabled = localStorage.getItem('offline_music_enabled') !== 'false';
+    toggleOffline.checked = isOfflineEnabled;
+    updateOfflineVisibility(isOfflineEnabled);
+
+    toggleOffline.addEventListener('change', () => {
+      const enabled = toggleOffline.checked;
+      localStorage.setItem('offline_music_enabled', enabled ? 'true' : 'false');
+      updateOfflineVisibility(enabled);
+      showToast(enabled ? 'Offline Music & Storage enabled' : 'Offline Music & Storage disabled');
+    });
+  } else {
+    updateOfflineVisibility();
+  }
 
   // Pinned sidebar item: Downloaded Music
   const btnOpenDownloaded = document.getElementById('btnOpenDownloadedPlaylist');

@@ -668,6 +668,290 @@ const CloudSync = {
         }
       }
     }
+  },
+
+  // --- QR CODE DISPLAY & SCANNER METHODS ---
+  _scannerStream: null,
+  _scanAnimId: null,
+
+  setupCardCollapse() {
+    const card = document.getElementById('cloudSyncCard');
+    const toggleBtn = document.getElementById('btnToggleCloudCard');
+    if (!card || !toggleBtn) return;
+
+    // Check persisted state
+    const isCollapsed = localStorage.getItem('cloud_sync_card_collapsed') === 'true';
+    if (isCollapsed) {
+      card.classList.add('is-collapsed');
+    }
+
+    toggleBtn.addEventListener('click', () => {
+      const currentlyCollapsed = card.classList.toggle('is-collapsed');
+      localStorage.setItem('cloud_sync_card_collapsed', currentlyCollapsed ? 'true' : 'false');
+    });
+  },
+
+  showPasskeyQr(passkey = null) {
+    const key = (passkey || this.syncKey || '').trim().toUpperCase();
+    const modal = document.getElementById('modalCloudQrDisplay');
+    const container = document.getElementById('cloudQrContainer');
+    const keyText = document.getElementById('cloudQrPasskeyText');
+
+    if (!key) {
+      if (typeof showToast === 'function') {
+        showToast('Generate or connect a Cloud Passkey first to view QR code');
+      }
+      return;
+    }
+
+    if (keyText) keyText.textContent = key;
+    if (container) {
+      container.innerHTML = '';
+      if (typeof QRCode !== 'undefined') {
+        try {
+          new QRCode(container, {
+            text: key,
+            width: 200,
+            height: 200,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.M
+          });
+        } catch (e) {
+          console.warn('[CloudSync] QRCode library error, fallback:', e);
+          this._renderQrFallback(container, key);
+        }
+      } else {
+        this._renderQrFallback(container, key);
+      }
+    }
+
+    if (modal) modal.style.display = 'flex';
+  },
+
+  _renderQrFallback(container, key) {
+    const img = document.createElement('img');
+    img.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(key)}`;
+    img.alt = `QR Code for ${key}`;
+    img.style.width = '200px';
+    img.style.height = '200px';
+    container.appendChild(img);
+  },
+
+  hidePasskeyQr() {
+    const modal = document.getElementById('modalCloudQrDisplay');
+    if (modal) modal.style.display = 'none';
+  },
+
+  async startQrScanner() {
+    const modal = document.getElementById('modalCloudQrScanner');
+    const video = document.getElementById('cloudQrVideo');
+    const canvas = document.getElementById('cloudQrCanvas');
+    const statusText = document.getElementById('cloudQrScanStatus');
+
+    if (modal) modal.style.display = 'flex';
+    if (statusText) statusText.textContent = 'Starting camera...';
+
+    try {
+      let stream = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } }
+        });
+      } catch (e1) {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+
+      this._scannerStream = stream;
+      if (video) {
+        video.srcObject = stream;
+        video.setAttribute('playsinline', 'true');
+        await video.play();
+      }
+
+      if (statusText) statusText.textContent = 'Point camera at Passkey QR code';
+
+      // Check for native BarcodeDetector
+      let barcodeDetector = null;
+      if ('BarcodeDetector' in window) {
+        try {
+          barcodeDetector = new window.BarcodeDetector({ formats: ['qr_code'] });
+        } catch (e) {
+          barcodeDetector = null;
+        }
+      }
+
+      const scanLoop = async () => {
+        if (!this._scannerStream) return;
+
+        if (video && video.readyState >= video.HAVE_CURRENT_DATA) {
+          let detectedText = null;
+
+          if (barcodeDetector) {
+            try {
+              const barcodes = await barcodeDetector.detect(video);
+              if (barcodes && barcodes.length > 0) {
+                detectedText = barcodes[0].rawValue;
+              }
+            } catch (err) {}
+          }
+
+          if (!detectedText && typeof jsQR !== 'undefined' && canvas) {
+            canvas.width = video.videoWidth || 320;
+            canvas.height = video.videoHeight || 240;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(imgData.data, imgData.width, imgData.height, {
+              inversionAttempts: 'dontInvert'
+            });
+            if (code && code.data) {
+              detectedText = code.data;
+            }
+          }
+
+          if (detectedText) {
+            this._handleDetectedPasskey(detectedText);
+            return;
+          }
+        }
+
+        this._scanAnimId = requestAnimationFrame(scanLoop);
+      };
+
+      this._scanAnimId = requestAnimationFrame(scanLoop);
+
+    } catch (err) {
+      console.warn('[CloudSync] Camera access failed:', err);
+      if (statusText) {
+        statusText.textContent = 'Camera unavailable. Please choose an image file below.';
+      }
+    }
+  },
+
+  stopQrScanner() {
+    if (this._scanAnimId) {
+      cancelAnimationFrame(this._scanAnimId);
+      this._scanAnimId = null;
+    }
+    if (this._scannerStream) {
+      this._scannerStream.getTracks().forEach(track => track.stop());
+      this._scannerStream = null;
+    }
+    const video = document.getElementById('cloudQrVideo');
+    if (video) video.srcObject = null;
+
+    const modal = document.getElementById('modalCloudQrScanner');
+    if (modal) modal.style.display = 'none';
+  },
+
+  _handleDetectedPasskey(rawText) {
+    if (!rawText) return;
+    let clean = rawText.trim().toUpperCase();
+
+    // Extract AETH-XXXX-XXXX-XXXX if present
+    const aethMatch = clean.match(/AETH-[A-Z0-9]{3,5}-[A-Z0-9]{3,5}-[A-Z0-9]{3,5}/);
+    if (aethMatch) {
+      clean = aethMatch[0];
+    }
+
+    if (navigator.vibrate) {
+      try { navigator.vibrate([100, 50, 100]); } catch (e) {}
+    }
+
+    this.stopQrScanner();
+
+    const inputKey = document.getElementById('inputConnectKey');
+    if (inputKey) {
+      inputKey.value = clean;
+    }
+
+    if (typeof showToast === 'function') {
+      showToast(`Passkey scanned: ${clean}`);
+    }
+
+    const btnConnect = document.getElementById('btnConnectCloudAccount');
+    if (btnConnect) {
+      setTimeout(() => btnConnect.click(), 300);
+    }
+  },
+
+  scanFromImageFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = async () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+
+        let detected = null;
+        if ('BarcodeDetector' in window) {
+          try {
+            const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+            const barcodes = await detector.detect(canvas);
+            if (barcodes && barcodes.length > 0) {
+              detected = barcodes[0].rawValue;
+            }
+          } catch (err) {}
+        }
+
+        if (!detected && typeof jsQR !== 'undefined') {
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imgData.data, imgData.width, imgData.height);
+          if (code && code.data) detected = code.data;
+        }
+
+        if (detected) {
+          this._handleDetectedPasskey(detected);
+        } else {
+          if (typeof showToast === 'function') {
+            showToast('No QR code could be found in that image.');
+          }
+        }
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  },
+
+  setupQrAndCollapseEvents() {
+    this.setupCardCollapse();
+
+    // Show QR modal triggers
+    const btnShowQr = document.getElementById('btnShowCloudQr');
+    if (btnShowQr) {
+      btnShowQr.addEventListener('click', () => this.showPasskeyQr());
+    }
+
+    const btnCloseQrDisplay = document.getElementById('btnCloseCloudQrDisplay');
+    const btnDoneQrDisplay = document.getElementById('btnDoneCloudQrDisplay');
+    if (btnCloseQrDisplay) btnCloseQrDisplay.addEventListener('click', () => this.hidePasskeyQr());
+    if (btnDoneQrDisplay) btnDoneQrDisplay.addEventListener('click', () => this.hidePasskeyQr());
+
+    // Scanner triggers
+    const btnScanQr = document.getElementById('btnScanCloudQr');
+    if (btnScanQr) {
+      btnScanQr.addEventListener('click', () => this.startQrScanner());
+    }
+
+    const btnCloseScanner = document.getElementById('btnCloseCloudQrScanner');
+    const btnCancelScanner = document.getElementById('btnCancelCloudQrScanner');
+    if (btnCloseScanner) btnCloseScanner.addEventListener('click', () => this.stopQrScanner());
+    if (btnCancelScanner) btnCancelScanner.addEventListener('click', () => this.stopQrScanner());
+
+    // File input fallback
+    const fileInput = document.getElementById('inputQrImageFile');
+    if (fileInput) {
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files[0]) {
+          this.scanFromImageFile(e.target.files[0]);
+        }
+      });
+    }
   }
 };
 
@@ -676,5 +960,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Give Firebase a short tick to initialize
   setTimeout(() => {
     CloudSync.init();
+    CloudSync.setupQrAndCollapseEvents();
   }, 100);
 });

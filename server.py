@@ -801,7 +801,39 @@ def resolve_spotify_track(track_id):
         except Exception as e:
             print("Spotify API track fetch failed, falling back to scrape:", e)
             
-    # Fallback: scrape Spotify track page
+    # Fallback 1: Try Spotify Embed track scraping (requires no credentials)
+    try:
+        embed_url = f"https://open.spotify.com/embed/track/{track_id}"
+        embed_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        req_embed = urllib.request.Request(embed_url, headers=embed_headers)
+        with urllib.request.urlopen(req_embed, timeout=8) as res_embed:
+            html_embed = res_embed.read().decode('utf-8')
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html_embed, re.DOTALL)
+        if m:
+            data = json.loads(m.group(1))
+            entity = data.get('props', {}).get('pageProps', {}).get('state', {}).get('data', {}).get('entity', {})
+            if entity:
+                title = entity.get('title', 'Spotify Track')
+                artist = entity.get('subtitle', 'Unknown Artist')
+                duration_ms = entity.get('duration', 180000)
+                cover_art = entity.get('coverArt', {}).get('sources', [{}])[0].get('url', '')
+                preview_url = entity.get('audioPreview', {}).get('url') if entity.get('audioPreview') else None
+                return {
+                    'id': track_id,
+                    'title': title,
+                    'artist': artist,
+                    'duration': format_duration_ms(duration_ms),
+                    'thumbnail': cover_art,
+                    'url': f"https://open.spotify.com/track/{track_id}",
+                    'platform': 'spotify',
+                    'previewUrl': preview_url
+                }
+    except Exception as e:
+        print("Spotify embed track scrape fallback error:", e)
+
+    # Fallback 2: scrape Spotify track page
     try:
         url = f"https://open.spotify.com/track/{track_id}"
         headers = {
@@ -902,88 +934,128 @@ def get_youtube_audio_url(video_id):
         print("YouTube audio stream extraction error:", e)
     return None
 
+def scrape_spotify_embed_playlist(playlist_id, limit=100):
+    try:
+        url = f"https://open.spotify.com/embed/playlist/{playlist_id}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as res:
+            html = res.read().decode('utf-8')
+
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
+        if not m:
+            return None
+
+        data = json.loads(m.group(1))
+        entity = data.get('props', {}).get('pageProps', {}).get('state', {}).get('data', {}).get('entity', {})
+        if not entity:
+            return None
+
+        name = entity.get('title') or entity.get('name') or 'Imported Spotify Playlist'
+        cover_art = entity.get('coverArt', {}).get('sources', [{}])[0].get('url', '')
+        track_list = entity.get('trackList', [])
+
+        tracks = []
+        for t in track_list:
+            t_id = t.get('uri', '').replace('spotify:track:', '') or t.get('id', '')
+            t_title = t.get('title', '')
+            t_artist = t.get('subtitle', 'Unknown Artist')
+            duration_ms = t.get('duration', 180000)
+            preview_url = t.get('audioPreview', {}).get('url') if t.get('audioPreview') else None
+
+            tracks.append({
+                'id': t_id,
+                'title': t_title,
+                'artist': t_artist,
+                'duration': format_duration_ms(duration_ms),
+                'thumbnail': cover_art or 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=200&auto=format&fit=crop',
+                'url': f"https://open.spotify.com/track/{t_id}",
+                'platform': 'spotify',
+                'previewUrl': preview_url
+            })
+            if len(tracks) >= limit:
+                break
+
+        if tracks:
+            return {
+                'name': name,
+                'tracks': tracks
+            }
+    except Exception as e:
+        print("Spotify embed playlist scrape failed:", e)
+    return None
+
 def resolve_spotify_playlist(playlist_id, limit=100):
     config = read_config()
     client_id = config.get('spotifyClientId')
     client_secret = config.get('spotifyClientSecret')
     token = get_spotify_access_token(client_id, client_secret)
     
-    if not token:
+    if token:
         try:
-            url = f"https://open.spotify.com/playlist/{playlist_id}"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            req = urllib.request.Request(url, headers=headers)
+            url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
+            req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
             with urllib.request.urlopen(req) as res:
-                html = res.read().decode('utf-8')
-            
-            name_match = re.search(r'<meta\s+property="og:title"\s+content="([^"]+)"', html)
-            name = name_match.group(1) if name_match else 'Imported Spotify Playlist'
-            
-            return {
-                'name': name,
-                'tracks': [],
-                'error': 'Spotify API Credentials are required to import playlists. Please add them in the User Profile tab.'
-            }
-        except Exception as e:
-            return None
-
-    try:
-        url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
-        req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
-        with urllib.request.urlopen(req) as res:
-            playlist_data = json.loads(res.read().decode('utf-8'))
-            
-        name = playlist_data.get('name', 'Imported Spotify Playlist')
-        tracks = []
-        
-        tracks_obj = playlist_data.get('tracks', {})
-        items = tracks_obj.get('items', [])
-        next_url = tracks_obj.get('next')
-        
-        while True:
-            for item in items:
-                t = item.get('track')
-                if not t:
-                    continue
-                artists = ", ".join([a['name'] for a in t.get('artists', [])])
-                thumbnail = t.get('album', {}).get('images', [{}])[0].get('url', 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=200&auto=format&fit=crop')
+                playlist_data = json.loads(res.read().decode('utf-8'))
                 
-                tracks.append({
-                    'id': t.get('id'),
-                    'title': t.get('name'),
-                    'artist': artists,
-                    'duration': format_duration_ms(t.get('duration_ms', 180000)),
-                    'thumbnail': thumbnail,
-                    'url': t.get('external_urls', {}).get('spotify', ''),
-                    'platform': 'spotify',
-                    'previewUrl': t.get('preview_url'),
-                    'albumId': t.get('album', {}).get('id') if t.get('album') else None,
-                    'albumName': t.get('album', {}).get('name') if t.get('album') else None
-                })
-                if len(tracks) >= limit:
+            name = playlist_data.get('name', 'Imported Spotify Playlist')
+            tracks = []
+            
+            tracks_obj = playlist_data.get('tracks', {})
+            items = tracks_obj.get('items', [])
+            next_url = tracks_obj.get('next')
+            
+            while True:
+                for item in items:
+                    t = item.get('track')
+                    if not t:
+                        continue
+                    artists = ", ".join([a['name'] for a in t.get('artists', [])])
+                    thumbnail = t.get('album', {}).get('images', [{}])[0].get('url', 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=200&auto=format&fit=crop')
+                    
+                    tracks.append({
+                        'id': t.get('id'),
+                        'title': t.get('name'),
+                        'artist': artists,
+                        'duration': format_duration_ms(t.get('duration_ms', 180000)),
+                        'thumbnail': thumbnail,
+                        'url': t.get('external_urls', {}).get('spotify', ''),
+                        'platform': 'spotify',
+                        'previewUrl': t.get('preview_url'),
+                        'albumId': t.get('album', {}).get('id') if t.get('album') else None,
+                        'albumName': t.get('album', {}).get('name') if t.get('album') else None
+                    })
+                    if len(tracks) >= limit:
+                        break
+                
+                if len(tracks) >= limit or not next_url:
                     break
-            
-            if len(tracks) >= limit or not next_url:
-                break
-                
-            try:
-                req_next = urllib.request.Request(next_url, headers={'Authorization': f'Bearer {token}'})
-                with urllib.request.urlopen(req_next) as res_next:
-                    next_data = json.loads(res_next.read().decode('utf-8'))
-                items = next_data.get('items', [])
-                next_url = next_data.get('next')
-            except Exception:
-                break
-                
-        return {
-            'name': name,
-            'tracks': tracks
-        }
-    except Exception as e:
-        print("Spotify playlist resolve error:", e)
-        return None
+                    
+                try:
+                    req_next = urllib.request.Request(next_url, headers={'Authorization': f'Bearer {token}'})
+                    with urllib.request.urlopen(req_next) as res_next:
+                        next_data = json.loads(res_next.read().decode('utf-8'))
+                    items = next_data.get('items', [])
+                    next_url = next_data.get('next')
+                except Exception:
+                    break
+                    
+            if tracks:
+                return {
+                    'name': name,
+                    'tracks': tracks
+                }
+        except Exception as e:
+            print("Spotify API playlist fetch failed, falling back to embed scrape:", e)
+
+    # Fallback: scrape Spotify playlist via embed without requiring API credentials
+    embed_res = scrape_spotify_embed_playlist(playlist_id, limit=limit)
+    if embed_res and embed_res.get('tracks'):
+        return embed_res
+
+    return None
 
 def resolve_soundcloud_track(url):
     try:
@@ -2794,6 +2866,51 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(b'{"success": true, "message": "Backup stored"}')
             except Exception as e:
                 self.wfile.write(f'{{"success": false, "error": "{str(e)}"}}'.encode('utf-8'))
+
+        elif path == '/api/export-playlists':
+            try:
+                import datetime
+                date_str = datetime.date.today().isoformat()
+                filename = f"playlists_backup_{date_str}.json"
+                
+                playlists_data = None
+                if post_data and post_data.strip():
+                    try:
+                        playlists_data = json.loads(post_data)
+                    except Exception:
+                        pass
+                if playlists_data is None and os.path.exists(BACKUP_FILE):
+                    try:
+                        with open(BACKUP_FILE, 'r', encoding='utf-8') as bf:
+                            playlists_data = json.load(bf)
+                    except Exception:
+                        pass
+                if playlists_data is None:
+                    playlists_data = []
+
+                saved_to_disk = False
+                saved_path = ""
+                # In standalone desktop mode, save directly to user's standard Downloads folder
+                try:
+                    downloads_folder = os.path.join(os.path.expanduser('~'), 'Downloads')
+                    if os.path.exists(downloads_folder) and os.path.isdir(downloads_folder):
+                        target_path = os.path.join(downloads_folder, filename)
+                        with open(target_path, 'w', encoding='utf-8') as out_f:
+                            json.dump(playlists_data, out_f, indent=2, ensure_ascii=False)
+                        saved_to_disk = True
+                        saved_path = target_path
+                except Exception as ex:
+                    print("Could not write to user Downloads folder:", ex)
+
+                res_obj = {
+                    'success': True,
+                    'filename': filename,
+                    'savedToDownloads': saved_to_disk,
+                    'savedPath': saved_path
+                }
+                self.wfile.write(json.dumps(res_obj, ensure_ascii=False).encode('utf-8'))
+            except Exception as e:
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
 
         elif path == '/api/upload-bg' or path == '/api/upload-avatar':
             try:
