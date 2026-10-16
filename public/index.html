@@ -531,289 +531,333 @@
         <div class="profile-hero">
           <h1>User Profile & Settings</h1>
           <p>Customize your look, import Spotify API Keys, and restore daily backups.</p>
+        </div>        <!-- SETTINGS SUB-TABS NAVIGATION -->
+        <div class="settings-subtabs-nav" id="settingsSubtabsNav">
+          <button class="settings-subtab-pill active" data-subtab="profile" id="subtabBtn-profile">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="8" r="4"></circle>
+              <path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"></path>
+            </svg>
+            <span>Profile & Backups</span>
+          </button>
+          <button class="settings-subtab-pill" data-subtab="cloud" id="subtabBtn-cloud">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path>
+            </svg>
+            <span>Cloud Sync</span>
+          </button>
+          <button class="settings-subtab-pill" data-subtab="offline" id="subtabBtn-offline">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span>Offline & Storage</span>
+          </button>
+          <button class="settings-subtab-pill" data-subtab="spotify" id="subtabBtn-spotify">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <path d="M8 11.5c3.5-1 7-0.5 9.5 1"></path>
+              <path d="M9 15c2.5-0.7 5-0.3 7 0.7"></path>
+            </svg>
+            <span>Spotify API</span>
+          </button>
         </div>
 
-        <div class="profile-grid">
-          <!-- Cloud Account & Multi-Device Sync Card -->
-          <div class="card cloud-sync-card" id="cloudSyncCard">
-            <div class="cloud-header">
-              <div class="cloud-title-group">
-                <div class="cloud-icon-circle">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
-                  </svg>
+        <div class="settings-panes-wrapper">
+          <!-- SUB-TAB 1: USER PROFILE & BACKUPS -->
+          <div class="settings-subtab-content active" id="settingsPane-profile">
+            <div class="card profile-card settings-focused-card">
+              <div class="avatar-container">
+                <img src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200&auto=format&fit=crop" id="profileAvatar" alt="User Avatar">
+                <div class="avatar-overlay" id="avatarUploadTrigger">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
                 </div>
-                <div>
-                  <h3>Cloud Sync & Accounts</h3>
-                  <p class="card-subtitle">Zero-knowledge encrypted sync across PC & Android</p>
-                </div>
+                <input type="file" id="avatarFileInput" accept="image/*" style="display: none;">
               </div>
-              <div class="cloud-header-right" style="display: flex; align-items: center; gap: 10px;">
-                <span id="cloudCardStatusBadge" class="badge badge-guest">Guest Mode (Local Only)</span>
-                <button class="cloud-toggle-btn" id="btnToggleCloudCard" title="Hide or show Cloud Sync card" aria-label="Toggle Cloud Sync card">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px;">
-                    <polyline points="6 9 12 15 18 9"></polyline>
-                  </svg>
-                </button>
+
+              <div class="profile-edit-name">
+                <input type="text" id="profileUsernameInput" value="Music Enthusiast" placeholder="Your Display Name">
+                <button class="btn btn-sm btn-outline" id="btnSaveUsername">Save Name</button>
+              </div>
+
+              <div class="sidebar-divider" style="width: 100%; margin: 24px 0;"></div>
+
+              <!-- BACKUP & EXPORT ACTIONS -->
+              <div class="backup-actions-container">
+                <h3>Playlist Backups & Export</h3>
+                <p>Your playlists are stored on this device. You can synchronize automatic daily snapshots or export your entire library to your Downloads folder.</p>
+                
+                <div class="backup-buttons">
+                  <button class="btn btn-primary" id="btnForceBackup">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    Sync Backup File
+                  </button>
+                  <button class="btn btn-success" id="btnRestoreBackup">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    Restore From Backup
+                  </button>
+                  <button class="btn btn-outline" id="btnExportPlaylistsProfile">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    Export to Downloads
+                  </button>
+                </div>
+                <div class="backup-status-text" id="backupStatusText">Daily backup is automatically synchronized.</div>
               </div>
             </div>
+          </div>
 
-            <div class="cloud-card-body" id="cloudCardBody">
-              <div class="cloud-desc-box">
-                <p>
-                  <strong>Guest Mode:</strong> Your playlists, themes, and Spotify keys stay 100% private on this device.<br>
-                  <strong>Cloud Mode:</strong> Sync across devices with an anonymous <strong>Passkey</strong>. Sensitive keys are encrypted locally with <strong>AES-256</strong> before reaching the cloud.
-                </p>
-              </div>
-
-              <!-- GUEST ACTIONS (Shown in Guest Mode) -->
-              <div class="cloud-actions-section" id="cloudGuestActions">
-                <div class="cloud-action-row">
-                  <button class="btn btn-primary btn-block" id="btnCreateCloudAccount">
+          <!-- SUB-TAB 2: CLOUD SYNC & ACCOUNTS -->
+          <div class="settings-subtab-content" id="settingsPane-cloud">
+            <div class="card cloud-sync-card settings-focused-card" id="cloudSyncCard">
+              <div class="cloud-header">
+                <div class="cloud-title-group">
+                  <div class="cloud-icon-circle">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                      <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
                     </svg>
-                    <span>✨ Generate 1-Click Sync Passkey</span>
-                  </button>
+                  </div>
+                  <div>
+                    <h3>Cloud Sync & Accounts</h3>
+                    <p class="card-subtitle">Zero-knowledge encrypted sync across PC & Android</p>
+                  </div>
                 </div>
-
-                <div class="cloud-or-divider">
-                  <span>OR CONNECT EXISTING DEVICE</span>
-                </div>
-
-                <div class="cloud-connect-row">
-                  <input type="text" id="inputConnectKey" placeholder="Paste Passkey (e.g. AETH-XXXX-XXXX-XXXX)" class="cloud-input" autocomplete="off">
-                  <button class="btn btn-outline" id="btnScanCloudQr" title="Scan QR Code with Camera">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
-                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
-                      <circle cx="12" cy="13" r="4"></circle>
-                    </svg>
-                    <span>Scan QR</span>
-                  </button>
-                  <button class="btn btn-success" id="btnConnectCloudAccount">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/>
-                    </svg>
-                    Connect & Sync
-                  </button>
+                <div class="cloud-header-right" style="display: flex; align-items: center; gap: 10px;">
+                  <span id="cloudCardStatusBadge" class="badge badge-guest">Guest Mode (Local Only)</span>
                 </div>
               </div>
 
-              <!-- CONNECTED ACTIONS (Shown in Cloud Mode) -->
-              <div class="cloud-actions-section" id="cloudConnectedActions" style="display: none;">
-                <div class="cloud-key-display-box" id="cloudKeyDisplayBox">
-                  <div class="key-label">YOUR CLOUD PASSKEY (SAVE THIS TO CONNECT OTHER DEVICES)</div>
-                  <div class="key-value-row">
-                    <code class="cloud-key-code" id="cloudCurrentKeyText">AETH-••••-••••-••••</code>
-                    <button class="btn btn-sm btn-outline" id="btnShowCloudQr" title="Display QR Code for mobile sync">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
-                        <rect x="3" y="3" width="7" height="7"></rect>
-                        <rect x="14" y="3" width="7" height="7"></rect>
-                        <rect x="14" y="14" width="7" height="7"></rect>
-                        <rect x="3" y="14" width="7" height="7"></rect>
+              <div class="cloud-card-body" id="cloudCardBody">
+                <div class="cloud-desc-box">
+                  <p>
+                    <strong>Guest Mode:</strong> Your playlists, themes, and Spotify keys stay 100% private on this device.<br>
+                    <strong>Cloud Mode:</strong> Sync across devices with an anonymous <strong>Passkey</strong>. Sensitive keys are encrypted locally with <strong>AES-256</strong> before reaching the cloud.
+                  </p>
+                </div>
+
+                <!-- GUEST ACTIONS (Shown in Guest Mode) -->
+                <div class="cloud-actions-section" id="cloudGuestActions">
+                  <div class="cloud-action-row">
+                    <button class="btn btn-primary btn-block" id="btnCreateCloudAccount">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
                       </svg>
-                      <span>Show QR</span>
+                      <span>Generate 1-Click Sync Passkey</span>
                     </button>
-                    <button class="btn btn-sm btn-outline" id="btnCopyCloudKey" title="Copy to clipboard">
+                  </div>
+
+                  <div class="cloud-or-divider">
+                    <span>OR CONNECT EXISTING DEVICE</span>
+                  </div>
+
+                  <div class="cloud-connect-row">
+                    <input type="text" id="inputConnectKey" placeholder="Paste Passkey (e.g. AETH-XXXX-XXXX-XXXX)" class="cloud-input" autocomplete="off">
+                    <button class="btn btn-outline" id="btnScanCloudQr" title="Scan QR Code with Camera">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
-                        <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
-                        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                        <circle cx="12" cy="13" r="4"></circle>
                       </svg>
-                      <span id="btnCopyCloudKeyText">Copy</span>
+                      <span>Scan QR</span>
+                    </button>
+                    <button class="btn btn-success" id="btnConnectCloudAccount">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/>
+                      </svg>
+                      Connect & Sync
                     </button>
                   </div>
                 </div>
 
-                <div class="cloud-status-row">
-                  <div class="last-sync-text" id="cloudLastSyncTime">Synchronized with cloud</div>
-                </div>
+                <!-- CONNECTED ACTIONS (Shown in Cloud Mode) -->
+                <div class="cloud-actions-section" id="cloudConnectedActions" style="display: none;">
+                  <div class="cloud-key-display-box" id="cloudKeyDisplayBox">
+                    <div class="key-label">YOUR CLOUD PASSKEY (SAVE THIS TO CONNECT OTHER DEVICES)</div>
+                    <div class="key-value-row">
+                      <code class="cloud-key-code" id="cloudCurrentKeyText">AETH-••••-••••-••••</code>
+                      <button class="btn btn-sm btn-outline" id="btnShowCloudQr" title="Display QR Code for mobile sync">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                          <rect x="3" y="3" width="7" height="7"></rect>
+                          <rect x="14" y="3" width="7" height="7"></rect>
+                          <rect x="14" y="14" width="7" height="7"></rect>
+                          <rect x="3" y="14" width="7" height="7"></rect>
+                        </svg>
+                        <span>Show QR</span>
+                      </button>
+                      <button class="btn btn-sm btn-outline" id="btnCopyCloudKey" title="Copy to clipboard">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                          <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                        </svg>
+                        <span id="btnCopyCloudKeyText">Copy</span>
+                      </button>
+                    </div>
+                  </div>
 
-                <div class="cloud-connected-buttons">
-                  <button class="btn btn-primary" id="btnManualCloudSync">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/>
-                    </svg>
-                    Sync Now
-                  </button>
-                  <button class="btn btn-outline btn-danger-hover" id="btnDisconnectCloud">
-                    Disconnect (Back to Guest)
-                  </button>
+                  <div class="cloud-status-row">
+                    <div class="last-sync-text" id="cloudLastSyncTime">Synchronized with cloud</div>
+                  </div>
+
+                  <div class="cloud-connected-buttons">
+                    <button class="btn btn-primary" id="btnManualCloudSync">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/>
+                      </svg>
+                      Sync Now
+                    </button>
+                    <button class="btn btn-outline btn-danger-hover" id="btnDisconnectCloud">
+                      Disconnect (Back to Guest)
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- Offline Storage & Smart Stream Cache Card -->
-          <div class="card offline-storage-card" id="offlineStorageCard">
-            <div class="cloud-header">
-              <div class="cloud-title-group">
-                <div class="cloud-icon-circle offline-icon-circle">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="7 10 12 15 17 10"></polyline>
-                    <line x1="12" y1="15" x2="12" y2="3"></line>
-                  </svg>
+          <!-- SUB-TAB 3: OFFLINE MUSIC & STORAGE -->
+          <div class="settings-subtab-content" id="settingsPane-offline">
+            <div class="card offline-storage-card settings-focused-card" id="offlineStorageCard">
+              <div class="cloud-header">
+                <div class="cloud-title-group">
+                  <div class="cloud-icon-circle offline-icon-circle">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="7 10 12 15 17 10"></polyline>
+                      <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                  </div>
+                  <div>
+                    <h3>Offline Music & Storage</h3>
+                    <p class="card-subtitle">Manage downloaded songs & Smart Stream Cache</p>
+                  </div>
                 </div>
-                <div>
-                  <h3>Offline Music & Storage</h3>
-                  <p class="card-subtitle">Manage downloaded songs & Smart Stream Cache</p>
-                </div>
+                <span id="offlineStorageBadge" class="badge">0 MB</span>
               </div>
-              <div style="display: flex; align-items: center; gap: 12px;">
-                <label class="switch" title="Enable or disable Offline Music & Storage">
+
+              <!-- Dedicated Master Offline Switch Row -->
+              <div class="offline-master-switch-card">
+                <div class="master-switch-info">
+                  <div class="master-switch-title">Offline Mode & Saved Music</div>
+                  <div class="master-switch-desc">Show Downloaded Music playlist in the sidebar and enable local caching for offline listening</div>
+                </div>
+                <label class="switch" title="Toggle Offline Music & Storage feature">
                   <input type="checkbox" id="toggleOfflineMusicEnabled" checked>
                   <span class="slider round"></span>
                 </label>
-                <span id="offlineStorageBadge" class="badge">0 MB</span>
               </div>
-            </div>
 
-            <div id="offlineCardBody">
-              <!-- Active Playlist Download Progress Banner -->
-              <div class="active-download-banner" id="profileActiveDownloadBanner" style="display: none;">
-                <div class="active-download-header">
-                  <div class="active-download-info">
-                    <div class="active-download-spinner">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="spin-icon">
-                        <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
-                        <path d="M12 2a10 10 0 0 1 10 10"></path>
-                      </svg>
+              <div id="offlineCardBody">
+                <!-- Active Playlist Download Progress Banner -->
+                <div class="active-download-banner" id="profileActiveDownloadBanner" style="display: none;">
+                  <div class="active-download-header">
+                    <div class="active-download-info">
+                      <div class="active-download-spinner">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="spin-icon">
+                          <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
+                          <path d="M12 2a10 10 0 0 1 10 10"></path>
+                        </svg>
+                      </div>
+                      <div>
+                        <h4 id="profileDownloadPlName">Downloading Playlist...</h4>
+                        <p id="profileDownloadCurrentSong" class="active-download-sub">Preparing tracks...</p>
+                      </div>
                     </div>
-                    <div>
-                      <h4 id="profileDownloadPlName">Downloading Playlist...</h4>
-                      <p id="profileDownloadCurrentSong" class="active-download-sub">Preparing tracks...</p>
+                    <button class="btn btn-sm btn-outline btn-danger-hover" id="btnProfileCancelDownload" title="Stop ongoing playlist download">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; margin-right: 4px;">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="15" y1="9" x2="9" y2="15"></line>
+                        <line x1="9" y1="9" x2="15" y2="15"></line>
+                      </svg>
+                      Stop Download
+                    </button>
+                  </div>
+                  <div class="active-download-progress-bg">
+                    <div class="active-download-progress-fill" id="profileDownloadProgressFill" style="width: 0%;"></div>
+                  </div>
+                  <div class="active-download-meta">
+                    <span id="profileDownloadCount">0 / 0 songs</span>
+                    <span id="profileDownloadPct">0%</span>
+                  </div>
+                </div>
+
+                <!-- Visual Storage Meter -->
+                <div class="storage-meter-section">
+                  <div class="storage-meter-bar-container">
+                    <div class="storage-meter-bar">
+                      <div class="storage-bar-perm" id="storageBarPerm" style="width: 0%;"></div>
+                      <div class="storage-bar-cache" id="storageBarCache" style="width: 0%;"></div>
                     </div>
                   </div>
-                  <button class="btn btn-sm btn-outline btn-danger-hover" id="btnProfileCancelDownload" title="Stop ongoing playlist download">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; margin-right: 4px;">
-                      <circle cx="12" cy="12" r="10"></circle>
-                      <line x1="15" y1="9" x2="9" y2="15"></line>
-                      <line x1="9" y1="9" x2="15" y2="15"></line>
-                    </svg>
-                    Stop Download
+                  <div class="storage-legend">
+                    <div class="legend-item">
+                      <span class="legend-color color-perm"></span>
+                      <span class="legend-label">Playlist Downloads:</span>
+                      <strong id="storagePermLabel">0 MB (0 songs)</strong>
+                    </div>
+                    <div class="legend-item">
+                      <span class="legend-color color-cache"></span>
+                      <span class="legend-label">Stream Cache (LRU):</span>
+                      <strong id="storageCacheLabel">0 MB (0 / 200 songs)</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Smart Cache Toggle -->
+                <div class="smart-cache-toggle-box">
+                  <div class="toggle-info">
+                    <h4>Smart Stream Cache</h4>
+                    <p>Automatically save songs as you listen for instant offline playback. Auto-rotates up to 200 songs using LRU eviction.</p>
+                  </div>
+                  <label class="switch">
+                    <input type="checkbox" id="toggleSmartCache">
+                    <span class="slider round"></span>
+                  </label>
+                </div>
+
+                <!-- Storage Actions -->
+                <div class="storage-actions-grid">
+                  <button class="btn btn-outline" id="btnClearStreamCache">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+                    Clear Stream Cache
+                  </button>
+                  <button class="btn btn-outline btn-danger-hover" id="btnClearAllDownloads">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                    Remove All Downloads
                   </button>
                 </div>
-                <div class="active-download-progress-bg">
-                  <div class="active-download-progress-fill" id="profileDownloadProgressFill" style="width: 0%;"></div>
-                </div>
-                <div class="active-download-meta">
-                  <span id="profileDownloadCount">0 / 0 songs</span>
-                  <span id="profileDownloadPct">0%</span>
-                </div>
-              </div>
-
-              <!-- Visual Storage Meter -->
-              <div class="storage-meter-section">
-                <div class="storage-meter-bar-container">
-                  <div class="storage-meter-bar">
-                    <div class="storage-bar-perm" id="storageBarPerm" style="width: 0%;"></div>
-                    <div class="storage-bar-cache" id="storageBarCache" style="width: 0%;"></div>
-                  </div>
-                </div>
-                <div class="storage-legend">
-                  <div class="legend-item">
-                    <span class="legend-color color-perm"></span>
-                    <span class="legend-label">Playlist Downloads:</span>
-                    <strong id="storagePermLabel">0 MB (0 songs)</strong>
-                  </div>
-                  <div class="legend-item">
-                    <span class="legend-color color-cache"></span>
-                    <span class="legend-label">Stream Cache (LRU):</span>
-                    <strong id="storageCacheLabel">0 MB (0 / 200 songs)</strong>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Smart Cache Toggle -->
-              <div class="smart-cache-toggle-box">
-                <div class="toggle-info">
-                  <h4>Smart Stream Cache</h4>
-                  <p>Automatically save songs as you listen for instant offline playback. Auto-rotates up to 200 songs using LRU eviction.</p>
-                </div>
-                <label class="switch">
-                  <input type="checkbox" id="toggleSmartCache">
-                  <span class="slider round"></span>
-                </label>
-              </div>
-
-              <!-- Storage Actions -->
-              <div class="storage-actions-grid">
-                <button class="btn btn-outline" id="btnClearStreamCache">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
-                  Clear Stream Cache
-                </button>
-                <button class="btn btn-outline btn-danger-hover" id="btnClearAllDownloads">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
-                  Remove All Downloads
-                </button>
               </div>
             </div>
           </div>
 
-          <!-- Profile Card -->
-          <div class="card profile-card">
-            <div class="avatar-container">
-              <img src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200&auto=format&fit=crop" id="profileAvatar" alt="User Avatar">
-              <div class="avatar-overlay" id="avatarUploadTrigger">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+          <!-- SUB-TAB 4: SPOTIFY API CONFIGURATION -->
+          <div class="settings-subtab-content" id="settingsPane-spotify">
+            <div class="card spotify-settings-card settings-focused-card">
+              <div class="spotify-header">
+                <span class="spotify-logo"></span>
+                <h3>Spotify API Configuration</h3>
               </div>
-              <input type="file" id="avatarFileInput" accept="image/*" style="display: none;">
-            </div>
-
-            <div class="profile-edit-name">
-              <input type="text" id="profileUsernameInput" value="Music Enthusiast">
-              <button class="btn btn-sm btn-outline" id="btnSaveUsername">Save Name</button>
-            </div>
-
-            <div class="sidebar-divider" style="width: 100%;"></div>
-
-            <!-- BACKUP ACTIONS -->
-            <div class="backup-actions-container">
-              <h3>Playlist Backups</h3>
-              <p>Your playlists are automatically backed up to our server. If you clear your browser's data, you can instantly recover them here.</p>
+              <p>To enable real Spotify track search (instead of using the YouTube search fallback proxy), enter your Spotify Developer credentials below.</p>
               
-              <div class="backup-buttons">
-                <button class="btn btn-primary" id="btnForceBackup">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                  Sync Backup File
-                </button>
-                <button class="btn btn-success" id="btnRestoreBackup">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                  Restore From Backup
-                </button>
+              <div class="help-box">
+                <p><strong>How to get these?</strong></p>
+                <ol>
+                  <li>Go to the <a href="https://developer.spotify.com/dashboard" target="_blank">Spotify Developer Dashboard</a>.</li>
+                  <li>Create an App named "AetherPlayer".</li>
+                  <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong>.</li>
+                </ol>
               </div>
-              <div class="backup-status-text" id="backupStatusText">Daily backup is automatically synchronized.</div>
-            </div>
-          </div>
 
-          <!-- Spotify Settings Card -->
-          <div class="card spotify-settings-card">
-            <div class="spotify-header">
-              <span class="spotify-logo"></span>
-              <h3>Spotify API Configuration</h3>
-            </div>
-            <p>To enable real Spotify track search (instead of using the YouTube search fallback proxy), enter your Spotify Developer credentials below.</p>
-            
-            <div class="help-box">
-              <p><strong>How to get these?</strong></p>
-              <ol>
-                <li>Go to the <a href="https://developer.spotify.com/dashboard" target="_blank">Spotify Developer Dashboard</a>.</li>
-                <li>Create an App named "AetherPlayer".</li>
-                <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong>.</li>
-              </ol>
-            </div>
+              <div class="form-group">
+                <label>Spotify Client ID</label>
+                <input type="text" id="spotifyClientId" placeholder="Paste your Client ID here">
+              </div>
 
-            <div class="form-group">
-              <label>Spotify Client ID</label>
-              <input type="text" id="spotifyClientId" placeholder="Paste your Client ID here">
-            </div>
+              <div class="form-group">
+                <label>Spotify Client Secret</label>
+                <input type="password" id="spotifyClientSecret" placeholder="Paste your Client Secret here">
+              </div>
 
-            <div class="form-group">
-              <label>Spotify Client Secret</label>
-              <input type="password" id="spotifyClientSecret" placeholder="Paste your Client Secret here">
+              <button class="btn btn-primary" id="btnSaveSpotifySettings">Save Credentials</button>
             </div>
-
-            <button class="btn btn-primary" id="btnSaveSpotifySettings">Save Credentials</button>
           </div>
         </div>
       </section>

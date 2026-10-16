@@ -692,7 +692,10 @@ const CloudSync = {
   },
 
   showPasskeyQr(passkey = null) {
-    const key = (passkey || this.syncKey || '').trim().toUpperCase();
+    const savedKey = localStorage.getItem('aether_cloud_sync_key');
+    const domKeyEl = document.getElementById('cloudCurrentKeyText');
+    const cleanDomKey = (domKeyEl && !domKeyEl.textContent.includes('•')) ? domKeyEl.textContent : '';
+    const key = (passkey || this.syncKey || savedKey || cleanDomKey || '').trim().toUpperCase();
     const modal = document.getElementById('modalCloudQrDisplay');
     const container = document.getElementById('cloudQrContainer');
     const keyText = document.getElementById('cloudQrPasskeyText');
@@ -726,7 +729,10 @@ const CloudSync = {
       }
     }
 
-    if (modal) modal.style.display = 'flex';
+    if (modal) {
+      modal.style.display = 'flex';
+      modal.classList.add('active');
+    }
   },
 
   _renderQrFallback(container, key) {
@@ -740,7 +746,10 @@ const CloudSync = {
 
   hidePasskeyQr() {
     const modal = document.getElementById('modalCloudQrDisplay');
-    if (modal) modal.style.display = 'none';
+    if (modal) {
+      modal.classList.remove('active');
+      modal.style.display = 'none';
+    }
   },
 
   async startQrScanner() {
@@ -749,7 +758,10 @@ const CloudSync = {
     const canvas = document.getElementById('cloudQrCanvas');
     const statusText = document.getElementById('cloudQrScanStatus');
 
-    if (modal) modal.style.display = 'flex';
+    if (modal) {
+      modal.style.display = 'flex';
+      modal.classList.add('active');
+    }
     if (statusText) statusText.textContent = 'Starting camera...';
 
     try {
@@ -842,7 +854,10 @@ const CloudSync = {
     if (video) video.srcObject = null;
 
     const modal = document.getElementById('modalCloudQrScanner');
-    if (modal) modal.style.display = 'none';
+    if (modal) {
+      modal.classList.remove('active');
+      modal.style.display = 'none';
+    }
   },
 
   _handleDetectedPasskey(rawText) {

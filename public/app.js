@@ -558,6 +558,51 @@ function rgbToHex(rgbStr) {
   return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 }
 
+// Settings Sub-Tabs Management
+function switchProfileSubtab(subtabId) {
+  const nav = document.getElementById('settingsSubtabsNav');
+  if (!nav) return;
+  const buttons = nav.querySelectorAll('.settings-subtab-pill');
+  const panes = document.querySelectorAll('.settings-subtab-content');
+
+  buttons.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.subtab === subtabId);
+  });
+
+  panes.forEach(pane => {
+    const isTarget = pane.id === `settingsPane-${subtabId}`;
+    pane.classList.toggle('active', isTarget);
+    pane.style.display = isTarget ? 'block' : 'none';
+  });
+
+  try {
+    localStorage.setItem('aether_settings_subtab', subtabId);
+  } catch (e) {}
+}
+
+function setupProfileSubtabs() {
+  const nav = document.getElementById('settingsSubtabsNav');
+  if (!nav) return;
+
+  nav.querySelectorAll('.settings-subtab-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const subtab = btn.dataset.subtab;
+      if (subtab) switchProfileSubtab(subtab);
+    });
+  });
+
+  const btnExportPlaylistsProfile = document.getElementById('btnExportPlaylistsProfile');
+  if (btnExportPlaylistsProfile) {
+    btnExportPlaylistsProfile.addEventListener('click', () => {
+      const btnExport = document.getElementById('btnExportPlaylists');
+      if (btnExport) btnExport.click();
+    });
+  }
+
+  const savedSubtab = localStorage.getItem('aether_settings_subtab') || 'profile';
+  switchProfileSubtab(savedSubtab);
+}
+
 // --- EVENT LISTENERS SYSTEM ---
 function setupEventListeners() {
   // Navigation Tabs Switching
@@ -849,23 +894,26 @@ function setupEventListeners() {
       link = 'https://' + link;
     }
 
-    // Ask user how many songs to import (default: 100)
-    const limitInput = await showPromptModal(
-      'Import Song Limit',
-      'How many songs would you like to import? (Default: 100):',
-      '100'
-    );
-    if (limitInput === null) return; // User cancelled
+    // Check if the link is an infinite YouTube Mix or Radio
+    const isMixUrl = /list=RD|start_radio=1|radio=1|list=UL/i.test(link);
+    let limit = 100;
 
-    let limit = parseInt(limitInput, 10);
-    if (isNaN(limit) || limit <= 0) {
-      limit = 100;
-    }
-    if (limit > 300) {
-      limit = 300;
+    // Only prompt for song limit if importing an infinite YouTube Mix
+    if (isMixUrl) {
+      const limitInput = await showPromptModal(
+        'Import Song Limit',
+        'How many songs would you like to import from this YouTube Mix? (Default: 100):',
+        '100'
+      );
+      if (limitInput === null) return; // User cancelled
+
+      const parsedLimit = parseInt(limitInput, 10);
+      if (!isNaN(parsedLimit) && parsedLimit > 0) {
+        limit = Math.min(parsedLimit, 300);
+      }
     }
 
-    showToast(`Analyzing link and importing up to ${limit} songs...`);
+    showToast(isMixUrl ? `Importing YouTube Mix (up to ${limit} songs)...` : 'Analyzing playlist link...');
 
     try {
       const response = await fetch(`/api/resolve-link?url=${encodeURIComponent(link)}&limit=${limit}&allow_mix=1`);
@@ -885,11 +933,21 @@ function setupEventListeners() {
         } else if (data.type === 'track') {
           const wantMix = await showConfirmModal(
             'Single Track Detected',
-            `"${data.song.title}" is a single track. Would you like to generate and import a ${limit}-song YouTube Mix based on it?`
+            `"${data.song.title}" is a single track. Would you like to generate and import a YouTube Mix based on it?`
           );
           if (wantMix) {
+            const mixLimitInput = await showPromptModal(
+              'Import Song Limit',
+              'How many songs would you like to generate in this Mix? (Default: 100):',
+              '100'
+            );
+            if (mixLimitInput === null) return;
+            let mixLimit = parseInt(mixLimitInput, 10);
+            if (isNaN(mixLimit) || mixLimit <= 0) mixLimit = 100;
+            mixLimit = Math.min(mixLimit, 300);
+
             showToast(`Generating mix from "${data.song.title}"...`);
-            const mixResp = await fetch(`/api/resolve-link?url=${encodeURIComponent(link)}&limit=${limit}&allow_mix=1`);
+            const mixResp = await fetch(`/api/resolve-link?url=${encodeURIComponent(link)}&limit=${mixLimit}&allow_mix=1`);
             if (mixResp.ok) {
               const mixData = await mixResp.json();
               if (mixData.type === 'playlist' && mixData.songs && mixData.songs.length > 0) {
@@ -1491,6 +1549,7 @@ function setupEventListeners() {
   if (headerCloudBtn) {
     headerCloudBtn.addEventListener('click', () => {
       switchTab('profile');
+      switchProfileSubtab('cloud');
       const cloudCard = document.getElementById('cloudSyncCard');
       if (cloudCard) {
         cloudCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1588,6 +1647,9 @@ function setupEventListeners() {
       }
     });
   }
+
+  // Profile Settings Sub-Tabs
+  setupProfileSubtabs();
 }
 
 // --- DYNAMIC THEME SYSTEM IMPLEMENTATION ---
@@ -1761,6 +1823,10 @@ function switchTab(tabName) {
     document.getElementById(`tab-${tabName}`).classList.add('active');
     if (tabName === 'home') {
       loadHomeDashboard();
+    }
+    if (tabName === 'profile') {
+      const activeSubtab = localStorage.getItem('aether_settings_subtab') || 'profile';
+      switchProfileSubtab(activeSubtab);
     }
     if (tabName !== 'album-detail' && tabName !== 'artist-profile' && tabName !== 'home') {
       // de-highlight lists active states
