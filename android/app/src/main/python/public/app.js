@@ -224,7 +224,9 @@ const AetherAudioEngine = {
 
       // Master Gain Node
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(1.0, this.ctx.currentTime);
+      const initVol = (state.isMuted ? 0 : (state.volume || 70)) / 100;
+      const initEffective = initVol > 0 ? Math.max(0.005, Math.pow(initVol, 2.2)) : 0;
+      this.masterGain.gain.setValueAtTime(initEffective, this.ctx.currentTime);
 
       // Limiter / Brickwall Compressor to prevent digital clipping when boosting EQ
       this.limiter = this.ctx.createDynamicsCompressor();
@@ -269,6 +271,10 @@ const AetherAudioEngine = {
 
       this.initialized = true;
       console.log('[AudioEngine] Dual-Deck Web Audio Core Graph initialized successfully');
+
+      if (typeof window.applyVolume === 'function') {
+        window.applyVolume();
+      }
 
       if (state.masterEqSettings) {
         this.setMasterEq(
@@ -356,7 +362,7 @@ const AetherAudioEngine = {
     }
   },
 
-  executeCrossfade({ duration = 12, curveType = 'bass_swap', onComplete = null } = {}) {
+  executeCrossfade({ duration = 12, curveType = 'bass_swap', outgoingDeck = null, incomingDeck = null, onComplete = null } = {}) {
     if (!this.ctx || !this.initialized) {
       if (typeof onComplete === 'function') onComplete();
       return;
@@ -364,8 +370,8 @@ const AetherAudioEngine = {
 
     this.cancelCrossfade();
 
-    const outgoing = this.getActiveDeck();
-    const incoming = this.getInactiveDeck();
+    const outgoing = outgoingDeck || this.getActiveDeck();
+    const incoming = incomingDeck || this.getInactiveDeck();
     const startTime = this.ctx.currentTime;
     const dur = Math.max(1, duration);
 
@@ -422,8 +428,13 @@ const AetherAudioEngine = {
         incoming.eq.low.gain.setValueAtTime(0, now);
         if (outgoing.audio) {
           outgoing.audio.pause();
+          outgoing.audio.currentTime = 0;
         }
       } catch (e) {}
+
+      if (typeof window.applyVolume === 'function') {
+        window.applyVolume();
+      }
 
       if (typeof onComplete === 'function') {
         onComplete();
@@ -1683,24 +1694,63 @@ const AetherDjStudio = {
   },
 
   // Synthesize realistic rhythmic multi-band waveform peaks if raw peaks aren't ready
-  _synthesizePeaks(seedStr, count = 80) {
+  _synthesizePeaks(seedStr, count = 160) {
     let hash = 0;
     for (let i = 0; i < seedStr.length; i++) {
-      hash = (hash << 5) - hash + seedStr.charCodeAt(i);
+      hash = ((hash << 5) - hash) + seedStr.charCodeAt(i);
       hash |= 0;
     }
+    const seed = Math.abs(hash) || 7654321;
+    function pseudo(n) {
+      const x = Math.sin(seed + n * 12.9898) * 43758.5453;
+      return x - Math.floor(x);
+    }
+
     const lows = new Float32Array(count);
     const mids = new Float32Array(count);
     const highs = new Float32Array(count);
+
+    const isDeckA = seedStr.includes('deckA') || seedStr.includes('outgoing');
+
     for (let i = 0; i < count; i++) {
-      const beatPhase = (i % 8) / 8;
-      const kick = (beatPhase === 0 || beatPhase === 0.5) ? 0.85 : 0.35;
-      const snare = (beatPhase === 0.25 || beatPhase === 0.75) ? 0.7 : 0.25;
-      const rand = Math.abs(Math.sin((hash + i) * 12.9898) * 43758.5453) % 1;
-      lows[i] = Math.max(0.2, Math.min(1.0, kick * 0.7 + rand * 0.3));
-      mids[i] = Math.max(0.2, Math.min(1.0, snare * 0.6 + rand * 0.4));
-      highs[i] = Math.max(0.15, Math.min(1.0, 0.4 + rand * 0.6));
+      const frac = i / (count - 1);
+      // Macro dynamic energy curve:
+      // Outgoing track: high energy verse/drop fading into transitional breakdown
+      // Incoming track: rhythmic kick build swelling into full drop
+      let macroEnergy = 0.65;
+      if (isDeckA) {
+        macroEnergy = 0.88 - Math.pow(frac, 1.4) * 0.28 + pseudo(i * 3) * 0.15;
+      } else {
+        macroEnergy = 0.55 + Math.pow(frac, 1.2) * 0.38 + pseudo(i * 3) * 0.15;
+      }
+
+      // 4/4 Beat transient pattern (16 subdivisions per phrase)
+      const beatStep = i % 16;
+      const isKick = (beatStep === 0 || beatStep === 4 || beatStep === 8 || beatStep === 12);
+      const isSnare = (beatStep === 4 || beatStep === 12);
+      const isHat = (beatStep % 2 === 0);
+
+      const kickPunch = isKick ? (0.35 + pseudo(i * 5) * 0.25) : 0;
+      const snareSnap = isSnare ? (0.30 + pseudo(i * 7) * 0.22) : 0;
+      const hatFlutter = isHat ? (0.22 + pseudo(i * 11) * 0.18) : 0.05;
+
+      const randomMelody = pseudo(i * 13) * 0.25;
+
+      // Lows (Deep bass and kick drums - bright white core)
+      lows[i] = Math.max(0.12, Math.min(1.0, (macroEnergy * 0.55) + kickPunch + randomMelody * 0.2));
+      // Mids (Vocals, guitars, brass - rich golden bronze)
+      mids[i] = Math.max(0.18, Math.min(1.0, (macroEnergy * 0.62) + snareSnap + randomMelody * 0.35));
+      // Highs (Hi-hats, cymbals, air - electric blue outer body)
+      highs[i] = Math.max(0.25, Math.min(1.0, (macroEnergy * 0.70) + hatFlutter + randomMelody * 0.4));
     }
+
+    // 3-point smoothing to make envelope continuous and organic
+    for (let i = 1; i < count - 1; i++) {
+      lows[i] = (lows[i - 1] * 0.25) + (lows[i] * 0.5) + (lows[i + 1] * 0.25);
+      mids[i] = (mids[i - 1] * 0.25) + (mids[i] * 0.5) + (mids[i + 1] * 0.25);
+      highs[i] = (highs[i - 1] * 0.25) + (highs[i] * 0.5) + (highs[i + 1] * 0.25);
+    }
+
     return { lows, mids, highs };
   },
 
@@ -1726,12 +1776,12 @@ const AetherDjStudio = {
     ctx.clearRect(0, 0, w, h);
 
     const halfH = h / 2;
-    const barColumns = 72;
+    const barColumns = 160;
     const colW = w / barColumns;
     const pad = 8 * dpr;
 
     // 1. Draw 16 Vertical Beat-Grid Lines
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
     ctx.lineWidth = 1 * dpr;
     const gridDivs = 16;
     for (let i = 1; i < gridDivs; i++) {
@@ -1742,9 +1792,21 @@ const AetherDjStudio = {
       ctx.stroke();
     }
 
+    // Helper to draw rounded bars cleanly
+    const drawPillBar = (x, y, bw, bh, radius) => {
+      if (bh <= 0) return;
+      if (typeof ctx.roundRect === 'function') {
+        ctx.beginPath();
+        ctx.roundRect(x, y, bw, bh, Math.min(radius, bw / 2, bh / 2));
+        ctx.fill();
+      } else {
+        ctx.fillRect(x, y, bw, bh);
+      }
+    };
+
     // 2. Draw Top Waveform: DECK A (Last 15 seconds)
     const midYA = halfH / 2;
-    const maxBarHA = (halfH - pad * 2) / 2;
+    const maxBarHA = (halfH / 2) - 5 * dpr; // Fills 90% of upper deck lane
 
     const durA = (state.duration > 0 ? state.duration : 180);
     const slicePctA = Math.min(1.0, 15.0 / durA);
@@ -1752,7 +1814,7 @@ const AetherDjStudio = {
 
     let peaksA = (this.analysisA && this.analysisA.peaks && this.analysisA.peaks.lows)
       ? this.analysisA.peaks
-      : this._synthesizePeaks((state.currentSong ? state.currentSong.title : 'deckA') + '_seed', barColumns);
+      : this._synthesizePeaks((state.currentSong ? state.currentSong.title : 'deckA') + '_outgoing', barColumns);
 
     const totalBinsA = peaksA.lows.length;
     for (let i = 0; i < barColumns; i++) {
@@ -1764,26 +1826,26 @@ const AetherDjStudio = {
       const highVal = peaksA.highs[binIdx] || 0.3;
 
       const x = i * colW;
-      const bw = Math.max(1.8 * dpr, colW - (1.2 * dpr));
+      const bw = Math.max(1.8 * dpr, colW - (0.9 * dpr));
 
-      // Outer Highs (Cyan / Blue)
-      const hH = Math.max(3 * dpr, highVal * maxBarHA);
-      ctx.fillStyle = 'rgba(56, 189, 248, 0.28)';
-      ctx.fillRect(x, midYA - hH, bw, hH * 2);
+      // Outer Layer - Highs / Full Waveform Body (Electric Blue, Print 3)
+      const hH = Math.max(2.5 * dpr, highVal * maxBarHA);
+      ctx.fillStyle = 'rgba(37, 99, 235, 0.92)';
+      drawPillBar(x, midYA - hH, bw, hH * 2, 2 * dpr);
 
-      // Mids (Amber / Warm)
-      const mH = Math.max(2 * dpr, midVal * maxBarHA * 0.75);
-      ctx.fillStyle = 'rgba(234, 179, 8, 0.55)';
-      ctx.fillRect(x, midYA - mH, bw, mH * 2);
+      // Middle Layer - Mids / Vocal warmth (Golden Bronze Amber, Print 3)
+      const mH = Math.max(1.8 * dpr, midVal * maxBarHA * 0.72);
+      ctx.fillStyle = 'rgba(217, 119, 6, 0.95)';
+      drawPillBar(x, midYA - mH, bw, mH * 2, 1.5 * dpr);
 
-      // Core Lows (Crisp White / Glow)
-      const lH = Math.max(1.5 * dpr, lowVal * maxBarHA * 0.5);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-      ctx.fillRect(x, midYA - lH, bw, lH * 2);
+      // Core Layer - Lows / Transients (Crisp White / Pale Gold, Print 3)
+      const lH = Math.max(1.2 * dpr, lowVal * maxBarHA * 0.44);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.98)';
+      drawPillBar(x, midYA - lH, bw, lH * 2, 1.0 * dpr);
     }
 
     // 3. Center Deck Divider
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
     ctx.lineWidth = 1.5 * dpr;
     ctx.beginPath();
     ctx.moveTo(0, halfH);
@@ -1792,7 +1854,7 @@ const AetherDjStudio = {
 
     // 4. Draw Bottom Waveform: DECK B (First 15 seconds)
     const midYB = halfH + (halfH / 2);
-    const maxBarHB = (halfH - pad * 2) / 2;
+    const maxBarHB = (halfH / 2) - 5 * dpr; // Fills 90% of lower deck lane
 
     const nextSong = (state.playQueue && state.playQueue.length > state.currentQueueIndex + 1)
       ? state.playQueue[state.currentQueueIndex + 1]
@@ -1802,7 +1864,7 @@ const AetherDjStudio = {
 
     let peaksB = (this.analysisB && this.analysisB.peaks && this.analysisB.peaks.lows)
       ? this.analysisB.peaks
-      : this._synthesizePeaks((nextSong ? nextSong.title : 'deckB') + '_seed', barColumns);
+      : this._synthesizePeaks((nextSong ? nextSong.title : 'deckB') + '_incoming', barColumns);
 
     const totalBinsB = peaksB.lows.length;
     for (let i = 0; i < barColumns; i++) {
@@ -1814,22 +1876,22 @@ const AetherDjStudio = {
       const highVal = peaksB.highs[binIdx] || 0.3;
 
       const x = i * colW;
-      const bw = Math.max(1.8 * dpr, colW - (1.2 * dpr));
+      const bw = Math.max(1.8 * dpr, colW - (0.9 * dpr));
 
-      // Outer Highs (Cyan / Blue)
-      const hH = Math.max(3 * dpr, highVal * maxBarHB);
-      ctx.fillStyle = 'rgba(56, 189, 248, 0.28)';
-      ctx.fillRect(x, midYB - hH, bw, hH * 2);
+      // Outer Layer - Highs / Full Waveform Body (Electric Blue, Print 3)
+      const hH = Math.max(2.5 * dpr, highVal * maxBarHB);
+      ctx.fillStyle = 'rgba(37, 99, 235, 0.92)';
+      drawPillBar(x, midYB - hH, bw, hH * 2, 2 * dpr);
 
-      // Mids (Amber / Warm)
-      const mH = Math.max(2 * dpr, midVal * maxBarHB * 0.75);
-      ctx.fillStyle = 'rgba(234, 179, 8, 0.55)';
-      ctx.fillRect(x, midYB - mH, bw, mH * 2);
+      // Middle Layer - Mids / Vocal warmth (Golden Bronze Amber, Print 3)
+      const mH = Math.max(1.8 * dpr, midVal * maxBarHB * 0.72);
+      ctx.fillStyle = 'rgba(217, 119, 6, 0.95)';
+      drawPillBar(x, midYB - mH, bw, mH * 2, 1.5 * dpr);
 
-      // Core Lows (Crisp White / Glow)
-      const lH = Math.max(1.5 * dpr, lowVal * maxBarHB * 0.5);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-      ctx.fillRect(x, midYB - lH, bw, lH * 2);
+      // Core Layer - Lows / Transients (Crisp White / Pale Gold, Print 3)
+      const lH = Math.max(1.2 * dpr, lowVal * maxBarHB * 0.44);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.98)';
+      drawPillBar(x, midYB - lH, bw, lH * 2, 1.0 * dpr);
     }
 
     // 5. OVERLAID INTERACTIVE AUTOMATION CURVES (Prints 3 & 4)
@@ -1947,8 +2009,19 @@ const AetherDjStudio = {
     });
 
     // 7. NEON GREEN VERTICAL PLAYHEAD NEEDLE `|` (Print 3 style)
-    if (this.playheadProgress >= 0.0 && this.playheadProgress <= 1.0) {
-      const needleX = this.playheadProgress * w;
+    let needleProgress = -1;
+    if (this.isAuditioning && this.playheadProgress >= 0.0 && this.playheadProgress <= 1.0) {
+      needleProgress = this.playheadProgress;
+    } else if (state.isPlaying && activeAudio && state.duration > 0) {
+      const transSecs = (state.djTransitionSettings && state.djTransitionSettings.durationSeconds) ? state.djTransitionSettings.durationSeconds : 16;
+      const windowStart = state.duration - transSecs;
+      if (activeAudio.currentTime >= windowStart && activeAudio.currentTime <= state.duration) {
+        needleProgress = Math.max(0, Math.min(1.0, (activeAudio.currentTime - windowStart) / transSecs));
+      }
+    }
+
+    if (needleProgress >= 0.0 && needleProgress <= 1.0) {
+      const needleX = needleProgress * w;
       ctx.save();
       ctx.strokeStyle = '#22c55e';
       ctx.lineWidth = 2.8 * dpr;
@@ -1994,6 +2067,9 @@ const AetherDjStudio = {
     this.playheadProgress = 0.0;
     this.auditionStartTime = performance.now();
 
+    // Ensure volume is set accurately for auditioning
+    applyVolume();
+
     // Update Audition button icons (center button & footer button)
     const btnCenter = document.getElementById('btnCenterAudition');
     const iconPlay = document.getElementById('iconAuditionPlay');
@@ -2007,7 +2083,7 @@ const AetherDjStudio = {
     if (btnPreview) btnPreview.classList.add('btn-primary');
     if (txtPreview) txtPreview.textContent = 'Stop Audition';
 
-    const transSecs = state.djTransitionSettings.durationSeconds || 16;
+    const transSecs = (state.djTransitionSettings && state.djTransitionSettings.durationSeconds) ? state.djTransitionSettings.durationSeconds : 16;
     const deckA = AetherAudioEngine.deckA;
     const deckB = AetherAudioEngine.deckB;
 
@@ -2028,14 +2104,11 @@ const AetherDjStudio = {
     const durA = (state.duration > 0 ? state.duration : 180);
     deckA.audio.currentTime = Math.max(0, durA - transSecs);
 
-    try {
-      await deckA.audio.play();
-    } catch (e) {}
-    try {
-      await deckB.audio.play();
-    } catch (e) {}
+    // Launch audio playback asynchronously without blocking the visual animation loop
+    deckA.audio.play().catch(e => console.warn('[DJ Studio] Deck A play warning:', e));
+    deckB.audio.play().catch(e => console.warn('[DJ Studio] Deck B play warning:', e));
 
-    showToast(`Auditioning ${state.djTransitionSettings.bars} Bars Transition...`);
+    showToast(`Auditioning ${state.djTransitionSettings.bars || 8} Bars Transition...`);
 
     // Animation frame loop for needle movement and live Web Audio DSP sweeps
     const filterType = document.getElementById('selFilterFx') ? document.getElementById('selFilterFx').value : 'none';
@@ -2082,6 +2155,7 @@ const AetherDjStudio = {
       }
     };
 
+    // Kick off animation loop immediately
     this.auditionRafId = requestAnimationFrame(loop);
   },
 
@@ -5849,6 +5923,7 @@ function applyVolume() {
     try { activeAudio.volume = effectiveRatio; } catch (e) {}
   }
 }
+window.applyVolume = applyVolume;
 
 let seekDebounceTimer = null;
 let isUserSeeking = false;
@@ -5940,72 +6015,112 @@ async function triggerAutomatedQueueTransition(nextSong, transConfig) {
   }
 
   // Pre-load incoming track on inactive deck
-  const inactiveDeck = AetherAudioEngine.getInactiveDeck();
-  inactiveDeck.audio.src = incomingSrc;
-  inactiveDeck.audio.currentTime = 0;
+  const outgoingDeck = AetherAudioEngine.getActiveDeck();
+  const incomingDeck = AetherAudioEngine.getInactiveDeck();
+  incomingDeck.audio.src = incomingSrc;
+  incomingDeck.audio.currentTime = 0;
 
   // Restore or reset Per-Track EQ for incoming track
   const incomingEq = await AetherAudioDB.getTrackEq(nextSong.id);
   if (incomingEq) {
-    AetherAudioEngine.setTrackEq(incomingEq.low || 0, incomingEq.mid || 0, incomingEq.high || 0, inactiveDeck.id);
+    AetherAudioEngine.setTrackEq(incomingEq.low || 0, incomingEq.mid || 0, incomingEq.high || 0, incomingDeck.id);
   } else {
-    AetherAudioEngine.resetTrackEq(inactiveDeck.id);
+    AetherAudioEngine.resetTrackEq(incomingDeck.id);
   }
 
   try {
-    await inactiveDeck.audio.play();
+    await incomingDeck.audio.play();
   } catch (err) {
     console.warn('[DJ Engine] Inactive deck play error:', err);
+  }
+
+  // Seamlessly switch active deck reference immediately so progress timer and volume sync to incoming song
+  AetherAudioEngine.activeDeckId = incomingDeck.id;
+  activeAudio = incomingDeck.audio;
+  state.currentSong = nextSong;
+  state.currentQueueIndex++;
+  state.playbackPosition = 0;
+
+  // Parse new track duration
+  const durationParts = (nextSong.duration || '3:00').split(':');
+  if (durationParts.length === 2) {
+    state.duration = parseInt(durationParts[0]) * 60 + parseInt(durationParts[1]);
+  } else {
+    state.duration = Math.floor(incomingDeck.audio.duration || 180);
+  }
+
+  // Apply volume immediately to ensure no volume reset pop
+  applyVolume();
+
+  // Update UI components immediately for incoming track (eliminates metadata delay and time jumps)
+  savePlaybackSession();
+  logPlayHistory(nextSong);
+  updateRightSidebar(nextSong);
+  updateFavoriteUI(nextSong);
+  syncMixerModalTrackInfo(nextSong);
+  if (typeof updateDjTransitionIndicator === 'function') {
+    updateDjTransitionIndicator(nextSong);
+  }
+  if (typeof renderTrackDjAnalysis === 'function') {
+    renderTrackDjAnalysis(nextSong);
+  }
+  renderQueueUI();
+
+  const titleEl = document.getElementById('playerSongTitle');
+  const artistEl = document.getElementById('playerSongArtist');
+  const badgeEl = document.getElementById('playerPlatformBadge');
+  const artEl = document.getElementById('playerAlbumArt');
+  const durEl = document.getElementById('playerTotalDuration');
+  const curEl = document.getElementById('playerCurrentTime');
+  const timeSlider = document.getElementById('playerTimeline');
+
+  if (titleEl) titleEl.textContent = nextSong.title;
+  if (artistEl) artistEl.textContent = nextSong.artist || 'Unknown';
+  if (badgeEl) badgeEl.textContent = nextSong.platform;
+  if (artEl && nextSong.thumbnail) {
+    artEl.innerHTML = `<img src="${nextSong.thumbnail}" alt="Art">`;
+  }
+  if (durEl) durEl.textContent = formatSeconds(state.duration);
+  if (curEl) curEl.textContent = '0:00';
+  if (timeSlider) timeSlider.value = 0;
+
+  const mobileNpTitle = document.getElementById('mobileNpTitle');
+  const mobileNpArtist = document.getElementById('mobileNpArtist');
+  const mobileNpTotalDuration = document.getElementById('mobileNpTotalDuration');
+  const mobileNpCurrentTime = document.getElementById('mobileNpCurrentTime');
+  const mobileNpTimeline = document.getElementById('mobileNpTimeline');
+  if (mobileNpTitle) mobileNpTitle.textContent = nextSong.title;
+  if (mobileNpArtist) mobileNpArtist.textContent = nextSong.artist || 'Unknown Artist';
+  if (mobileNpTotalDuration) mobileNpTotalDuration.textContent = formatSeconds(state.duration);
+  if (mobileNpCurrentTime) mobileNpCurrentTime.textContent = '0:00';
+  if (mobileNpTimeline) mobileNpTimeline.value = 0;
+
+  // Android notification sync
+  if (window.AndroidAudio && typeof window.AndroidAudio.updateMetadata === 'function') {
+    try {
+      window.AndroidAudio.updateMetadata(nextSong.title || 'Aether Track', nextSong.artist || 'Unknown Artist', nextSong.thumbnail || '', true);
+    } catch (e) {}
   }
 
   // Execute hardware-clock crossfade on Web Audio graph
   AetherAudioEngine.executeCrossfade({
     duration: dur,
     curveType: curve,
+    outgoingDeck: outgoingDeck,
+    incomingDeck: incomingDeck,
     onComplete: () => {
-      // Switch active deck
-      AetherAudioEngine.switchActiveDeck();
       state.isExecutingTransition = false;
       state.isTransitioning = false;
 
-      // Update state to new track
-      state.currentSong = nextSong;
-      state.currentQueueIndex++;
-      state.playbackPosition = dur;
-      state.duration = Math.floor(inactiveDeck.audio.duration || 180);
-
-      // Update UI components
-      savePlaybackSession();
-      logPlayHistory(nextSong);
-      updateRightSidebar(nextSong);
-      updateFavoriteUI(nextSong);
-      syncMixerModalTrackInfo(nextSong);
-      if (typeof updateDjTransitionIndicator === 'function') {
-        updateDjTransitionIndicator(nextSong);
-      }
-      if (typeof renderTrackDjAnalysis === 'function') {
-        renderTrackDjAnalysis(nextSong);
-      }
-      renderQueueUI();
-
-      document.getElementById('playerSongTitle').textContent = nextSong.title;
-      document.getElementById('playerSongArtist').textContent = nextSong.artist || 'Unknown';
-      document.getElementById('playerPlatformBadge').textContent = nextSong.platform;
-      if (nextSong.thumbnail) {
-        document.getElementById('playerAlbumArt').innerHTML = `<img src="${nextSong.thumbnail}" alt="Art">`;
-      }
-      document.getElementById('playerTotalDuration').textContent = formatSeconds(state.duration);
-      const mobileNpTotalDuration = document.getElementById('mobileNpTotalDuration');
-      if (mobileNpTotalDuration) mobileNpTotalDuration.textContent = formatSeconds(state.duration);
-
-      // Android notification sync
-      if (window.AndroidAudio && typeof window.AndroidAudio.updateMetadata === 'function') {
+      if (outgoingDeck && outgoingDeck.audio) {
         try {
-          window.AndroidAudio.updateMetadata(nextSong.title || 'Aether Track', nextSong.artist || 'Unknown Artist', nextSong.thumbnail || '', true);
+          outgoingDeck.audio.pause();
+          outgoingDeck.audio.currentTime = 0;
+          outgoingDeck.audio.src = '';
         } catch (e) {}
       }
 
-      // Preload next track
+      applyVolume();
       preloadNextTrackInQueue(state.currentQueueIndex);
     }
   });
@@ -6022,6 +6137,11 @@ function startProgressTimer(platform) {
       currentSec = ytPlayer.getCurrentTime();
     } else if ((platform === 'preview' || platform === 'audio') && activeAudio) {
       currentSec = activeAudio.currentTime;
+    }
+
+    // Clamp currentSec so it NEVER exceeds the track duration
+    if (state.duration > 0 && currentSec > state.duration) {
+      currentSec = state.duration;
     }
 
     state.playbackPosition = currentSec;
@@ -6043,9 +6163,8 @@ function startProgressTimer(platform) {
     }
 
     // Background track-end detector:
-    // When the phone is locked, YouTube IFrame API can occasionally fail to dispatch onStateChange: ENDED.
-    // If current playback timestamp reaches the duration, automatically trigger the next track!
-    if (state.duration > 0 && currentSec >= state.duration - 0.75) {
+    // Only fire when NOT executing an active transition to prevent interrupting crossfades!
+    if (!state.isExecutingTransition && state.duration > 0 && currentSec >= state.duration - 0.75) {
       const now = Date.now();
       if (!state.isTransitioning || (now - (state.transitionStartTime || 0) > 3000)) {
         console.log("Track completion detected by background ticker, advancing queue...");

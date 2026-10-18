@@ -2187,37 +2187,19 @@
       <div class="dj-transition-body">
         
         <!-- DECK A & DECK B COMPACT HEADER INFO -->
-        <div class="dj-decks-overview-row">
-          <!-- Outgoing Track Summary -->
-          <div class="dj-deck-pill-info deck-pill-a">
-            <div class="dj-pill-badge-tag tag-deck-a">DECK A • OUTGOING</div>
-            <div class="dj-deck-thumb-sm" id="deckAThumb">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
-            </div>
-            <div class="dj-deck-text-sm">
-              <span class="dj-deck-title" id="deckATitle">No Track</span>
-              <span class="dj-deck-artist" id="deckAArtist">Select outgoing track</span>
-            </div>
-            <div class="dj-deck-badges-sm">
-              <span class="dj-pill-badge" id="deckABpmBadge"><strong>BPM</strong> <span id="valDeckABpm">--</span></span>
-              <span class="dj-pill-badge dj-key-pill" id="deckAKeyBadge"><strong>KEY</strong> <span id="valDeckAKey">--</span></span>
-            </div>
+        <!-- DECK A (OUTGOING TRACK, TOP WAVEFORM) -->
+        <div class="dj-deck-pill-info deck-pill-a" style="margin-bottom: 10px;">
+          <div class="dj-pill-badge-tag tag-deck-a">DECK A • OUTGOING</div>
+          <div class="dj-deck-thumb-sm" id="deckAThumb">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
           </div>
-
-          <!-- Incoming Track Summary -->
-          <div class="dj-deck-pill-info deck-pill-b">
-            <div class="dj-pill-badge-tag tag-deck-b">DECK B • INCOMING</div>
-            <div class="dj-deck-thumb-sm" id="deckBThumb">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
-            </div>
-            <div class="dj-deck-text-sm">
-              <span class="dj-deck-title" id="deckBTitle">No Next Track</span>
-              <span class="dj-deck-artist" id="deckBArtist">Next song in queue</span>
-            </div>
-            <div class="dj-deck-badges-sm">
-              <span class="dj-pill-badge" id="deckBBpmBadge"><strong>BPM</strong> <span id="valDeckBBpm">--</span></span>
-              <span class="dj-pill-badge dj-key-pill" id="deckBKeyBadge"><strong>KEY</strong> <span id="valDeckBKey">--</span></span>
-            </div>
+          <div class="dj-deck-text-sm">
+            <span class="dj-deck-title" id="deckATitle">No Track</span>
+            <span class="dj-deck-artist" id="deckAArtist">Select outgoing track</span>
+          </div>
+          <div class="dj-deck-badges-sm">
+            <span class="dj-pill-badge" id="deckABpmBadge"><strong>BPM</strong> <span id="valDeckABpm">--</span></span>
+            <span class="dj-pill-badge dj-key-pill" id="deckAKeyBadge"><strong>KEY</strong> <span id="valDeckAKey">--</span></span>
           </div>
         </div>
 
@@ -2264,6 +2246,22 @@
               <span class="dj-duration-label">Transition Window</span>
               <span class="dj-duration-val" id="valTransitionDuration">16.0s</span>
             </div>
+          </div>
+        </div>
+
+        <!-- DECK B (INCOMING TRACK, BOTTOM WAVEFORM - Placed below stage) -->
+        <div class="dj-deck-pill-info deck-pill-b" style="margin-bottom: 12px;">
+          <div class="dj-pill-badge-tag tag-deck-b">DECK B • INCOMING</div>
+          <div class="dj-deck-thumb-sm" id="deckBThumb">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+          </div>
+          <div class="dj-deck-text-sm">
+            <span class="dj-deck-title" id="deckBTitle">No Next Track</span>
+            <span class="dj-deck-artist" id="deckBArtist">Next song in queue</span>
+          </div>
+          <div class="dj-deck-badges-sm">
+            <span class="dj-pill-badge" id="deckBBpmBadge"><strong>BPM</strong> <span id="valDeckBBpm">--</span></span>
+            <span class="dj-pill-badge dj-key-pill" id="deckBKeyBadge"><strong>KEY</strong> <span id="valDeckBKey">--</span></span>
           </div>
         </div>
 

@@ -7121,6 +7121,18 @@ input:checked + .slider:before {
   border: 1px solid rgba(56, 189, 248, 0.4);
 }
 
+.deck-pill-a {
+  background: linear-gradient(90deg, rgba(168, 85, 247, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  border: 1px solid rgba(168, 85, 247, 0.22);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.deck-pill-b {
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
 .dj-deck-thumb-sm {
   width: 32px;
   height: 32px;
