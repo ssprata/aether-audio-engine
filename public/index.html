@@ -1461,6 +1461,17 @@
           <span class="mixer-active-dot" id="mixerActiveDot" style="display: none;"></span>
         </button>
 
+        <button class="control-btn" id="btnToggleDjTransition" title="DJ Transition Studio (Pacemaker Style)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="16 3 21 3 21 8"></polyline>
+            <line x1="4" y1="20" x2="21" y2="3"></line>
+            <polyline points="21 16 21 21 16 21"></polyline>
+            <line x1="15" y1="15" x2="21" y2="21"></line>
+            <line x1="4" y1="4" x2="9" y2="9"></line>
+          </svg>
+          <span class="mixer-active-dot transition-active-dot" id="transitionActiveDot" style="display: none;"></span>
+        </button>
+
         <div class="volume-container" id="playerVolumeContainer"
           title="Scroll or drag to change volume. Right-click to type exact volume.">
           <button class="control-btn" id="btnMute" title="Mute/Unmute">
@@ -1600,6 +1611,15 @@
               <line x1="1" y1="14" x2="7" y2="14"></line>
               <line x1="9" y1="8" x2="15" y2="8"></line>
               <line x1="17" y1="16" x2="23" y2="16"></line>
+            </svg>
+          </button>
+          <button class="icon-btn" id="btnMobileNpTransition" title="DJ Transition Studio">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 20px; height: 20px;">
+              <polyline points="16 3 21 3 21 8"></polyline>
+              <line x1="4" y1="20" x2="21" y2="3"></line>
+              <polyline points="21 16 21 21 16 21"></polyline>
+              <line x1="15" y1="15" x2="21" y2="21"></line>
+              <line x1="4" y1="4" x2="9" y2="9"></line>
             </svg>
           </button>
           <button class="icon-btn" id="btnMobileNpFavorite" title="Add to favorites">
@@ -2119,6 +2139,144 @@
             <span><strong>Global Mastering Bus:</strong> Applied on top of all playback. Dynamic limiter actively prevents digital clipping (+0.0 dB true peak ceiling).</span>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DJ TRANSITION STUDIO MODAL (v2.0.0 Pacemaker DJ Engine) -->
+  <div class="modal-overlay" id="modalDjTransition">
+    <div class="modal-card modal-premium-card dj-transition-modal-card">
+      <div class="modal-header dj-transition-header">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div class="dj-transition-icon-glow">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="16 3 21 3 21 8"></polyline>
+              <line x1="4" y1="20" x2="21" y2="3"></line>
+              <polyline points="21 16 21 21 16 21"></polyline>
+              <line x1="15" y1="15" x2="21" y2="21"></line>
+              <line x1="4" y1="4" x2="9" y2="9"></line>
+            </svg>
+          </div>
+          <div>
+            <h3 style="margin: 0; font-size: 1.15rem;">Aether DJ Transition Studio</h3>
+            <span class="dj-transition-status-pill">Dual-Deck Crossfade Engine • Harmonic Mixing</span>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span class="dj-match-pill" id="transitionHarmonicMatchBadge">Harmonic Match</span>
+          <button class="btn btn-sm btn-icon-only btn-close-modal" id="btnCloseDjTransition" aria-label="Close modal">&times;</button>
+        </div>
+      </div>
+
+      <div class="dj-transition-body">
+        <!-- DECK A: OUTGOING TRACK -->
+        <div class="dj-deck-card deck-outgoing" id="djDeckACard">
+          <div class="dj-deck-meta-row">
+            <div class="dj-deck-badge-tag tag-deck-a">DECK A • OUTGOING</div>
+            <div class="dj-deck-track-info">
+              <div class="dj-deck-thumb" id="deckAThumb">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+              </div>
+              <div class="dj-deck-text">
+                <span class="dj-deck-title" id="deckATitle">No Track</span>
+                <span class="dj-deck-artist" id="deckAArtist">Select an outgoing song</span>
+              </div>
+            </div>
+            <div class="dj-deck-stats">
+              <span class="dj-pill-badge" id="deckABpmBadge"><strong>BPM</strong> <span id="valDeckABpm">--</span></span>
+              <span class="dj-pill-badge dj-key-pill" id="deckAKeyBadge"><strong>KEY</strong> <span id="valDeckAKey">--</span></span>
+            </div>
+          </div>
+          <div class="dj-deck-waveform-wrapper">
+            <canvas class="dj-deck-canvas" id="canvasDeckAWaveform" width="480" height="48"></canvas>
+            <div class="dj-transition-overlay-zone zone-outgoing" id="deckATransitionZone"></div>
+          </div>
+        </div>
+
+        <!-- TRANSITION CONTROLS & CURVE VISUALIZER -->
+        <div class="dj-transition-controls-strip">
+          <div class="dj-controls-subrow">
+            <!-- Bar Count Selector -->
+            <div class="dj-control-group">
+              <span class="dj-control-label">Transition Window:</span>
+              <div class="dj-pill-selector" id="transitionBarSelector">
+                <button class="dj-selector-pill" data-bars="4">4 Bars</button>
+                <button class="dj-selector-pill active" data-bars="8">8 Bars</button>
+                <button class="dj-selector-pill" data-bars="16">16 Bars</button>
+                <button class="dj-selector-pill" data-bars="32">32 Bars</button>
+              </div>
+            </div>
+
+            <!-- Calculated duration badge -->
+            <div class="dj-duration-indicator">
+              <span class="dj-duration-label">Transition Duration</span>
+              <span class="dj-duration-val" id="valTransitionDuration">16.0s</span>
+            </div>
+          </div>
+
+          <div class="dj-controls-subrow" style="margin-top: 10px;">
+            <!-- Transition Curve Style -->
+            <div class="dj-control-group">
+              <span class="dj-control-label">Crossfade Curve:</span>
+              <div class="dj-pill-selector" id="transitionCurveSelector">
+                <button class="dj-selector-pill active" data-curve="bass_swap">Bass Swap</button>
+                <button class="dj-selector-pill" data-curve="equal_power">Equal Power</button>
+                <button class="dj-selector-pill" data-curve="drop_cut">Drop Cut</button>
+                <button class="dj-selector-pill" data-curve="smooth">Smooth Fade</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Real-time Crossfade Curve Graph Canvas -->
+          <div class="dj-curve-visualizer-box">
+            <canvas id="canvasTransitionCurves" width="480" height="52"></canvas>
+            <div class="curve-legend-row">
+              <span class="curve-legend-item"><span class="curve-legend-line line-deck-a"></span>Deck A Volume Out</span>
+              <span class="curve-legend-item"><span class="curve-legend-line line-deck-b"></span>Deck B Volume In</span>
+              <span class="curve-legend-item"><span class="curve-legend-line line-bass"></span>Bass Crossover Point</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- DECK B: INCOMING TRACK -->
+        <div class="dj-deck-card deck-incoming" id="djDeckBCard">
+          <div class="dj-deck-meta-row">
+            <div class="dj-deck-badge-tag tag-deck-b">DECK B • INCOMING</div>
+            <div class="dj-deck-track-info">
+              <div class="dj-deck-thumb" id="deckBThumb">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+              </div>
+              <div class="dj-deck-text">
+                <span class="dj-deck-title" id="deckBTitle">No Next Track</span>
+                <span class="dj-deck-artist" id="deckBArtist">Next song in queue</span>
+              </div>
+            </div>
+            <div class="dj-deck-stats">
+              <span class="dj-pill-badge" id="deckBBpmBadge"><strong>BPM</strong> <span id="valDeckBBpm">--</span></span>
+              <span class="dj-pill-badge dj-key-pill" id="deckBKeyBadge"><strong>KEY</strong> <span id="valDeckBKey">--</span></span>
+            </div>
+          </div>
+          <div class="dj-deck-waveform-wrapper">
+            <canvas class="dj-deck-canvas" id="canvasDeckBWaveform" width="480" height="48"></canvas>
+            <div class="dj-transition-overlay-zone zone-incoming" id="deckBTransitionZone"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FOOTER ACTIONS -->
+      <div class="dj-transition-footer">
+        <button class="btn btn-outline dj-preview-btn" id="btnPreviewTransition">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+            <polygon points="5 3 19 12 5 21 5 3" fill="currentColor"></polygon>
+          </svg>
+          <span id="txtPreviewTransition">Audition Transition</span>
+        </button>
+        <button class="btn btn-primary dj-save-btn" id="btnSaveDjTransition">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          <span>Save DJ Transition</span>
+        </button>
       </div>
     </div>
   </div>

@@ -80,6 +80,9 @@ let state = {
   isFetchingMoreQueue: false,
   trackEqCache: {},          // In-memory cache for track EQ: { [songId]: { low, mid, high, updatedAt } }
   trackAnalysisCache: {},    // In-memory cache for audio analysis: { [songId]: { bpm, camelot, peaks, ... } }
+  trackTransitionsCache: {}, // In-memory cache for DJ transitions: { [key]: { bars, curveType, durationSeconds } }
+  isExecutingTransition: false,
+  djTransitionSettings: { bars: 8, curveType: 'bass_swap', durationSeconds: 16 },
   masterEqSettings: { low: 0, mid: 0, high: 0, preset: 'flat' }
 };
 
@@ -91,7 +94,7 @@ let activeAudio = null; // for Spotify previews & Web Audio HTML5 source
 let progressInterval = null;
 
 // ============================================================================
-// AETHER AUDIO ENGINE (Web Audio API Core Pipeline & DSP Graph)
+// AETHER AUDIO ENGINE (Web Audio API Core Pipeline & Dual-Deck DSP Graph)
 // ============================================================================
 const AetherAudioEngine = {
   ctx: null,
@@ -105,16 +108,89 @@ const AetherAudioEngine = {
     high: null
   },
 
-  // Per-Track EQ (3-band)
-  trackEq: {
-    low: null,
-    mid: null,
-    high: null
+  // Dual Decks (Pacemaker DJ Engine)
+  deckA: {
+    id: 'A',
+    audio: null,
+    sourceNode: null,
+    gainNode: null,
+    eq: { low: null, mid: null, high: null }
+  },
+  deckB: {
+    id: 'B',
+    audio: null,
+    sourceNode: null,
+    gainNode: null,
+    eq: { low: null, mid: null, high: null }
+  },
+  activeDeckId: 'A',
+  crossfadeTimer: null,
+  initialized: false,
+
+  get audioElement() {
+    return this.getActiveDeck().audio;
   },
 
-  audioElement: null,
-  sourceNode: null,
-  initialized: false,
+  get trackEq() {
+    return this.getActiveDeck().eq;
+  },
+
+  getActiveDeck() {
+    return this.activeDeckId === 'A' ? this.deckA : this.deckB;
+  },
+
+  getInactiveDeck() {
+    return this.activeDeckId === 'A' ? this.deckB : this.deckA;
+  },
+
+  switchActiveDeck() {
+    this.activeDeckId = (this.activeDeckId === 'A' ? 'B' : 'A');
+    activeAudio = this.getActiveDeck().audio;
+    return this.getActiveDeck();
+  },
+
+  _createDeckGraph(id) {
+    const audio = new Audio();
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+
+    const sourceNode = this.ctx.createMediaElementSource(audio);
+
+    const gainNode = this.ctx.createGain();
+    gainNode.gain.setValueAtTime(id === 'A' ? 1.0 : 0.0, this.ctx.currentTime);
+
+    // Per-Track EQ Filters for this deck (Low, Mid, High)
+    const low = this.ctx.createBiquadFilter();
+    low.type = 'lowshelf';
+    low.frequency.setValueAtTime(120, this.ctx.currentTime);
+    low.gain.setValueAtTime(0, this.ctx.currentTime);
+
+    const mid = this.ctx.createBiquadFilter();
+    mid.type = 'peaking';
+    mid.frequency.setValueAtTime(2000, this.ctx.currentTime);
+    mid.Q.setValueAtTime(1.2, this.ctx.currentTime);
+    mid.gain.setValueAtTime(0, this.ctx.currentTime);
+
+    const high = this.ctx.createBiquadFilter();
+    high.type = 'highshelf';
+    high.frequency.setValueAtTime(7500, this.ctx.currentTime);
+    high.gain.setValueAtTime(0, this.ctx.currentTime);
+
+    // Connect audio -> low -> mid -> high -> gainNode -> masterEq.low
+    sourceNode.connect(low);
+    low.connect(mid);
+    mid.connect(high);
+    high.connect(gainNode);
+    gainNode.connect(this.masterEq.low);
+
+    return {
+      id,
+      audio,
+      sourceNode,
+      gainNode,
+      eq: { low, mid, high }
+    };
+  },
 
   init() {
     if (this.initialized) {
@@ -162,46 +238,24 @@ const AetherAudioEngine = {
       this.masterEq.high.frequency.setValueAtTime(8000, this.ctx.currentTime);
       this.masterEq.high.gain.setValueAtTime(0, this.ctx.currentTime);
 
-      // Per-Track Equalizer
-      this.trackEq.low = this.ctx.createBiquadFilter();
-      this.trackEq.low.type = 'lowshelf';
-      this.trackEq.low.frequency.setValueAtTime(120, this.ctx.currentTime);
-      this.trackEq.low.gain.setValueAtTime(0, this.ctx.currentTime);
-
-      this.trackEq.mid = this.ctx.createBiquadFilter();
-      this.trackEq.mid.type = 'peaking';
-      this.trackEq.mid.frequency.setValueAtTime(2000, this.ctx.currentTime);
-      this.trackEq.mid.Q.setValueAtTime(1.2, this.ctx.currentTime);
-      this.trackEq.mid.gain.setValueAtTime(0, this.ctx.currentTime);
-
-      this.trackEq.high = this.ctx.createBiquadFilter();
-      this.trackEq.high.type = 'highshelf';
-      this.trackEq.high.frequency.setValueAtTime(7500, this.ctx.currentTime);
-      this.trackEq.high.gain.setValueAtTime(0, this.ctx.currentTime);
-
-      // Create primary playback HTMLAudioElement with anonymous CORS
-      this.audioElement = new Audio();
-      this.audioElement.crossOrigin = 'anonymous';
-      this.audioElement.preload = 'auto';
-
-      // Connect graph:
-      // AudioElement -> Track EQ (Low -> Mid -> High) -> Master EQ (Low -> Mid -> High) -> Master Gain -> Limiter -> Destination
-      this.sourceNode = this.ctx.createMediaElementSource(this.audioElement);
-      this.sourceNode.connect(this.trackEq.low);
-      this.trackEq.low.connect(this.trackEq.mid);
-      this.trackEq.mid.connect(this.trackEq.high);
-      this.trackEq.high.connect(this.masterEq.low);
+      // Connect Master Pipeline:
+      // masterEq.low -> masterEq.mid -> masterEq.high -> masterGain -> limiter -> destination
       this.masterEq.low.connect(this.masterEq.mid);
       this.masterEq.mid.connect(this.masterEq.high);
       this.masterEq.high.connect(this.masterGain);
       this.masterGain.connect(this.limiter);
       this.limiter.connect(this.ctx.destination);
 
+      // Initialize Dual Decks (Deck A and Deck B)
+      this.deckA = this._createDeckGraph('A');
+      this.deckB = this._createDeckGraph('B');
+      this.activeDeckId = 'A';
+
       // Expose to activeAudio so existing event handlers operate seamlessly
-      activeAudio = this.audioElement;
+      activeAudio = this.deckA.audio;
 
       this.initialized = true;
-      console.log('[AudioEngine] Web Audio Core Graph initialized successfully');
+      console.log('[AudioEngine] Dual-Deck Web Audio Core Graph initialized successfully');
 
       if (state.masterEqSettings) {
         this.setMasterEq(
@@ -224,8 +278,11 @@ const AetherAudioEngine = {
       const effective = ratio <= 0.001 ? 0 : Math.pow(ratio, 2.2);
       this.masterGain.gain.setTargetAtTime(effective, this.ctx.currentTime, 0.03);
     }
-    if (this.audioElement) {
-      try { this.audioElement.volume = Math.max(0, Math.min(1, ratio)); } catch (e) {}
+    if (this.deckA && this.deckA.audio) {
+      try { this.deckA.audio.volume = Math.max(0, Math.min(1, ratio)); } catch (e) {}
+    }
+    if (this.deckB && this.deckB.audio) {
+      try { this.deckB.audio.volume = Math.max(0, Math.min(1, ratio)); } catch (e) {}
     }
   },
 
@@ -237,23 +294,125 @@ const AetherAudioEngine = {
     if (this.masterEq.high && highDb !== undefined) this.masterEq.high.gain.setTargetAtTime(highDb, now, 0.05);
   },
 
-  setTrackEq(lowDb, midDb, highDb) {
+  setTrackEq(lowDb, midDb, highDb, targetDeckId = null) {
     if (!this.ctx) return;
+    const deck = targetDeckId ? (targetDeckId === 'A' ? this.deckA : this.deckB) : this.getActiveDeck();
+    if (!deck || !deck.eq) return;
     const now = this.ctx.currentTime;
-    if (this.trackEq.low && lowDb !== undefined) this.trackEq.low.gain.setTargetAtTime(lowDb, now, 0.05);
-    if (this.trackEq.mid && midDb !== undefined) this.trackEq.mid.gain.setTargetAtTime(midDb, now, 0.05);
-    if (this.trackEq.high && highDb !== undefined) this.trackEq.high.gain.setTargetAtTime(highDb, now, 0.05);
+    if (deck.eq.low && lowDb !== undefined) deck.eq.low.gain.setTargetAtTime(lowDb, now, 0.05);
+    if (deck.eq.mid && midDb !== undefined) deck.eq.mid.gain.setTargetAtTime(midDb, now, 0.05);
+    if (deck.eq.high && highDb !== undefined) deck.eq.high.gain.setTargetAtTime(highDb, now, 0.05);
   },
 
-  resetTrackEq() {
-    this.setTrackEq(0, 0, 0);
+  resetTrackEq(targetDeckId = null) {
+    this.setTrackEq(0, 0, 0, targetDeckId);
+  },
+
+  cancelCrossfade() {
+    if (this.crossfadeTimer) {
+      clearTimeout(this.crossfadeTimer);
+      this.crossfadeTimer = null;
+    }
+  },
+
+  executeCrossfade({ duration = 12, curveType = 'bass_swap', onComplete = null } = {}) {
+    if (!this.ctx || !this.initialized) {
+      if (typeof onComplete === 'function') onComplete();
+      return;
+    }
+
+    this.cancelCrossfade();
+
+    const outgoing = this.getActiveDeck();
+    const incoming = this.getInactiveDeck();
+    const startTime = this.ctx.currentTime;
+    const dur = Math.max(1, duration);
+
+    // Cancel scheduled parameter changes
+    outgoing.gainNode.gain.cancelScheduledValues(startTime);
+    incoming.gainNode.gain.cancelScheduledValues(startTime);
+    outgoing.gainNode.gain.setValueAtTime(1.0, startTime);
+    incoming.gainNode.gain.setValueAtTime(0.0, startTime);
+
+    const steps = 60;
+    const outCurve = new Float32Array(steps);
+    const inCurve = new Float32Array(steps);
+
+    for (let i = 0; i < steps; i++) {
+      const t = i / (steps - 1);
+      if (curveType === 'equal_power' || curveType === 'bass_swap') {
+        outCurve[i] = Math.cos(t * 0.5 * Math.PI);
+        inCurve[i] = Math.sin(t * 0.5 * Math.PI);
+      } else if (curveType === 'smooth') {
+        outCurve[i] = 1 - t;
+        inCurve[i] = t;
+      } else if (curveType === 'drop_cut') {
+        outCurve[i] = t < 0.95 ? 1.0 : (1.0 - (t - 0.95) / 0.05);
+        inCurve[i] = t > 0.05 ? 1.0 : (t / 0.05);
+      } else {
+        outCurve[i] = Math.cos(t * 0.5 * Math.PI);
+        inCurve[i] = Math.sin(t * 0.5 * Math.PI);
+      }
+    }
+
+    outgoing.gainNode.gain.setValueCurveAtTime(outCurve, startTime, dur);
+    incoming.gainNode.gain.setValueCurveAtTime(inCurve, startTime, dur);
+
+    // Bass Swap: frequency crossover at 50% midpoint
+    if (curveType === 'bass_swap') {
+      const midTime = startTime + (dur * 0.5);
+      const swapDuration = Math.min(2.5, dur * 0.25);
+
+      outgoing.eq.low.gain.cancelScheduledValues(startTime);
+      outgoing.eq.low.gain.setValueAtTime(0, startTime);
+      outgoing.eq.low.gain.setTargetAtTime(-24, Math.max(startTime, midTime - swapDuration), swapDuration * 0.5);
+
+      incoming.eq.low.gain.cancelScheduledValues(startTime);
+      incoming.eq.low.gain.setValueAtTime(-24, startTime);
+      incoming.eq.low.gain.setTargetAtTime(0, midTime, swapDuration * 0.5);
+    }
+
+    this.crossfadeTimer = setTimeout(() => {
+      try {
+        const now = this.ctx.currentTime;
+        outgoing.gainNode.gain.setValueAtTime(0.0, now);
+        incoming.gainNode.gain.setValueAtTime(1.0, now);
+        outgoing.eq.low.gain.setValueAtTime(0, now);
+        incoming.eq.low.gain.setValueAtTime(0, now);
+        if (outgoing.audio) {
+          outgoing.audio.pause();
+        }
+      } catch (e) {}
+
+      if (typeof onComplete === 'function') {
+        onComplete();
+      }
+    }, dur * 1000);
   },
 
   stopPlayback() {
-    if (this.audioElement) {
+    this.cancelCrossfade();
+    if (this.deckA && this.deckA.audio) {
       try {
-        this.audioElement.pause();
-        this.audioElement.currentTime = 0;
+        this.deckA.audio.pause();
+        this.deckA.audio.currentTime = 0;
+      } catch (e) {}
+    }
+    if (this.deckB && this.deckB.audio) {
+      try {
+        this.deckB.audio.pause();
+        this.deckB.audio.currentTime = 0;
+      } catch (e) {}
+    }
+    if (this.ctx && this.deckA && this.deckB) {
+      try {
+        const now = this.ctx.currentTime;
+        this.deckA.gainNode.gain.cancelScheduledValues(now);
+        this.deckB.gainNode.gain.cancelScheduledValues(now);
+        this.deckA.gainNode.gain.setValueAtTime(this.activeDeckId === 'A' ? 1.0 : 0.0, now);
+        this.deckB.gainNode.gain.setValueAtTime(this.activeDeckId === 'B' ? 1.0 : 0.0, now);
+        this.deckA.eq.low.gain.setValueAtTime(0, now);
+        this.deckB.eq.low.gain.setValueAtTime(0, now);
       } catch (e) {}
     }
   }
@@ -285,7 +444,7 @@ const AetherAudioDB = {
         return resolve(null);
       }
       try {
-        const req = window.indexedDB.open('aether_audio_db', 2);
+        const req = window.indexedDB.open('aether_audio_db', 3);
         req.onupgradeneeded = (e) => {
           const db = e.target.result;
           if (!db.objectStoreNames.contains('track_eq')) {
@@ -293,6 +452,9 @@ const AetherAudioDB = {
           }
           if (!db.objectStoreNames.contains('track_analysis')) {
             db.createObjectStore('track_analysis', { keyPath: 'id' });
+          }
+          if (!db.objectStoreNames.contains('track_transitions')) {
+            db.createObjectStore('track_transitions', { keyPath: 'key' });
           }
         };
         req.onsuccess = (e) => {
@@ -404,6 +566,50 @@ const AetherAudioDB = {
       store.put({ id: trackId, ...analysisData, updatedAt: Date.now() });
     } catch (e) {
       console.warn('[AudioDB] saveTrackAnalysis error:', e);
+    }
+  },
+
+  async getTransition(key) {
+    if (!key) return null;
+    if (state.trackTransitionsCache && state.trackTransitionsCache[key]) {
+      return state.trackTransitionsCache[key];
+    }
+    try {
+      const db = await this.init();
+      if (!db) return null;
+      return new Promise((resolve) => {
+        const tx = db.transaction('track_transitions', 'readonly');
+        const store = tx.objectStore('track_transitions');
+        const req = store.get(key);
+        req.onsuccess = () => {
+          const res = req.result;
+          if (res) {
+            if (!state.trackTransitionsCache) state.trackTransitionsCache = {};
+            state.trackTransitionsCache[key] = res;
+          }
+          resolve(res || null);
+        };
+        req.onerror = () => resolve(null);
+      });
+    } catch (e) {
+      console.warn('[AudioDB] getTransition error:', e);
+      return null;
+    }
+  },
+
+  async saveTransition(key, data) {
+    if (!key || !data) return;
+    if (!state.trackTransitionsCache) state.trackTransitionsCache = {};
+    const record = { key, ...data, updatedAt: Date.now() };
+    state.trackTransitionsCache[key] = record;
+    try {
+      const db = await this.init();
+      if (!db) return;
+      const tx = db.transaction('track_transitions', 'readwrite');
+      const store = tx.objectStore('track_transitions');
+      store.put(record);
+    } catch (e) {
+      console.warn('[AudioDB] saveTransition error:', e);
     }
   }
 };
@@ -1112,6 +1318,515 @@ function setupWaveformScrubbers() {
     canvas.addEventListener('pointerup', endScrub);
     canvas.addEventListener('pointercancel', endScrub);
   });
+}
+
+// ============================================================================
+// AETHER DJ TRANSITION STUDIO (Pacemaker DJ Architecture v2.0.0)
+// ============================================================================
+const AetherDjStudio = {
+  activeAuditionTimeout: null,
+  isAuditioning: false,
+
+  openModal() {
+    const modal = document.getElementById('modalDjTransition');
+    if (!modal) return;
+    modal.classList.add('active');
+
+    // Deck A: currently playing track
+    const outgoing = state.currentSong;
+
+    // Deck B: upcoming track in queue
+    let incoming = null;
+    if (state.playQueue && state.playQueue.length > state.currentQueueIndex + 1) {
+      incoming = state.playQueue[state.currentQueueIndex + 1];
+    } else if (state.playQueue && state.playQueue.length > 0 && state.currentQueueIndex === state.playQueue.length - 1) {
+      incoming = state.playQueue[0];
+    }
+
+    this.renderStudioUI(outgoing, incoming);
+    this.drawCurves();
+  },
+
+  closeModal() {
+    const modal = document.getElementById('modalDjTransition');
+    if (modal) {
+      modal.classList.remove('active');
+    }
+    this.stopAudition();
+  },
+
+  async renderStudioUI(songA, songB) {
+    // 1. Deck A Render
+    const titleA = document.getElementById('deckATitle');
+    const artistA = document.getElementById('deckAArtist');
+    const thumbA = document.getElementById('deckAThumb');
+    const bpmValA = document.getElementById('valDeckABpm');
+    const keyValA = document.getElementById('valDeckAKey');
+    const keyBadgeA = document.getElementById('deckAKeyBadge');
+
+    let analysisA = null;
+    if (songA) {
+      if (titleA) titleA.textContent = songA.title || 'Unknown Title';
+      if (artistA) artistA.textContent = songA.artist || 'Unknown Artist';
+      if (thumbA) {
+        if (songA.thumbnail) {
+          thumbA.innerHTML = `<img src="${songA.thumbnail}" alt="Art">`;
+        } else {
+          thumbA.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
+        }
+      }
+      analysisA = await AetherAudioAnalyzer.getOrAnalyzeTrack(songA);
+      if (analysisA) {
+        if (bpmValA) bpmValA.textContent = analysisA.bpm;
+        if (keyValA) keyValA.textContent = analysisA.camelot;
+        if (keyBadgeA) {
+          const color = getCamelotColor(analysisA.camelot);
+          keyBadgeA.style.borderColor = `${color}88`;
+          keyBadgeA.style.background = `${color}20`;
+        }
+        const canvasA = document.getElementById('canvasDeckAWaveform');
+        if (canvasA) {
+          drawMultiBandWaveform(canvasA, analysisA, 0.85);
+        }
+      }
+    } else {
+      if (titleA) titleA.textContent = 'No Outgoing Track';
+      if (artistA) artistA.textContent = 'Play a song to configure transitions';
+      if (bpmValA) bpmValA.textContent = '--';
+      if (keyValA) keyValA.textContent = '--';
+    }
+
+    // 2. Deck B Render
+    const titleB = document.getElementById('deckBTitle');
+    const artistB = document.getElementById('deckBArtist');
+    const thumbB = document.getElementById('deckBThumb');
+    const bpmValB = document.getElementById('valDeckBBpm');
+    const keyValB = document.getElementById('valDeckBKey');
+    const keyBadgeB = document.getElementById('deckBKeyBadge');
+
+    let analysisB = null;
+    if (songB) {
+      if (titleB) titleB.textContent = songB.title || 'Unknown Title';
+      if (artistB) artistB.textContent = songB.artist || 'Unknown Artist';
+      if (thumbB) {
+        if (songB.thumbnail) {
+          thumbB.innerHTML = `<img src="${songB.thumbnail}" alt="Art">`;
+        } else {
+          thumbB.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
+        }
+      }
+      analysisB = await AetherAudioAnalyzer.getOrAnalyzeTrack(songB);
+      if (analysisB) {
+        if (bpmValB) bpmValB.textContent = analysisB.bpm;
+        if (keyValB) keyValB.textContent = analysisB.camelot;
+        if (keyBadgeB) {
+          const color = getCamelotColor(analysisB.camelot);
+          keyBadgeB.style.borderColor = `${color}88`;
+          keyBadgeB.style.background = `${color}20`;
+        }
+        const canvasB = document.getElementById('canvasDeckBWaveform');
+        if (canvasB) {
+          drawMultiBandWaveform(canvasB, analysisB, 0.15);
+        }
+      }
+    } else {
+      if (titleB) titleB.textContent = 'No Next Track';
+      if (artistB) artistB.textContent = 'Queue a second song to audition transition';
+      if (bpmValB) bpmValB.textContent = '--';
+      if (keyValB) keyValB.textContent = '--';
+    }
+
+    // 3. Harmonic Compatibility Badge
+    const matchBadge = document.getElementById('transitionHarmonicMatchBadge');
+    if (matchBadge) {
+      if (analysisA && analysisB) {
+        const match = AetherAudioAnalyzer.getHarmonicCompatibility(analysisA.camelot, analysisB.camelot);
+        matchBadge.textContent = match.label;
+        matchBadge.style.display = 'inline-block';
+        if (match.type === 'perfect') {
+          matchBadge.style.background = 'rgba(16, 185, 129, 0.2)';
+          matchBadge.style.borderColor = '#10b981';
+          matchBadge.style.color = '#34d399';
+        } else if (match.type === 'lift' || match.type === 'surge') {
+          matchBadge.style.background = 'rgba(56, 189, 248, 0.2)';
+          matchBadge.style.borderColor = '#38bdf8';
+          matchBadge.style.color = '#38bdf8';
+        } else if (match.type === 'mode_shift') {
+          matchBadge.style.background = 'rgba(168, 85, 247, 0.2)';
+          matchBadge.style.borderColor = '#a855f7';
+          matchBadge.style.color = '#c084fc';
+        } else {
+          matchBadge.style.background = 'rgba(245, 158, 11, 0.2)';
+          matchBadge.style.borderColor = '#f59e0b';
+          matchBadge.style.color = '#fbbf24';
+        }
+      } else {
+        matchBadge.style.display = 'none';
+      }
+    }
+
+    // 4. Load Saved Transition for this track pair (if exists)
+    if (songA) {
+      const transKey = songB ? `${songA.id}_to_${songB.id}` : `${songA.id}_default`;
+      const saved = await AetherAudioDB.getTransition(transKey) || await AetherAudioDB.getTransition(`${songA.id}_default`);
+      if (saved) {
+        state.djTransitionSettings.bars = saved.bars || state.djTransitionSettings.bars;
+        state.djTransitionSettings.curveType = saved.curveType || state.djTransitionSettings.curveType;
+      }
+    }
+
+    // 5. Update Duration & Overlay Zones
+    this.updateDuration(analysisA);
+    this.updatePillSelectors();
+  },
+
+  updateDuration(analysisA = null) {
+    const bpm = (analysisA && analysisA.bpm) ? analysisA.bpm : 120;
+    const durSecs = parseFloat((state.djTransitionSettings.bars * (240 / bpm)).toFixed(1));
+    state.djTransitionSettings.durationSeconds = durSecs;
+
+    const valDuration = document.getElementById('valTransitionDuration');
+    if (valDuration) {
+      valDuration.textContent = `${durSecs}s`;
+    }
+
+    const baseDuration = (state.duration > 0 ? state.duration : 180);
+    const transPct = Math.min(45, Math.max(8, (durSecs / baseDuration) * 100));
+
+    const zoneA = document.getElementById('deckATransitionZone');
+    if (zoneA) zoneA.style.width = `${transPct}%`;
+
+    const zoneB = document.getElementById('deckBTransitionZone');
+    if (zoneB) zoneB.style.width = `${transPct}%`;
+  },
+
+  updatePillSelectors() {
+    document.querySelectorAll('#transitionBarSelector .dj-selector-pill').forEach(pill => {
+      const b = parseInt(pill.getAttribute('data-bars'), 10);
+      pill.classList.toggle('active', b === state.djTransitionSettings.bars);
+    });
+
+    document.querySelectorAll('#transitionCurveSelector .dj-selector-pill').forEach(pill => {
+      const c = pill.getAttribute('data-curve');
+      pill.classList.toggle('active', c === state.djTransitionSettings.curveType);
+    });
+  },
+
+  drawCurves() {
+    const canvas = document.getElementById('canvasTransitionCurves');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const targetW = Math.round(rect.width * dpr);
+    const targetH = Math.round(rect.height * dpr);
+
+    if (targetW > 0 && targetH > 0 && (canvas.width !== targetW || canvas.height !== targetH)) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
+
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const pad = 6 * dpr;
+    const plotW = w - (pad * 2);
+    const plotH = h - (pad * 2);
+
+    // Subtle Grid & 50% Crossover marker
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.lineWidth = 1 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(w / 2, 0);
+    ctx.lineTo(w / 2, h);
+    ctx.stroke();
+
+    const curveType = state.djTransitionSettings.curveType;
+    const steps = 100;
+
+    // Deck A Curve (Purple #a855f7)
+    ctx.beginPath();
+    ctx.strokeStyle = '#a855f7';
+    ctx.lineWidth = 2.5 * dpr;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      let val = 0;
+      if (curveType === 'equal_power' || curveType === 'bass_swap') {
+        val = Math.cos(t * 0.5 * Math.PI);
+      } else if (curveType === 'smooth') {
+        val = 1 - t;
+      } else if (curveType === 'drop_cut') {
+        val = t < 0.95 ? 1.0 : (1.0 - (t - 0.95) / 0.05);
+      } else {
+        val = Math.cos(t * 0.5 * Math.PI);
+      }
+      const x = pad + t * plotW;
+      const y = pad + (1 - val) * plotH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // Deck B Curve (Cyan #38bdf8)
+    ctx.beginPath();
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 2.5 * dpr;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      let val = 0;
+      if (curveType === 'equal_power' || curveType === 'bass_swap') {
+        val = Math.sin(t * 0.5 * Math.PI);
+      } else if (curveType === 'smooth') {
+        val = t;
+      } else if (curveType === 'drop_cut') {
+        val = t > 0.05 ? 1.0 : (t / 0.05);
+      } else {
+        val = Math.sin(t * 0.5 * Math.PI);
+      }
+      const x = pad + t * plotW;
+      const y = pad + (1 - val) * plotH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // If Bass Swap: draw amber crossover dashed line and indicator
+    if (curveType === 'bass_swap') {
+      ctx.setLineDash([4 * dpr, 3 * dpr]);
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 2 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(w / 2, 0);
+      ctx.lineTo(w / 2, h);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath();
+      ctx.arc(w / 2, h / 2, 4 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+
+  async startAudition() {
+    if (this.isAuditioning) {
+      this.stopAudition();
+      return;
+    }
+
+    const songA = state.currentSong;
+    let songB = null;
+    if (state.playQueue && state.playQueue.length > state.currentQueueIndex + 1) {
+      songB = state.playQueue[state.currentQueueIndex + 1];
+    } else if (state.playQueue && state.playQueue.length > 0) {
+      songB = state.playQueue[0];
+    }
+
+    if (!songA || !songB) {
+      showToast('Need at least 2 tracks in queue to audition');
+      return;
+    }
+
+    AetherAudioEngine.init();
+    if (!AetherAudioEngine.initialized) {
+      showToast('Audio engine not ready');
+      return;
+    }
+
+    this.isAuditioning = true;
+    const btn = document.getElementById('btnPreviewTransition');
+    const txt = document.getElementById('txtPreviewTransition');
+    if (btn) btn.classList.add('btn-primary');
+    if (txt) txt.textContent = 'Stop Audition';
+
+    const transSecs = state.djTransitionSettings.durationSeconds;
+    const curveType = state.djTransitionSettings.curveType;
+
+    const deckA = AetherAudioEngine.deckA;
+    const deckB = AetherAudioEngine.deckB;
+
+    let srcB = '';
+    const isOfflineB = (state.downloadedTrackIds && state.downloadedTrackIds.has(songB.id));
+    if (isOfflineB) {
+      srcB = `/api/offline/stream?id=${encodeURIComponent(songB.id)}`;
+    } else {
+      const vidB = songB._preResolvedYtId || songB.id;
+      srcB = `/api/stream/proxy?id=${encodeURIComponent(vidB)}`;
+    }
+
+    deckB.audio.src = srcB;
+    deckB.audio.currentTime = 0;
+
+    // Start Deck A slightly before transition (e.g. 2s pre-roll + transSecs)
+    const preRoll = 2.0;
+    const seekA = Math.max(0, (state.duration || 180) - transSecs - preRoll);
+    deckA.audio.currentTime = seekA;
+
+    try {
+      await deckA.audio.play();
+    } catch (e) {}
+
+    showToast(`Auditioning ${state.djTransitionSettings.bars} Bars Transition...`);
+
+    // Wait pre-roll seconds then trigger crossfade
+    this.activeAuditionTimeout = setTimeout(async () => {
+      try {
+        await deckB.audio.play();
+      } catch (e) {}
+
+      AetherAudioEngine.executeCrossfade({
+        duration: transSecs,
+        curveType: curveType,
+        onComplete: () => {
+          this.stopAudition();
+          showToast('Audition Complete');
+        }
+      });
+    }, preRoll * 1000);
+  },
+
+  stopAudition() {
+    this.isAuditioning = false;
+    if (this.activeAuditionTimeout) {
+      clearTimeout(this.activeAuditionTimeout);
+      this.activeAuditionTimeout = null;
+    }
+    AetherAudioEngine.cancelCrossfade();
+    try {
+      if (AetherAudioEngine.deckB && AetherAudioEngine.deckB.audio) {
+        AetherAudioEngine.deckB.audio.pause();
+        AetherAudioEngine.deckB.gainNode.gain.setValueAtTime(0, AetherAudioEngine.ctx.currentTime);
+      }
+      if (AetherAudioEngine.deckA && AetherAudioEngine.deckA.gainNode) {
+        AetherAudioEngine.deckA.gainNode.gain.setValueAtTime(1, AetherAudioEngine.ctx.currentTime);
+        AetherAudioEngine.deckA.eq.low.gain.setValueAtTime(0, AetherAudioEngine.ctx.currentTime);
+      }
+    } catch (e) {}
+
+    const btn = document.getElementById('btnPreviewTransition');
+    const txt = document.getElementById('txtPreviewTransition');
+    if (btn) btn.classList.remove('btn-primary');
+    if (txt) txt.textContent = 'Audition Transition';
+  },
+
+  async saveCurrentTransition() {
+    const songA = state.currentSong;
+    let songB = null;
+    if (state.playQueue && state.playQueue.length > state.currentQueueIndex + 1) {
+      songB = state.playQueue[state.currentQueueIndex + 1];
+    }
+
+    if (!songA) {
+      showToast('No active song to save transition for');
+      return;
+    }
+
+    const payload = {
+      bars: state.djTransitionSettings.bars,
+      curveType: state.djTransitionSettings.curveType,
+      durationSeconds: state.djTransitionSettings.durationSeconds
+    };
+
+    const transKey = songB ? `${songA.id}_to_${songB.id}` : `${songA.id}_default`;
+    await AetherAudioDB.saveTransition(transKey, payload);
+    await AetherAudioDB.saveTransition(`${songA.id}_default`, payload);
+
+    const dot = document.getElementById('transitionActiveDot');
+    if (dot) dot.style.display = 'block';
+
+    showToast(`DJ Transition Saved (${payload.bars} Bars • ${payload.curveType.replace('_', ' ')})`);
+    this.closeModal();
+  }
+};
+
+async function updateDjTransitionIndicator(song) {
+  const dot = document.getElementById('transitionActiveDot');
+  if (!dot || !song) return;
+  const nextSong = (state.playQueue && state.playQueue.length > state.currentQueueIndex + 1) ? state.playQueue[state.currentQueueIndex + 1] : null;
+  const transKey = nextSong ? `${song.id}_to_${nextSong.id}` : `${song.id}_default`;
+  const saved = await AetherAudioDB.getTransition(transKey) || await AetherAudioDB.getTransition(`${song.id}_default`);
+  dot.style.display = saved ? 'block' : 'none';
+}
+
+function setupDjStudioEventListeners() {
+  const btnToggle = document.getElementById('btnToggleDjTransition');
+  if (btnToggle) {
+    btnToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      AetherDjStudio.openModal();
+    });
+  }
+
+  const btnMobileNp = document.getElementById('btnMobileNpTransition');
+  if (btnMobileNp) {
+    btnMobileNp.addEventListener('click', (e) => {
+      e.stopPropagation();
+      AetherDjStudio.openModal();
+    });
+  }
+
+  const btnClose = document.getElementById('btnCloseDjTransition');
+  if (btnClose) {
+    btnClose.addEventListener('click', (e) => {
+      e.stopPropagation();
+      AetherDjStudio.closeModal();
+    });
+  }
+
+  const modal = document.getElementById('modalDjTransition');
+  if (modal) {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        AetherDjStudio.closeModal();
+      }
+    });
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal && modal.classList.contains('active')) {
+      AetherDjStudio.closeModal();
+    }
+  });
+
+  // Bar selector pills
+  document.querySelectorAll('#transitionBarSelector .dj-selector-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const bars = parseInt(pill.getAttribute('data-bars'), 10);
+      state.djTransitionSettings.bars = bars;
+      AetherDjStudio.updateDuration(state.currentSong && state.trackAnalysisCache ? state.trackAnalysisCache[state.currentSong.id] : null);
+      AetherDjStudio.updatePillSelectors();
+      AetherDjStudio.drawCurves();
+    });
+  });
+
+  // Curve selector pills
+  document.querySelectorAll('#transitionCurveSelector .dj-selector-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const curve = pill.getAttribute('data-curve');
+      state.djTransitionSettings.curveType = curve;
+      AetherDjStudio.updatePillSelectors();
+      AetherDjStudio.drawCurves();
+    });
+  });
+
+  // Audition button
+  const btnPreview = document.getElementById('btnPreviewTransition');
+  if (btnPreview) {
+    btnPreview.addEventListener('click', () => {
+      AetherDjStudio.startAudition();
+    });
+  }
+
+  // Save button
+  const btnSave = document.getElementById('btnSaveDjTransition');
+  if (btnSave) {
+    btnSave.addEventListener('click', () => {
+      AetherDjStudio.saveCurrentTransition();
+    });
+  }
 }
 
 // Global one-time unlock for AudioContext on first user interaction
@@ -2923,6 +3638,9 @@ function setupEventListeners() {
 
   // Dual Audio Mixer & Equalizer Event Listeners
   setupAudioMixerEventListeners();
+
+  // DJ Transition Studio Event Listeners (v2.0.0)
+  setupDjStudioEventListeners();
 }
 
 // --- DYNAMIC THEME SYSTEM IMPLEMENTATION ---
@@ -3903,6 +4621,14 @@ function playSongList(songs, startIndex) {
 }
 
 function playSong(song, index) {
+  // Cancel active DJ transition if any
+  if (state.isExecutingTransition) {
+    state.isExecutingTransition = false;
+    if (window.AetherAudioEngine) {
+      AetherAudioEngine.cancelCrossfade();
+    }
+  }
+
   // Stop existing playback
   stopActivePlayback();
 
@@ -3929,6 +4655,11 @@ function playSong(song, index) {
 
   // Sync Audio Mixer Modal and restore Per-Track EQ settings
   syncMixerModalTrackInfo(song);
+
+  // Sync DJ Transition Indicator Dot
+  if (typeof updateDjTransitionIndicator === 'function') {
+    updateDjTransitionIndicator(song);
+  }
 
   // Extract or load DJ analysis (BPM, Camelot Key, Multi-band waveform)
   if (typeof renderTrackDjAnalysis === 'function') {
@@ -4550,6 +5281,100 @@ function updateTimelineUI(currentSec) {
   }
 }
 
+async function triggerAutomatedQueueTransition(nextSong, transConfig) {
+  if (state.isExecutingTransition) return;
+  state.isExecutingTransition = true;
+  state.isTransitioning = true;
+  state.transitionStartTime = Date.now();
+
+  const dur = Math.max(2, transConfig.durationSeconds || 16);
+  const curve = transConfig.curveType || 'bass_swap';
+
+  console.log(`[DJ Engine] Triggering automated transition into "${nextSong.title}" (${transConfig.bars || 8} bars, ${dur}s, ${curve})`);
+  showToast(`DJ Transition: ${nextSong.title}`);
+
+  // Resolve incoming track stream source
+  let incomingSrc = '';
+  const isOffline = (state.downloadedTrackIds && state.downloadedTrackIds.has(nextSong.id));
+  if (isOffline) {
+    incomingSrc = `/api/offline/stream?id=${encodeURIComponent(nextSong.id)}`;
+  } else {
+    const videoId = nextSong._preResolvedYtId || nextSong.id;
+    incomingSrc = `/api/stream/proxy?id=${encodeURIComponent(videoId)}`;
+  }
+
+  // Pre-load incoming track on inactive deck
+  const inactiveDeck = AetherAudioEngine.getInactiveDeck();
+  inactiveDeck.audio.src = incomingSrc;
+  inactiveDeck.audio.currentTime = 0;
+
+  // Restore or reset Per-Track EQ for incoming track
+  const incomingEq = await AetherAudioDB.getTrackEq(nextSong.id);
+  if (incomingEq) {
+    AetherAudioEngine.setTrackEq(incomingEq.low || 0, incomingEq.mid || 0, incomingEq.high || 0, inactiveDeck.id);
+  } else {
+    AetherAudioEngine.resetTrackEq(inactiveDeck.id);
+  }
+
+  try {
+    await inactiveDeck.audio.play();
+  } catch (err) {
+    console.warn('[DJ Engine] Inactive deck play error:', err);
+  }
+
+  // Execute hardware-clock crossfade on Web Audio graph
+  AetherAudioEngine.executeCrossfade({
+    duration: dur,
+    curveType: curve,
+    onComplete: () => {
+      // Switch active deck
+      AetherAudioEngine.switchActiveDeck();
+      state.isExecutingTransition = false;
+      state.isTransitioning = false;
+
+      // Update state to new track
+      state.currentSong = nextSong;
+      state.currentQueueIndex++;
+      state.playbackPosition = dur;
+      state.duration = Math.floor(inactiveDeck.audio.duration || 180);
+
+      // Update UI components
+      savePlaybackSession();
+      logPlayHistory(nextSong);
+      updateRightSidebar(nextSong);
+      updateFavoriteUI(nextSong);
+      syncMixerModalTrackInfo(nextSong);
+      if (typeof updateDjTransitionIndicator === 'function') {
+        updateDjTransitionIndicator(nextSong);
+      }
+      if (typeof renderTrackDjAnalysis === 'function') {
+        renderTrackDjAnalysis(nextSong);
+      }
+      renderQueueUI();
+
+      document.getElementById('playerSongTitle').textContent = nextSong.title;
+      document.getElementById('playerSongArtist').textContent = nextSong.artist || 'Unknown';
+      document.getElementById('playerPlatformBadge').textContent = nextSong.platform;
+      if (nextSong.thumbnail) {
+        document.getElementById('playerAlbumArt').innerHTML = `<img src="${nextSong.thumbnail}" alt="Art">`;
+      }
+      document.getElementById('playerTotalDuration').textContent = formatSeconds(state.duration);
+      const mobileNpTotalDuration = document.getElementById('mobileNpTotalDuration');
+      if (mobileNpTotalDuration) mobileNpTotalDuration.textContent = formatSeconds(state.duration);
+
+      // Android notification sync
+      if (window.AndroidAudio && typeof window.AndroidAudio.updateMetadata === 'function') {
+        try {
+          window.AndroidAudio.updateMetadata(nextSong.title || 'Aether Track', nextSong.artist || 'Unknown Artist', nextSong.thumbnail || '', true);
+        } catch (e) {}
+      }
+
+      // Preload next track
+      preloadNextTrackInQueue(state.currentQueueIndex);
+    }
+  });
+}
+
 function startProgressTimer(platform) {
   if (progressInterval) clearInterval(progressInterval);
 
@@ -4565,6 +5390,21 @@ function startProgressTimer(platform) {
 
     state.playbackPosition = currentSec;
     throttledSavePlaybackSession();
+
+    // DJ Transition Engine (Pacemaker style)
+    if (state.duration > 0 && !state.isExecutingTransition && state.currentSong && state.playQueue && state.currentQueueIndex + 1 < state.playQueue.length) {
+      const nextSong = state.playQueue[state.currentQueueIndex + 1];
+      const transKey = `${state.currentSong.id}_to_${nextSong.id}`;
+      const savedTrans = state.trackTransitionsCache[transKey] || state.trackTransitionsCache[`${state.currentSong.id}_default`] || state.djTransitionSettings;
+      const transSecs = (savedTrans && savedTrans.durationSeconds) ? savedTrans.durationSeconds : 16;
+
+      if (currentSec >= state.duration - transSecs && currentSec < state.duration - 0.5) {
+        if (state.currentPlaybackType === 'audio' || state.currentPlaybackType === 'offline' || state.currentPlaybackType === 'preview') {
+          triggerAutomatedQueueTransition(nextSong, savedTrans);
+          return;
+        }
+      }
+    }
 
     // Background track-end detector:
     // When the phone is locked, YouTube IFrame API can occasionally fail to dispatch onStateChange: ENDED.
