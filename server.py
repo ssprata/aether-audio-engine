@@ -6,7 +6,10 @@ import base64
 import time
 import urllib.request
 import urllib.parse
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+try:
+    from http.server import ThreadingHTTPServer as BaseHTTPServer, SimpleHTTPRequestHandler
+except ImportError:
+    from http.server import HTTPServer as BaseHTTPServer, SimpleHTTPRequestHandler
 # ytmusicapi is lazy-loaded on demand below to eliminate startup delay
 
 PORT = 3000
@@ -1028,11 +1031,11 @@ def resolve_spotify_track(track_id):
 
 YOUTUBE_AUDIO_CACHE = {}
 
-def get_youtube_audio_url(video_id):
+def get_youtube_audio_url(video_id, force_refresh=False):
     if not video_id:
         return None
     now = time.time()
-    if video_id in YOUTUBE_AUDIO_CACHE:
+    if not force_refresh and video_id in YOUTUBE_AUDIO_CACHE:
         cached_url, exp = YOUTUBE_AUDIO_CACHE[video_id]
         if now < exp:
             return cached_url
@@ -1052,7 +1055,7 @@ def get_youtube_audio_url(video_id):
             info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
             if info and 'url' in info:
                 url = info['url']
-                YOUTUBE_AUDIO_CACHE[video_id] = (url, now + 14400)
+                YOUTUBE_AUDIO_CACHE[video_id] = (url, now + 3600)
                 return url
     except Exception as e:
         print(f"[get_youtube_audio_url yt_dlp error] {e}")
@@ -1086,7 +1089,7 @@ def get_youtube_audio_url(video_id):
             for af in audio_formats:
                 if 'url' in af:
                     u = af['url']
-                    YOUTUBE_AUDIO_CACHE[video_id] = (u, now + 14400)
+                    YOUTUBE_AUDIO_CACHE[video_id] = (u, now + 3600)
                     return u
     except Exception as e:
         print(f"[get_youtube_audio_url fallback error] {e}")
@@ -1607,9 +1610,25 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS, HEAD')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Range')
         self.end_headers()
+
+    def do_HEAD(self):
+        url_parsed = urllib.parse.urlparse(self.path)
+        path = url_parsed.path
+        if path == '/api/stream/proxy':
+            query_params = urllib.parse.parse_qs(url_parsed.query)
+            video_id = query_params.get('id', [''])[0].strip()
+            audio_url = get_youtube_audio_url(video_id)
+            if audio_url:
+                self.send_response(200)
+                self.send_header('Content-Type', 'audio/mp4')
+                self.send_header('Accept-Ranges', 'bytes')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                return
+        super().do_HEAD()
 
     def do_GET(self):
         url_parsed = urllib.parse.urlparse(self.path)
@@ -2971,33 +2990,59 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             if range_header:
                 req_headers["Range"] = range_header
 
-            try:
-                upstream_req = urllib.request.Request(audio_url, headers=req_headers)
-                with urllib.request.urlopen(upstream_req, timeout=15) as upstream_resp:
-                    status_code = upstream_resp.status
-                    self.send_response(status_code)
-                    for header_name in ['Content-Type', 'Content-Range', 'Content-Length', 'Accept-Ranges']:
-                        val = upstream_resp.headers.get(header_name)
-                        if val:
-                            self.send_header(header_name, val)
-                    self.send_header('Access-Control-Allow-Origin', '*')
-                    self.send_header('Access-Control-Allow-Headers', 'Range, Content-Type')
-                    self.send_header('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges')
-                    self.end_headers()
+            # Two-attempt loop: if upstream returns 403 / 410 (URL expired), re-resolve stream URL automatically
+            for attempt in range(2):
+                try:
+                    upstream_req = urllib.request.Request(audio_url, headers=req_headers)
+                    with urllib.request.urlopen(upstream_req, timeout=12) as upstream_resp:
+                        status_code = upstream_resp.status
+                        self.send_response(status_code)
+                        for header_name in ['Content-Type', 'Content-Range', 'Content-Length', 'Accept-Ranges']:
+                            val = upstream_resp.headers.get(header_name)
+                            if val:
+                                self.send_header(header_name, val)
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.send_header('Access-Control-Allow-Headers', 'Range, Content-Type')
+                        self.send_header('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges')
+                        self.end_headers()
 
-                    chunk_size = 65536
-                    while True:
-                        chunk = upstream_resp.read(chunk_size)
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
-            except Exception as e:
-                print(f"[Stream Proxy Error] {e}")
-                if not self.wfile.closed:
-                    try:
-                        self.send_error(502, f"Proxy stream error: {e}")
-                    except Exception:
-                        pass
+                        chunk_size = 65536
+                        while True:
+                            try:
+                                chunk = upstream_resp.read(chunk_size)
+                                if not chunk:
+                                    break
+                                self.wfile.write(chunk)
+                            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                                # Client closed connection or sought elsewhere
+                                return
+                    return
+                except urllib.error.HTTPError as he:
+                    if he.code in (403, 404, 410) and attempt == 0:
+                        print(f"[Stream Proxy] Upstream returned {he.code} for {video_id}, re-resolving fresh stream URL...")
+                        YOUTUBE_AUDIO_CACHE.pop(video_id, None)
+                        audio_url = get_youtube_audio_url(video_id, force_refresh=True)
+                        if audio_url:
+                            continue
+                    print(f"[Stream Proxy HTTPError] {he.code}: {he}")
+                    break
+                except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                    # Client closed connection during request initialization
+                    return
+                except Exception as e:
+                    print(f"[Stream Proxy Error] {e}")
+                    if attempt == 0:
+                        YOUTUBE_AUDIO_CACHE.pop(video_id, None)
+                        audio_url = get_youtube_audio_url(video_id, force_refresh=True)
+                        if audio_url:
+                            continue
+                    break
+
+            if not self.wfile.closed:
+                try:
+                    self.send_error(502, "Proxy stream error")
+                except Exception:
+                    pass
             return
 
         elif path == '/api/stream-url' or path == '/api/stream':
@@ -3257,8 +3302,9 @@ def get_local_ip():
 
 def start_android_server():
     try:
-        class ReusableServer(HTTPServer):
+        class ReusableServer(BaseHTTPServer):
             allow_reuse_address = True
+            daemon_threads = True
 
         server_address = ('127.0.0.1', PORT)
         httpd = ReusableServer(server_address, AetherPlayerHandler)
@@ -3274,8 +3320,9 @@ def run_server(port=None):
     if port is None:
         port = int(os.environ.get('PORT', PORT))
     
-    class ReusableServer(HTTPServer):
+    class ReusableServer(BaseHTTPServer):
         allow_reuse_address = True
+        daemon_threads = True
 
     server_address = ('', port)
     httpd = ReusableServer(server_address, AetherPlayerHandler)

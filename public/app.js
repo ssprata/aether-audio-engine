@@ -2087,6 +2087,22 @@ const AetherDjStudio = {
     const deckA = AetherAudioEngine.deckA;
     const deckB = AetherAudioEngine.deckB;
 
+    // Ensure Deck A has the outgoing track source loaded
+    let srcA = '';
+    const isOfflineA = (state.downloadedTrackIds && state.downloadedTrackIds.has(songA.id));
+    if (isOfflineA) {
+      srcA = `/api/offline/audio?id=${encodeURIComponent(songA.id)}`;
+    } else {
+      const vidA = songA._preResolvedYtId || songA.id;
+      srcA = `/api/stream/proxy?id=${encodeURIComponent(vidA)}`;
+    }
+    const tokenA = songA._preResolvedYtId || songA.id;
+    if (!deckA.audio.src || !deckA.audio.src.includes(encodeURIComponent(tokenA))) {
+      deckA.audio.crossOrigin = 'anonymous';
+      deckA.audio.src = srcA;
+    }
+
+    // Ensure Deck B has the incoming track source loaded
     let srcB = '';
     const isOfflineB = (state.downloadedTrackIds && state.downloadedTrackIds.has(songB.id));
     if (isOfflineB) {
@@ -2095,14 +2111,19 @@ const AetherDjStudio = {
       const vidB = songB._preResolvedYtId || songB.id;
       srcB = `/api/stream/proxy?id=${encodeURIComponent(vidB)}`;
     }
+    const tokenB = songB._preResolvedYtId || songB.id;
+    if (!deckB.audio.src || !deckB.audio.src.includes(encodeURIComponent(tokenB))) {
+      deckB.audio.crossOrigin = 'anonymous';
+      deckB.audio.src = srcB;
+    }
 
-    deckB.audio.crossOrigin = 'anonymous';
-    deckB.audio.src = srcB;
     deckB.audio.currentTime = 0;
 
     // Deck A seek position: last transSecs of the track
     const durA = (state.duration > 0 ? state.duration : 180);
-    deckA.audio.currentTime = Math.max(0, durA - transSecs);
+    try {
+      deckA.audio.currentTime = Math.max(0, durA - transSecs);
+    } catch (e) {}
 
     // Launch audio playback asynchronously without blocking the visual animation loop
     deckA.audio.play().catch(e => console.warn('[DJ Studio] Deck A play warning:', e));
@@ -2199,18 +2220,31 @@ const AetherDjStudio = {
     if (txtPreview) txtPreview.textContent = 'Audition Transition';
 
     try {
+      const actId = AetherAudioEngine.activeDeckId || 'A';
+      const now = AetherAudioEngine.ctx ? AetherAudioEngine.ctx.currentTime : 0;
+
       if (AetherAudioEngine.deckB && AetherAudioEngine.deckB.audio) {
-        AetherAudioEngine.deckB.audio.pause();
+        if (actId !== 'B') {
+          AetherAudioEngine.deckB.audio.pause();
+        }
         if (AetherAudioEngine.ctx) {
-          AetherAudioEngine.deckB.gainNode.gain.setValueAtTime(0, AetherAudioEngine.ctx.currentTime);
-          AetherAudioEngine.deckB.eq.low.gain.setValueAtTime(0, AetherAudioEngine.ctx.currentTime);
+          AetherAudioEngine.deckB.gainNode.gain.cancelScheduledValues(now);
+          AetherAudioEngine.deckB.gainNode.gain.setValueAtTime(actId === 'B' ? 1.0 : 0.0, now);
+          AetherAudioEngine.deckB.eq.low.gain.setValueAtTime(0, now);
         }
       }
-      if (AetherAudioEngine.deckA && AetherAudioEngine.ctx) {
-        AetherAudioEngine.deckA.gainNode.gain.setValueAtTime(1.0, AetherAudioEngine.ctx.currentTime);
-        AetherAudioEngine.deckA.eq.low.gain.setValueAtTime(0, AetherAudioEngine.ctx.currentTime);
-        AetherAudioEngine.resetDeckFx('A');
+      if (AetherAudioEngine.deckA && AetherAudioEngine.deckA.audio) {
+        if (actId !== 'A') {
+          AetherAudioEngine.deckA.audio.pause();
+        }
+        if (AetherAudioEngine.ctx) {
+          AetherAudioEngine.deckA.gainNode.gain.cancelScheduledValues(now);
+          AetherAudioEngine.deckA.gainNode.gain.setValueAtTime(actId === 'A' ? 1.0 : 0.0, now);
+          AetherAudioEngine.deckA.eq.low.gain.setValueAtTime(0, now);
+        }
       }
+      AetherAudioEngine.resetDeckFx('A');
+      AetherAudioEngine.resetDeckFx('B');
     } catch (e) {}
 
     this.drawStage();
@@ -5540,11 +5574,15 @@ async function playYouTubeTrack(videoId, startTime = 0) {
       };
 
       audio.onended = () => {
-        playNext();
+        if (audio === activeAudio && !state.isExecutingTransition) {
+          playNext();
+        }
       };
 
-      audio.onerror = () => {
-        console.warn('[AudioEngine] Direct stream failed, falling back to YouTube IFrame');
+      audio.onerror = (e) => {
+        // Only fall back if this audio element is currently active and legitimately failed
+        if (!audio.src || audio !== activeAudio || !state.isPlaying) return;
+        console.warn('[AudioEngine] Direct stream failed, falling back to YouTube IFrame:', e);
         playYouTubeIFrameFallback(videoId, startTime);
       };
 
@@ -6017,6 +6055,13 @@ async function triggerAutomatedQueueTransition(nextSong, transConfig) {
   // Pre-load incoming track on inactive deck
   const outgoingDeck = AetherAudioEngine.getActiveDeck();
   const incomingDeck = AetherAudioEngine.getInactiveDeck();
+
+  // Clean old event listeners from incoming deck before loading new source
+  incomingDeck.audio.onended = null;
+  incomingDeck.audio.onerror = null;
+  incomingDeck.audio.onloadedmetadata = null;
+
+  incomingDeck.audio.crossOrigin = 'anonymous';
   incomingDeck.audio.src = incomingSrc;
   incomingDeck.audio.currentTime = 0;
 
@@ -6028,10 +6073,42 @@ async function triggerAutomatedQueueTransition(nextSong, transConfig) {
     AetherAudioEngine.resetTrackEq(incomingDeck.id);
   }
 
+  // Bind lifecycle listeners for incoming deck
+  const incomingVideoId = nextSong._preResolvedYtId || nextSong.id;
+  incomingDeck.audio.onloadedmetadata = () => {
+    if (incomingDeck.audio.duration && isFinite(incomingDeck.audio.duration)) {
+      state.duration = Math.floor(incomingDeck.audio.duration);
+      const durEl = document.getElementById('playerTotalDuration');
+      if (durEl) durEl.textContent = formatSeconds(state.duration);
+      const mobileNpTotalDuration = document.getElementById('mobileNpTotalDuration');
+      if (mobileNpTotalDuration) mobileNpTotalDuration.textContent = formatSeconds(state.duration);
+    }
+  };
+  incomingDeck.audio.onended = () => {
+    if (incomingDeck.audio === activeAudio && !state.isExecutingTransition) {
+      playNext();
+    }
+  };
+  incomingDeck.audio.onerror = () => {
+    if (!incomingDeck.audio.src || incomingDeck.audio !== activeAudio || !state.isPlaying) return;
+    console.warn('[DJ Engine] Incoming deck stream error, falling back to YouTube IFrame');
+    playYouTubeIFrameFallback(incomingVideoId, 0);
+  };
+
+  let playSuccess = false;
   try {
     await incomingDeck.audio.play();
+    playSuccess = true;
   } catch (err) {
     console.warn('[DJ Engine] Inactive deck play error:', err);
+  }
+
+  if (!playSuccess) {
+    console.warn('[DJ Engine] Incoming track could not start on inactive deck, falling back to playNext');
+    state.isExecutingTransition = false;
+    state.isTransitioning = false;
+    playNext();
+    return;
   }
 
   // Seamlessly switch active deck reference immediately so progress timer and volume sync to incoming song
@@ -6112,11 +6189,16 @@ async function triggerAutomatedQueueTransition(nextSong, transConfig) {
       state.isExecutingTransition = false;
       state.isTransitioning = false;
 
+      // Unbind all event listeners on outgoing deck before pausing/stopping to prevent false replay of previous track
       if (outgoingDeck && outgoingDeck.audio) {
         try {
+          outgoingDeck.audio.onended = null;
+          outgoingDeck.audio.onerror = null;
+          outgoingDeck.audio.onloadedmetadata = null;
           outgoingDeck.audio.pause();
           outgoingDeck.audio.currentTime = 0;
-          outgoingDeck.audio.src = '';
+          outgoingDeck.audio.removeAttribute('src');
+          outgoingDeck.audio.load();
         } catch (e) {}
       }
 
