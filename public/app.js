@@ -84,8 +84,172 @@ let state = {
 let ytPlayer = null;
 let ytPlayerReady = false;
 let pendingVideoToPlay = null;
-let activeAudio = null; // for Spotify previews
+let activeAudio = null; // for Spotify previews & Web Audio HTML5 source
 let progressInterval = null;
+
+// ============================================================================
+// AETHER AUDIO ENGINE (Web Audio API Core Pipeline & DSP Graph)
+// ============================================================================
+const AetherAudioEngine = {
+  ctx: null,
+  masterGain: null,
+  limiter: null,
+
+  // Global Master EQ (3-band)
+  masterEq: {
+    low: null,
+    mid: null,
+    high: null
+  },
+
+  // Per-Track EQ (3-band)
+  trackEq: {
+    low: null,
+    mid: null,
+    high: null
+  },
+
+  audioElement: null,
+  sourceNode: null,
+  initialized: false,
+
+  init() {
+    if (this.initialized) {
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(() => {});
+      }
+      return;
+    }
+
+    try {
+      const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtxClass) {
+        console.warn('[AudioEngine] Web Audio API not supported on this platform');
+        return;
+      }
+
+      this.ctx = new AudioCtxClass();
+
+      // Master Gain Node
+      this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.setValueAtTime(1.0, this.ctx.currentTime);
+
+      // Limiter / Brickwall Compressor to prevent digital clipping when boosting EQ
+      this.limiter = this.ctx.createDynamicsCompressor();
+      this.limiter.threshold.setValueAtTime(-1.0, this.ctx.currentTime);
+      this.limiter.knee.setValueAtTime(3.0, this.ctx.currentTime);
+      this.limiter.ratio.setValueAtTime(20.0, this.ctx.currentTime);
+      this.limiter.attack.setValueAtTime(0.002, this.ctx.currentTime);
+      this.limiter.release.setValueAtTime(0.1, this.ctx.currentTime);
+
+      // Global Master Equalizer (LowShelf, Peaking Mids/Vocals, HighShelf)
+      this.masterEq.low = this.ctx.createBiquadFilter();
+      this.masterEq.low.type = 'lowshelf';
+      this.masterEq.low.frequency.setValueAtTime(100, this.ctx.currentTime);
+      this.masterEq.low.gain.setValueAtTime(0, this.ctx.currentTime);
+
+      this.masterEq.mid = this.ctx.createBiquadFilter();
+      this.masterEq.mid.type = 'peaking';
+      this.masterEq.mid.frequency.setValueAtTime(1500, this.ctx.currentTime);
+      this.masterEq.mid.Q.setValueAtTime(1.0, this.ctx.currentTime);
+      this.masterEq.mid.gain.setValueAtTime(0, this.ctx.currentTime);
+
+      this.masterEq.high = this.ctx.createBiquadFilter();
+      this.masterEq.high.type = 'highshelf';
+      this.masterEq.high.frequency.setValueAtTime(8000, this.ctx.currentTime);
+      this.masterEq.high.gain.setValueAtTime(0, this.ctx.currentTime);
+
+      // Per-Track Equalizer
+      this.trackEq.low = this.ctx.createBiquadFilter();
+      this.trackEq.low.type = 'lowshelf';
+      this.trackEq.low.frequency.setValueAtTime(120, this.ctx.currentTime);
+      this.trackEq.low.gain.setValueAtTime(0, this.ctx.currentTime);
+
+      this.trackEq.mid = this.ctx.createBiquadFilter();
+      this.trackEq.mid.type = 'peaking';
+      this.trackEq.mid.frequency.setValueAtTime(2000, this.ctx.currentTime);
+      this.trackEq.mid.Q.setValueAtTime(1.2, this.ctx.currentTime);
+      this.trackEq.mid.gain.setValueAtTime(0, this.ctx.currentTime);
+
+      this.trackEq.high = this.ctx.createBiquadFilter();
+      this.trackEq.high.type = 'highshelf';
+      this.trackEq.high.frequency.setValueAtTime(7500, this.ctx.currentTime);
+      this.trackEq.high.gain.setValueAtTime(0, this.ctx.currentTime);
+
+      // Create primary playback HTMLAudioElement with anonymous CORS
+      this.audioElement = new Audio();
+      this.audioElement.crossOrigin = 'anonymous';
+      this.audioElement.preload = 'auto';
+
+      // Connect graph:
+      // AudioElement -> Track EQ (Low -> Mid -> High) -> Master EQ (Low -> Mid -> High) -> Master Gain -> Limiter -> Destination
+      this.sourceNode = this.ctx.createMediaElementSource(this.audioElement);
+      this.sourceNode.connect(this.trackEq.low);
+      this.trackEq.low.connect(this.trackEq.mid);
+      this.trackEq.mid.connect(this.trackEq.high);
+      this.trackEq.high.connect(this.masterEq.low);
+      this.masterEq.low.connect(this.masterEq.mid);
+      this.masterEq.mid.connect(this.masterEq.high);
+      this.masterEq.high.connect(this.masterGain);
+      this.masterGain.connect(this.limiter);
+      this.limiter.connect(this.ctx.destination);
+
+      // Expose to activeAudio so existing event handlers operate seamlessly
+      activeAudio = this.audioElement;
+
+      this.initialized = true;
+      console.log('[AudioEngine] Web Audio Core Graph initialized successfully');
+    } catch (err) {
+      console.warn('[AudioEngine] Web Audio initialization warning:', err);
+    }
+  },
+
+  setMasterVolume(ratio) {
+    if (this.masterGain && this.ctx) {
+      const effective = ratio <= 0.001 ? 0 : Math.pow(ratio, 2.2);
+      this.masterGain.gain.setTargetAtTime(effective, this.ctx.currentTime, 0.03);
+    }
+    if (this.audioElement) {
+      try { this.audioElement.volume = Math.max(0, Math.min(1, ratio)); } catch (e) {}
+    }
+  },
+
+  setMasterEq(lowDb, midDb, highDb) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    if (this.masterEq.low && lowDb !== undefined) this.masterEq.low.gain.setTargetAtTime(lowDb, now, 0.05);
+    if (this.masterEq.mid && midDb !== undefined) this.masterEq.mid.gain.setTargetAtTime(midDb, now, 0.05);
+    if (this.masterEq.high && highDb !== undefined) this.masterEq.high.gain.setTargetAtTime(highDb, now, 0.05);
+  },
+
+  setTrackEq(lowDb, midDb, highDb) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    if (this.trackEq.low && lowDb !== undefined) this.trackEq.low.gain.setTargetAtTime(lowDb, now, 0.05);
+    if (this.trackEq.mid && midDb !== undefined) this.trackEq.mid.gain.setTargetAtTime(midDb, now, 0.05);
+    if (this.trackEq.high && highDb !== undefined) this.trackEq.high.gain.setTargetAtTime(highDb, now, 0.05);
+  },
+
+  resetTrackEq() {
+    this.setTrackEq(0, 0, 0);
+  },
+
+  stopPlayback() {
+    if (this.audioElement) {
+      try {
+        this.audioElement.pause();
+        this.audioElement.currentTime = 0;
+      } catch (e) {}
+    }
+  }
+};
+
+// Global one-time unlock for AudioContext on first user interaction
+document.addEventListener('pointerdown', () => {
+  if (window.AetherAudioEngine) {
+    AetherAudioEngine.init();
+  }
+}, { once: true });
 
 // Default Fallback Visuals (Lightweight SVG Data URIs)
 const DEFAULT_ALBUM_ART = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'><rect width='200' height='200' fill='%2313141f'/><circle cx='100' cy='100' r='52' fill='%231c1d2e'/><circle cx='100' cy='100' r='20' fill='%2313141f'/><path d='M95 72v34a12 12 0 1 1-6-10.4V72h22v26a12 12 0 1 1-6-10.4V68H95z' fill='%237c3aed'/></svg>";
@@ -3021,12 +3185,64 @@ function playSong(song, index) {
   preloadNextTrackInQueue(index);
 }
 
-function playYouTubeTrack(videoId) {
+async function playYouTubeTrack(videoId, startTime = 0) {
   if (!videoId) return;
+
+  // 1. Attempt Direct Audio Stream Pipeline (Web Audio API Core)
+  try {
+    AetherAudioEngine.init();
+    if (AetherAudioEngine.initialized && AetherAudioEngine.audioElement) {
+      // Pause iframe if running
+      if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+        try { ytPlayer.pauseVideo(); } catch (e) {}
+      }
+
+      state.currentPlaybackType = 'audio';
+      const audio = AetherAudioEngine.audioElement;
+      activeAudio = audio;
+      audio.src = `/api/stream/proxy?id=${encodeURIComponent(videoId)}`;
+
+      audio.onloadedmetadata = () => {
+        if (audio.duration && isFinite(audio.duration)) {
+          state.duration = Math.floor(audio.duration);
+          document.getElementById('playerTotalDuration').textContent = formatSeconds(state.duration);
+          const mobileNpTotalDuration = document.getElementById('mobileNpTotalDuration');
+          if (mobileNpTotalDuration) mobileNpTotalDuration.textContent = formatSeconds(state.duration);
+        }
+        if (startTime > 0) {
+          audio.currentTime = startTime;
+        }
+      };
+
+      audio.onended = () => {
+        playNext();
+      };
+
+      audio.onerror = () => {
+        console.warn('[AudioEngine] Direct stream failed, falling back to YouTube IFrame');
+        playYouTubeIFrameFallback(videoId, startTime);
+      };
+
+      await audio.play();
+      state.isPlaying = true;
+      updatePlayButtonUI(true);
+      startProgressTimer('audio');
+      applyVolume();
+      return;
+    }
+  } catch (err) {
+    console.warn('[AudioEngine] Direct stream exception, falling back to YouTube IFrame:', err);
+  }
+
+  // 2. Fallback to legacy YouTube iframe
+  playYouTubeIFrameFallback(videoId, startTime);
+}
+
+function playYouTubeIFrameFallback(videoId, startTime = 0) {
   state.currentPlaybackType = 'youtube';
   if (ytPlayer && ytPlayerReady && typeof ytPlayer.loadVideoById === 'function') {
     try {
-      ytPlayer.loadVideoById(videoId);
+      ytPlayer.loadVideoById(videoId, startTime);
       ytPlayer.playVideo();
       applyVolume();
       startProgressTimer('youtube');
@@ -3044,14 +3260,19 @@ function playYouTubeTrack(videoId) {
 
 function playPreviewTrack(previewUrl) {
   state.currentPlaybackType = 'audio';
-  activeAudio = new Audio(previewUrl);
-  activeAudio.volume = state.isMuted ? 0 : state.volume / 100;
-  activeAudio.play();
-  startProgressTimer('audio');
-
-  activeAudio.onended = () => {
+  AetherAudioEngine.init();
+  const audio = (AetherAudioEngine.initialized && AetherAudioEngine.audioElement) ? AetherAudioEngine.audioElement : new Audio();
+  activeAudio = audio;
+  audio.src = previewUrl;
+  audio.onended = () => {
     playNext();
   };
+  audio.play().then(() => {
+    state.isPlaying = true;
+    updatePlayButtonUI(true);
+    startProgressTimer('audio');
+    applyVolume();
+  }).catch(e => console.warn('[AudioEngine] Preview play error:', e));
 }
 
 async function preloadNextTrackInQueue(currentIndex) {
@@ -3135,15 +3356,17 @@ function stopActivePlayback() {
     progressInterval = null;
   }
 
-  // Stop YouTube
+  // Stop YouTube iframe
   if (ytPlayer && typeof ytPlayer.stopVideo === 'function') {
     try {
       ytPlayer.stopVideo();
     } catch (e) { }
   }
 
-  // Stop HTML5 Audio
-  if (activeAudio) {
+  // Stop Web Audio Engine / HTML5 Audio
+  if (window.AetherAudioEngine && AetherAudioEngine.initialized) {
+    AetherAudioEngine.stopPlayback();
+  } else if (activeAudio) {
     try {
       activeAudio.pause();
       activeAudio.src = '';
@@ -3196,6 +3419,10 @@ function togglePlayPause() {
     // User explicitly played
     state.isPlaying = true;
     state.isUserPaused = false;
+
+    if (window.AetherAudioEngine && AetherAudioEngine.ctx && AetherAudioEngine.ctx.state === 'suspended') {
+      AetherAudioEngine.ctx.resume().catch(() => {});
+    }
 
     if ((state.currentPlaybackType === 'offline' || state.currentPlaybackType === 'audio') && activeAudio) {
       activeAudio.play().catch(e => console.warn("Audio resume error:", e));
@@ -3358,7 +3585,9 @@ function applyVolume() {
   if (ytPlayer && typeof ytPlayer.setVolume === 'function') {
     try { ytPlayer.setVolume(effectiveYtVolume); } catch (e) {}
   }
-  if (activeAudio) {
+  if (window.AetherAudioEngine && AetherAudioEngine.initialized) {
+    AetherAudioEngine.setMasterVolume(effectiveRatio);
+  } else if (activeAudio) {
     try { activeAudio.volume = effectiveRatio; } catch (e) {}
   }
 }
@@ -5499,9 +5728,14 @@ function playOfflineTrack(song) {
   stopActivePlayback();
   state.currentPlaybackType = 'offline';
 
+  AetherAudioEngine.init();
   const audioUrl = `/api/offline/audio?id=${encodeURIComponent(song.id)}`;
-  activeAudio = new Audio(audioUrl);
-  activeAudio.volume = state.isMuted ? 0 : state.volume / 100;
+  if (AetherAudioEngine.initialized && AetherAudioEngine.audioElement) {
+    activeAudio = AetherAudioEngine.audioElement;
+  } else {
+    activeAudio = new Audio();
+  }
+  activeAudio.src = audioUrl;
 
   activeAudio.onloadedmetadata = () => {
     if (activeAudio.duration && isFinite(activeAudio.duration)) {
@@ -5512,10 +5746,15 @@ function playOfflineTrack(song) {
     }
   };
 
+  activeAudio.onended = () => {
+    playNext();
+  };
+
   activeAudio.play().then(() => {
     state.isPlaying = true;
     updatePlayButtonUI(true);
     startProgressTimer('audio');
+    applyVolume();
   }).catch(err => {
     console.warn("Offline playback failed, attempting fallback:", err);
     state.currentPlaybackType = null;

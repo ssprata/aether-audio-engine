@@ -2947,6 +2947,53 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                     }).encode('utf-8'))
                 return
 
+        elif path == '/api/stream/proxy':
+            video_id = query_params.get('id', [''])[0].strip()
+            if not video_id:
+                self.send_error(400, "Video ID required")
+                return
+
+            audio_url = get_youtube_audio_url(video_id)
+            if not audio_url:
+                self.send_error(404, "Audio stream not found")
+                return
+
+            req_headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            range_header = self.headers.get('Range')
+            if range_header:
+                req_headers["Range"] = range_header
+
+            try:
+                upstream_req = urllib.request.Request(audio_url, headers=req_headers)
+                with urllib.request.urlopen(upstream_req, timeout=15) as upstream_resp:
+                    status_code = upstream_resp.status
+                    self.send_response(status_code)
+                    for header_name in ['Content-Type', 'Content-Range', 'Content-Length', 'Accept-Ranges']:
+                        val = upstream_resp.headers.get(header_name)
+                        if val:
+                            self.send_header(header_name, val)
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.send_header('Access-Control-Allow-Headers', 'Range, Content-Type')
+                    self.send_header('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges')
+                    self.end_headers()
+
+                    chunk_size = 65536
+                    while True:
+                        chunk = upstream_resp.read(chunk_size)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+            except Exception as e:
+                print(f"[Stream Proxy Error] {e}")
+                if not self.wfile.closed:
+                    try:
+                        self.send_error(502, f"Proxy stream error: {e}")
+                    except Exception:
+                        pass
+            return
+
         elif path == '/api/stream-url' or path == '/api/stream':
             video_id = query_params.get('id', [''])[0].strip()
             if not video_id:
