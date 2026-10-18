@@ -1414,6 +1414,21 @@
           </svg>
         </button>
 
+        <button class="control-btn" id="btnToggleMixer" title="Dual Audio Mixer & Equalizer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="4" y1="21" x2="4" y2="14"></line>
+            <line x1="4" y1="10" x2="4" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12" y2="3"></line>
+            <line x1="20" y1="21" x2="20" y2="16"></line>
+            <line x1="20" y1="12" x2="20" y2="3"></line>
+            <line x1="1" y1="14" x2="7" y2="14"></line>
+            <line x1="9" y1="8" x2="15" y2="8"></line>
+            <line x1="17" y1="16" x2="23" y2="16"></line>
+          </svg>
+          <span class="mixer-active-dot" id="mixerActiveDot" style="display: none;"></span>
+        </button>
+
         <div class="volume-container" id="playerVolumeContainer"
           title="Scroll or drag to change volume. Right-click to type exact volume.">
           <button class="control-btn" id="btnMute" title="Mute/Unmute">
@@ -1541,13 +1556,28 @@
           <h2 id="mobileNpTitle">No Song Playing</h2>
           <p id="mobileNpArtist">Choose a track to begin</p>
         </div>
-        <button class="icon-btn" id="btnMobileNpFavorite" title="Add to favorites">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path
-              d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z">
-            </path>
-          </svg>
-        </button>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button class="icon-btn" id="btnMobileNpMixer" title="Audio Mixer & Equalizer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 20px; height: 20px;">
+              <line x1="4" y1="21" x2="4" y2="14"></line>
+              <line x1="4" y1="10" x2="4" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="12"></line>
+              <line x1="12" y1="8" x2="12" y2="3"></line>
+              <line x1="20" y1="21" x2="20" y2="16"></line>
+              <line x1="20" y1="12" x2="20" y2="3"></line>
+              <line x1="1" y1="14" x2="7" y2="14"></line>
+              <line x1="9" y1="8" x2="15" y2="8"></line>
+              <line x1="17" y1="16" x2="23" y2="16"></line>
+            </svg>
+          </button>
+          <button class="icon-btn" id="btnMobileNpFavorite" title="Add to favorites">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path
+                d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z">
+              </path>
+            </svg>
+          </button>
+        </div>
       </div>
 
       <!-- Timeline & Scrubber -->
@@ -1853,6 +1883,185 @@
       <div class="modal-footer"
         style="display: flex; justify-content: flex-end; border-top: 1px solid var(--border-color); padding-top: 14px;">
         <button class="btn btn-outline" id="btnCancelCloudQrScanner">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DUAL AUDIO MIXER & EQUALIZER MODAL (v2.0.0) -->
+  <div class="modal-overlay" id="modalAudioMixer">
+    <div class="modal-card modal-premium-card mixer-modal-card">
+      <div class="modal-header mixer-modal-header">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div class="mixer-icon-glow">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="4" y1="21" x2="4" y2="14"></line>
+              <line x1="4" y1="10" x2="4" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="12"></line>
+              <line x1="12" y1="8" x2="12" y2="3"></line>
+              <line x1="20" y1="21" x2="20" y2="16"></line>
+              <line x1="20" y1="12" x2="20" y2="3"></line>
+              <line x1="1" y1="14" x2="7" y2="14"></line>
+              <line x1="9" y1="8" x2="15" y2="8"></line>
+              <line x1="17" y1="16" x2="23" y2="16"></line>
+            </svg>
+          </div>
+          <div>
+            <h3 style="margin: 0; font-size: 1.15rem;">Aether Dual-Deck Audio Mixer</h3>
+            <span class="mixer-status-pill">Web Audio DSP Active • 64-bit Float</span>
+          </div>
+        </div>
+        <button class="btn btn-sm btn-icon-only btn-close-modal" id="btnCloseAudioMixer" aria-label="Close modal">&times;</button>
+      </div>
+
+      <!-- MIXER TABS SELECTOR -->
+      <div class="mixer-subtabs-nav">
+        <button class="mixer-tab-btn active" id="tabBtnTrackMixer" data-mixertab="track">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 18V5l12-2v13"></path>
+            <circle cx="6" cy="18" r="3"></circle>
+            <circle cx="18" cy="16" r="3"></circle>
+          </svg>
+          <span>Current Track EQ</span>
+          <span class="mixer-tab-indicator" id="trackEqActiveIndicator" style="display: none;">Saved</span>
+        </button>
+        <button class="mixer-tab-btn" id="tabBtnMasterMixer" data-mixertab="master">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M12 2a10 10 0 0 1 10 10"></path>
+          </svg>
+          <span>Global Master EQ</span>
+        </button>
+      </div>
+
+      <div class="mixer-panes-wrapper">
+        <!-- PANE 1: CURRENT TRACK EQ -->
+        <div class="mixer-pane active" id="mixerPaneTrack">
+          <div class="mixer-track-header">
+            <div class="mixer-track-thumb" id="mixerTrackThumb">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+            </div>
+            <div class="mixer-track-meta">
+              <div class="mixer-track-name" id="mixerTrackTitle">No Song Playing</div>
+              <div class="mixer-track-artist" id="mixerTrackArtist">Play a song to customize its specific EQ</div>
+            </div>
+            <button class="btn btn-sm btn-outline" id="btnResetTrackEq" title="Reset track EQ to flat">Reset</button>
+          </div>
+
+          <div class="mixer-sliders-container">
+            <!-- Bass Slider -->
+            <div class="mixer-slider-channel">
+              <div class="channel-labels">
+                <span class="channel-title">Bass & Kick</span>
+                <span class="channel-freq">120 Hz</span>
+                <span class="channel-db" id="valTrackEqBass">0.0 dB</span>
+              </div>
+              <div class="vertical-slider-wrapper">
+                <input type="range" class="mixer-range" id="sliderTrackEqBass" min="-12" max="12" step="0.5" value="0">
+              </div>
+              <span class="channel-footer-tag">LowShelf</span>
+            </div>
+
+            <!-- Voice / Presence Slider -->
+            <div class="mixer-slider-channel">
+              <div class="channel-labels">
+                <span class="channel-title">Voice & Mids</span>
+                <span class="channel-freq">2.0 kHz</span>
+                <span class="channel-db" id="valTrackEqMid">0.0 dB</span>
+              </div>
+              <div class="vertical-slider-wrapper">
+                <input type="range" class="mixer-range" id="sliderTrackEqMid" min="-12" max="12" step="0.5" value="0">
+              </div>
+              <span class="channel-footer-tag">Vocal Peaking</span>
+            </div>
+
+            <!-- Treble / Air Slider -->
+            <div class="mixer-slider-channel">
+              <div class="channel-labels">
+                <span class="channel-title">Treble & Air</span>
+                <span class="channel-freq">7.5 kHz</span>
+                <span class="channel-db" id="valTrackEqHigh">0.0 dB</span>
+              </div>
+              <div class="vertical-slider-wrapper">
+                <input type="range" class="mixer-range" id="sliderTrackEqHigh" min="-12" max="12" step="0.5" value="0">
+              </div>
+              <span class="channel-footer-tag">HighShelf</span>
+            </div>
+          </div>
+
+          <div class="mixer-callout-info">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="16" x2="12" y2="12"></line>
+              <line x1="12" y1="8" x2="12.01" y2="8"></line>
+            </svg>
+            <span><strong>Autosaved for this track:</strong> These mixer settings are saved locally to this song ID. Whenever you play this track again, Aether automatically applies these mixer adjustments.</span>
+          </div>
+        </div>
+
+        <!-- PANE 2: GLOBAL MASTER EQ -->
+        <div class="mixer-pane" id="mixerPaneMaster" style="display: none;">
+          <div class="master-presets-row">
+            <label class="master-preset-label">Master Presets:</label>
+            <div class="master-presets-pills" id="masterEqPresetsList">
+              <button class="preset-pill active" data-preset="flat">Flat</button>
+              <button class="preset-pill" data-preset="bass_boost">Bass Boost</button>
+              <button class="preset-pill" data-preset="vocal">Vocal Punch</button>
+              <button class="preset-pill" data-preset="electronic">Electronic</button>
+              <button class="preset-pill" data-preset="rock">Rock</button>
+              <button class="preset-pill" data-preset="hiphop">R&B / Hip-Hop</button>
+              <button class="preset-pill" data-preset="acoustic">Acoustic</button>
+              <button class="preset-pill" data-preset="night">Night Mode</button>
+            </div>
+          </div>
+
+          <div class="mixer-sliders-container">
+            <!-- Master Bass Slider -->
+            <div class="mixer-slider-channel">
+              <div class="channel-labels">
+                <span class="channel-title">Master Bass</span>
+                <span class="channel-freq">100 Hz</span>
+                <span class="channel-db" id="valMasterEqBass">0.0 dB</span>
+              </div>
+              <div class="vertical-slider-wrapper">
+                <input type="range" class="mixer-range" id="sliderMasterEqBass" min="-12" max="12" step="0.5" value="0">
+              </div>
+              <span class="channel-footer-tag">LowShelf</span>
+            </div>
+
+            <!-- Master Mids Slider -->
+            <div class="mixer-slider-channel">
+              <div class="channel-labels">
+                <span class="channel-title">Master Mids</span>
+                <span class="channel-freq">1.5 kHz</span>
+                <span class="channel-db" id="valMasterEqMid">0.0 dB</span>
+              </div>
+              <div class="vertical-slider-wrapper">
+                <input type="range" class="mixer-range" id="sliderMasterEqMid" min="-12" max="12" step="0.5" value="0">
+              </div>
+              <span class="channel-footer-tag">Presence</span>
+            </div>
+
+            <!-- Master Treble Slider -->
+            <div class="mixer-slider-channel">
+              <div class="channel-labels">
+                <span class="channel-title">Master Treble</span>
+                <span class="channel-freq">8.0 kHz</span>
+                <span class="channel-db" id="valMasterEqHigh">0.0 dB</span>
+              </div>
+              <div class="vertical-slider-wrapper">
+                <input type="range" class="mixer-range" id="sliderMasterEqHigh" min="-12" max="12" step="0.5" value="0">
+              </div>
+              <span class="channel-footer-tag">HighShelf</span>
+            </div>
+          </div>
+
+          <div class="mixer-callout-info">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            </svg>
+            <span><strong>Global Mastering Bus:</strong> Applied on top of all playback. Dynamic limiter actively prevents digital clipping (+0.0 dB true peak ceiling).</span>
+          </div>
+        </div>
       </div>
     </div>
   </div>

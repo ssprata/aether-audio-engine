@@ -77,7 +77,9 @@ let state = {
   isRadioSession: false,     // True if currently playing a radio/station session
   autoplayEnabled: true,     // Endless autoplay enabled by default
   activeRightTab: 'queue',   // 'queue', 'recent', 'details'
-  isFetchingMoreQueue: false
+  isFetchingMoreQueue: false,
+  trackEqCache: {},          // In-memory cache for track EQ: { [songId]: { low, mid, high, updatedAt } }
+  masterEqSettings: { low: 0, mid: 0, high: 0, preset: 'flat' }
 };
 
 // Player Reference variables
@@ -199,6 +201,18 @@ const AetherAudioEngine = {
 
       this.initialized = true;
       console.log('[AudioEngine] Web Audio Core Graph initialized successfully');
+
+      if (state.masterEqSettings) {
+        this.setMasterEq(
+          state.masterEqSettings.low,
+          state.masterEqSettings.mid,
+          state.masterEqSettings.high
+        );
+      }
+      if (state.currentSong && state.trackEqCache && state.trackEqCache[state.currentSong.id]) {
+        const trk = state.trackEqCache[state.currentSong.id];
+        this.setTrackEq(trk.low, trk.mid, trk.high);
+      }
     } catch (err) {
       console.warn('[AudioEngine] Web Audio initialization warning:', err);
     }
@@ -243,6 +257,396 @@ const AetherAudioEngine = {
     }
   }
 };
+
+// ============================================================================
+// AETHER AUDIO PERSISTENCE & DUAL EQUALIZER SYSTEM (v2.0.0)
+// ============================================================================
+const MASTER_EQ_PRESETS = {
+  flat: { low: 0, mid: 0, high: 0 },
+  bass_boost: { low: 6.0, mid: 0.0, high: 2.0 },
+  vocal: { low: -2.0, mid: 4.5, high: 2.0 },
+  electronic: { low: 5.5, mid: 1.0, high: 4.0 },
+  rock: { low: 4.0, mid: -1.5, high: 3.5 },
+  hiphop: { low: 6.5, mid: 1.5, high: 1.0 },
+  acoustic: { low: 2.0, mid: 3.0, high: 2.5 },
+  night: { low: -4.0, mid: 1.0, high: -3.0 }
+};
+
+const AetherAudioDB = {
+  db: null,
+  initPromise: null,
+
+  init() {
+    if (this.initPromise) return this.initPromise;
+    this.initPromise = new Promise((resolve) => {
+      if (!window.indexedDB) {
+        console.warn('[AudioDB] IndexedDB unavailable, using in-memory cache');
+        return resolve(null);
+      }
+      try {
+        const req = window.indexedDB.open('aether_audio_db', 1);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains('track_eq')) {
+            db.createObjectStore('track_eq', { keyPath: 'id' });
+          }
+        };
+        req.onsuccess = (e) => {
+          this.db = e.target.result;
+          resolve(this.db);
+        };
+        req.onerror = (e) => {
+          console.warn('[AudioDB] IndexedDB open error:', e);
+          resolve(null);
+        };
+      } catch (err) {
+        console.warn('[AudioDB] IndexedDB exception:', err);
+        resolve(null);
+      }
+    });
+    return this.initPromise;
+  },
+
+  async getTrackEq(trackId) {
+    if (!trackId) return null;
+    if (state.trackEqCache[trackId]) return state.trackEqCache[trackId];
+    try {
+      const db = await this.init();
+      if (!db) return null;
+      return new Promise((resolve) => {
+        const tx = db.transaction('track_eq', 'readonly');
+        const store = tx.objectStore('track_eq');
+        const req = store.get(trackId);
+        req.onsuccess = () => {
+          const res = req.result;
+          if (res) {
+            state.trackEqCache[trackId] = res;
+          }
+          resolve(res || null);
+        };
+        req.onerror = () => resolve(null);
+      });
+    } catch (e) {
+      console.warn('[AudioDB] getTrackEq error:', e);
+      return null;
+    }
+  },
+
+  async saveTrackEq(trackId, eqData) {
+    if (!trackId) return;
+    state.trackEqCache[trackId] = { id: trackId, ...eqData, updatedAt: Date.now() };
+    try {
+      const db = await this.init();
+      if (!db) return;
+      const tx = db.transaction('track_eq', 'readwrite');
+      const store = tx.objectStore('track_eq');
+      store.put({ id: trackId, ...eqData, updatedAt: Date.now() });
+    } catch (e) {
+      console.warn('[AudioDB] saveTrackEq error:', e);
+    }
+  },
+
+  async deleteTrackEq(trackId) {
+    if (!trackId) return;
+    delete state.trackEqCache[trackId];
+    try {
+      const db = await this.init();
+      if (!db) return;
+      const tx = db.transaction('track_eq', 'readwrite');
+      const store = tx.objectStore('track_eq');
+      store.delete(trackId);
+    } catch (e) {
+      console.warn('[AudioDB] deleteTrackEq error:', e);
+    }
+  }
+};
+
+let trackEqSaveDebounceTimer = null;
+
+function loadMasterEqSettings() {
+  try {
+    const raw = localStorage.getItem('aether_master_eq');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      state.masterEqSettings = {
+        low: typeof parsed.low === 'number' ? parsed.low : parseFloat(parsed.low) || 0,
+        mid: typeof parsed.mid === 'number' ? parsed.mid : parseFloat(parsed.mid) || 0,
+        high: typeof parsed.high === 'number' ? parsed.high : parseFloat(parsed.high) || 0,
+        preset: parsed.preset || 'custom'
+      };
+    }
+  } catch (e) {}
+
+  if (window.AetherAudioEngine && AetherAudioEngine.initialized) {
+    AetherAudioEngine.setMasterEq(
+      state.masterEqSettings.low,
+      state.masterEqSettings.mid,
+      state.masterEqSettings.high
+    );
+  }
+
+  const bassSlider = document.getElementById('sliderMasterEqBass');
+  const midSlider = document.getElementById('sliderMasterEqMid');
+  const highSlider = document.getElementById('sliderMasterEqHigh');
+  if (bassSlider) bassSlider.value = state.masterEqSettings.low;
+  if (midSlider) midSlider.value = state.masterEqSettings.mid;
+  if (highSlider) highSlider.value = state.masterEqSettings.high;
+
+  const valBass = document.getElementById('valMasterEqBass');
+  const valMid = document.getElementById('valMasterEqMid');
+  const valHigh = document.getElementById('valMasterEqHigh');
+  if (valBass) valBass.textContent = `${state.masterEqSettings.low >= 0 ? '+' : ''}${state.masterEqSettings.low.toFixed(1)} dB`;
+  if (valMid) valMid.textContent = `${state.masterEqSettings.mid >= 0 ? '+' : ''}${state.masterEqSettings.mid.toFixed(1)} dB`;
+  if (valHigh) valHigh.textContent = `${state.masterEqSettings.high >= 0 ? '+' : ''}${state.masterEqSettings.high.toFixed(1)} dB`;
+
+  document.querySelectorAll('#masterEqPresetsList .preset-pill').forEach(pill => {
+    pill.classList.toggle('active', pill.getAttribute('data-preset') === state.masterEqSettings.preset);
+  });
+}
+
+function saveMasterEqSettings(settings) {
+  state.masterEqSettings = { ...state.masterEqSettings, ...settings };
+  try {
+    localStorage.setItem('aether_master_eq', JSON.stringify(state.masterEqSettings));
+  } catch (e) {}
+}
+
+function updateTrackEqUI(low, mid, high, isSaved) {
+  const bassSlider = document.getElementById('sliderTrackEqBass');
+  const midSlider = document.getElementById('sliderTrackEqMid');
+  const highSlider = document.getElementById('sliderTrackEqHigh');
+  if (bassSlider) bassSlider.value = low;
+  if (midSlider) midSlider.value = mid;
+  if (highSlider) highSlider.value = high;
+
+  const numLow = parseFloat(low) || 0;
+  const numMid = parseFloat(mid) || 0;
+  const numHigh = parseFloat(high) || 0;
+
+  const valBass = document.getElementById('valTrackEqBass');
+  const valMid = document.getElementById('valTrackEqMid');
+  const valHigh = document.getElementById('valTrackEqHigh');
+  if (valBass) valBass.textContent = `${numLow >= 0 ? '+' : ''}${numLow.toFixed(1)} dB`;
+  if (valMid) valMid.textContent = `${numMid >= 0 ? '+' : ''}${numMid.toFixed(1)} dB`;
+  if (valHigh) valHigh.textContent = `${numHigh >= 0 ? '+' : ''}${numHigh.toFixed(1)} dB`;
+
+  const dot = document.getElementById('mixerActiveDot');
+  const indicator = document.getElementById('trackEqActiveIndicator');
+  const hasCustomEq = isSaved || Math.abs(numLow) > 0.05 || Math.abs(numMid) > 0.05 || Math.abs(numHigh) > 0.05;
+
+  if (dot) dot.style.display = hasCustomEq ? 'block' : 'none';
+  if (indicator) indicator.style.display = hasCustomEq ? 'inline-block' : 'none';
+}
+
+function syncMixerModalTrackInfo(song) {
+  const thumbEl = document.getElementById('mixerTrackThumb');
+  const titleEl = document.getElementById('mixerTrackTitle');
+  const artistEl = document.getElementById('mixerTrackArtist');
+
+  if (!song) {
+    if (titleEl) titleEl.textContent = 'No Song Playing';
+    if (artistEl) artistEl.textContent = 'Play a song to customize its specific EQ';
+    if (thumbEl) {
+      thumbEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
+    }
+    updateTrackEqUI(0, 0, 0, false);
+    return;
+  }
+
+  if (titleEl) titleEl.textContent = song.title || 'Unknown Title';
+  if (artistEl) artistEl.textContent = song.artist || 'Unknown Artist';
+  if (thumbEl) {
+    if (song.thumbnail) {
+      thumbEl.innerHTML = `<img src="${song.thumbnail}" alt="Art">`;
+    } else {
+      thumbEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
+    }
+  }
+
+  AetherAudioDB.getTrackEq(song.id).then((saved) => {
+    if (saved && (saved.low !== undefined || saved.mid !== undefined || saved.high !== undefined)) {
+      const low = parseFloat(saved.low) || 0;
+      const mid = parseFloat(saved.mid) || 0;
+      const high = parseFloat(saved.high) || 0;
+      AetherAudioEngine.setTrackEq(low, mid, high);
+      updateTrackEqUI(low, mid, high, true);
+    } else {
+      AetherAudioEngine.resetTrackEq();
+      updateTrackEqUI(0, 0, 0, false);
+    }
+  });
+}
+
+function openAudioMixerModal() {
+  const modal = document.getElementById('modalAudioMixer');
+  if (modal) {
+    modal.classList.add('active');
+    syncMixerModalTrackInfo(state.currentSong);
+    loadMasterEqSettings();
+  }
+}
+
+function closeAudioMixerModal() {
+  const modal = document.getElementById('modalAudioMixer');
+  if (modal) {
+    modal.classList.remove('active');
+  }
+}
+
+function setupAudioMixerEventListeners() {
+  const btnToggleMixer = document.getElementById('btnToggleMixer');
+  if (btnToggleMixer) {
+    btnToggleMixer.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openAudioMixerModal();
+    });
+  }
+
+  const btnMobileNpMixer = document.getElementById('btnMobileNpMixer');
+  if (btnMobileNpMixer) {
+    btnMobileNpMixer.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openAudioMixerModal();
+    });
+  }
+
+  const btnCloseAudioMixer = document.getElementById('btnCloseAudioMixer');
+  if (btnCloseAudioMixer) {
+    btnCloseAudioMixer.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeAudioMixerModal();
+    });
+  }
+
+  const modalAudioMixer = document.getElementById('modalAudioMixer');
+  if (modalAudioMixer) {
+    modalAudioMixer.addEventListener('click', (e) => {
+      if (e.target === modalAudioMixer) {
+        closeAudioMixerModal();
+      }
+    });
+  }
+
+  // Keydown Escape to close mixer modal
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modalAudioMixer && modalAudioMixer.classList.contains('active')) {
+      closeAudioMixerModal();
+    }
+  });
+
+  // Mixer Subtabs switching
+  document.querySelectorAll('.mixer-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.mixer-tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const tab = btn.getAttribute('data-mixertab');
+      const paneTrack = document.getElementById('mixerPaneTrack');
+      const paneMaster = document.getElementById('mixerPaneMaster');
+      if (tab === 'track') {
+        if (paneTrack) paneTrack.style.display = 'block';
+        if (paneMaster) paneMaster.style.display = 'none';
+      } else {
+        if (paneTrack) paneTrack.style.display = 'none';
+        if (paneMaster) paneMaster.style.display = 'block';
+      }
+    });
+  });
+
+  // Track EQ Sliders (Real-time Web Audio DSP + Debounced Persistence)
+  function handleTrackSliderInput() {
+    const low = parseFloat(document.getElementById('sliderTrackEqBass')?.value || 0);
+    const mid = parseFloat(document.getElementById('sliderTrackEqMid')?.value || 0);
+    const high = parseFloat(document.getElementById('sliderTrackEqHigh')?.value || 0);
+
+    AetherAudioEngine.setTrackEq(low, mid, high);
+    updateTrackEqUI(low, mid, high, true);
+
+    if (state.currentSong) {
+      clearTimeout(trackEqSaveDebounceTimer);
+      trackEqSaveDebounceTimer = setTimeout(() => {
+        AetherAudioDB.saveTrackEq(state.currentSong.id, { low, mid, high });
+      }, 250);
+    }
+  }
+
+  ['sliderTrackEqBass', 'sliderTrackEqMid', 'sliderTrackEqHigh'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('input', handleTrackSliderInput);
+    }
+  });
+
+  // Reset Track EQ
+  const btnResetTrackEq = document.getElementById('btnResetTrackEq');
+  if (btnResetTrackEq) {
+    btnResetTrackEq.addEventListener('click', () => {
+      AetherAudioEngine.resetTrackEq();
+      updateTrackEqUI(0, 0, 0, false);
+      if (state.currentSong) {
+        clearTimeout(trackEqSaveDebounceTimer);
+        AetherAudioDB.deleteTrackEq(state.currentSong.id);
+        showToast('Track EQ reset to flat');
+      }
+    });
+  }
+
+  // Master EQ Sliders (Real-time Web Audio DSP + LocalStorage Persistence)
+  function handleMasterSliderInput() {
+    const low = parseFloat(document.getElementById('sliderMasterEqBass')?.value || 0);
+    const mid = parseFloat(document.getElementById('sliderMasterEqMid')?.value || 0);
+    const high = parseFloat(document.getElementById('sliderMasterEqHigh')?.value || 0);
+
+    AetherAudioEngine.setMasterEq(low, mid, high);
+
+    const valBass = document.getElementById('valMasterEqBass');
+    const valMid = document.getElementById('valMasterEqMid');
+    const valHigh = document.getElementById('valMasterEqHigh');
+    if (valBass) valBass.textContent = `${low >= 0 ? '+' : ''}${low.toFixed(1)} dB`;
+    if (valMid) valMid.textContent = `${mid >= 0 ? '+' : ''}${mid.toFixed(1)} dB`;
+    if (valHigh) valHigh.textContent = `${high >= 0 ? '+' : ''}${high.toFixed(1)} dB`;
+
+    document.querySelectorAll('#masterEqPresetsList .preset-pill').forEach(p => p.classList.remove('active'));
+
+    saveMasterEqSettings({ low, mid, high, preset: 'custom' });
+  }
+
+  ['sliderMasterEqBass', 'sliderMasterEqMid', 'sliderMasterEqHigh'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('input', handleMasterSliderInput);
+    }
+  });
+
+  // Master EQ Preset Pills
+  document.querySelectorAll('#masterEqPresetsList .preset-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const presetKey = pill.getAttribute('data-preset');
+      const preset = MASTER_EQ_PRESETS[presetKey];
+      if (!preset) return;
+
+      document.querySelectorAll('#masterEqPresetsList .preset-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+
+      const bassSlider = document.getElementById('sliderMasterEqBass');
+      const midSlider = document.getElementById('sliderMasterEqMid');
+      const highSlider = document.getElementById('sliderMasterEqHigh');
+      if (bassSlider) bassSlider.value = preset.low;
+      if (midSlider) midSlider.value = preset.mid;
+      if (highSlider) highSlider.value = preset.high;
+
+      const valBass = document.getElementById('valMasterEqBass');
+      const valMid = document.getElementById('valMasterEqMid');
+      const valHigh = document.getElementById('valMasterEqHigh');
+      if (valBass) valBass.textContent = `${preset.low >= 0 ? '+' : ''}${preset.low.toFixed(1)} dB`;
+      if (valMid) valMid.textContent = `${preset.mid >= 0 ? '+' : ''}${preset.mid.toFixed(1)} dB`;
+      if (valHigh) valHigh.textContent = `${preset.high >= 0 ? '+' : ''}${preset.high.toFixed(1)} dB`;
+
+      AetherAudioEngine.setMasterEq(preset.low, preset.mid, preset.high);
+      saveMasterEqSettings({ low: preset.low, mid: preset.mid, high: preset.high, preset: presetKey });
+      showToast(`Master EQ: ${pill.textContent}`);
+    });
+  });
+}
 
 // Global one-time unlock for AudioContext on first user interaction
 document.addEventListener('pointerdown', () => {
@@ -378,6 +782,7 @@ const GRADIENTS = [
 
 // Initialize Application
 document.addEventListener('DOMContentLoaded', () => {
+  AetherAudioDB.init();
   loadData();
   setupUI();
   setupEventListeners();
@@ -483,6 +888,9 @@ function loadData() {
   } else {
     state.currentTheme = { ...PRESET_THEMES.midnight };
   }
+
+  // Load Global Master Equalizer settings
+  loadMasterEqSettings();
 
   // Restore previous playback queue and timestamp from local session
   restorePlaybackSession();
@@ -631,6 +1039,9 @@ async function restorePlaybackSession() {
     }
     if (typeof updateRightSidebar === 'function') {
       updateRightSidebar(state.currentSong);
+    }
+    if (typeof syncMixerModalTrackInfo === 'function') {
+      syncMixerModalTrackInfo(state.currentSong);
     }
   }
 }
@@ -2040,6 +2451,9 @@ function setupEventListeners() {
 
   // Profile Settings Sub-Tabs
   setupProfileSubtabs();
+
+  // Dual Audio Mixer & Equalizer Event Listeners
+  setupAudioMixerEventListeners();
 }
 
 // --- DYNAMIC THEME SYSTEM IMPLEMENTATION ---
@@ -3043,6 +3457,9 @@ function playSong(song, index) {
   updateRightSidebar(song);
   updateFavoriteUI(song);
   updateRepeatUI();
+
+  // Sync Audio Mixer Modal and restore Per-Track EQ settings
+  syncMixerModalTrackInfo(song);
 
   // Sync Spotify-style Queue UI
   renderQueueUI();
