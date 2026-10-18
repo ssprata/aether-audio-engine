@@ -1259,6 +1259,38 @@
             </div>
           </div>
 
+          <!-- DJ Audio Analysis & Frequency Waveform Card -->
+          <div class="right-section dj-analysis-card" id="rightDjAnalysisSection" style="display: none;">
+            <div class="right-section-title-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <h5 style="margin: 0; font-size: 0.82rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);">
+                Audio Spectrum & DJ Key
+              </h5>
+              <span class="dj-match-pill" id="rightDjMatchPill" style="display: none;">Harmonic Match</span>
+            </div>
+            <div class="dj-meta-badges-row">
+              <div class="dj-pill-badge" id="badgeRightBpm">
+                <span class="dj-pill-label">BPM</span>
+                <span class="dj-pill-val" id="valRightBpm">--</span>
+              </div>
+              <div class="dj-pill-badge dj-key-pill" id="badgeRightKey">
+                <span class="dj-pill-label">KEY</span>
+                <span class="dj-pill-val" id="valRightKey">--</span>
+              </div>
+              <div class="dj-pill-badge" id="badgeRightEnergy">
+                <span class="dj-pill-label">ENERGY</span>
+                <span class="dj-pill-val" id="valRightEnergy">High</span>
+              </div>
+            </div>
+            <div class="dj-waveform-wrapper" id="rightWaveformWrapper">
+              <canvas class="dj-waveform-canvas" id="rightWaveformCanvas" width="400" height="60"></canvas>
+              <div class="waveform-legend">
+                <span class="legend-item"><span class="legend-dot dot-low"></span>Bass & Kick</span>
+                <span class="legend-item"><span class="legend-dot dot-mid"></span>Vocals & Mids</span>
+                <span class="legend-item"><span class="legend-dot dot-high"></span>Treble & Air</span>
+              </div>
+            </div>
+          </div>
+
           <!-- Similar Vibes Widget in Right Sidebar -->
           <div class="right-section" id="rightVibesSection" style="display: none;">
             <div class="right-section-title-row"
@@ -1577,6 +1609,17 @@
               </path>
             </svg>
           </button>
+        </div>
+      </div>
+
+      <!-- Mobile DJ Meta & Multi-Band Waveform -->
+      <div class="mobile-np-dj-block">
+        <div class="mobile-dj-badges-row">
+          <span class="mobile-dj-pill" id="mobileNpBpmPill"><strong>BPM</strong> <span id="valMobileNpBpm">--</span></span>
+          <span class="mobile-dj-pill dj-key-pill" id="mobileNpKeyPill"><strong>KEY</strong> <span id="valMobileNpKey">--</span></span>
+        </div>
+        <div class="mobile-np-waveform-box">
+          <canvas class="dj-waveform-canvas" id="mobileNpWaveformCanvas" width="360" height="38"></canvas>
         </div>
       </div>
 
@@ -1945,6 +1988,20 @@
               <div class="mixer-track-artist" id="mixerTrackArtist">Play a song to customize its specific EQ</div>
             </div>
             <button class="btn btn-sm btn-outline" id="btnResetTrackEq" title="Reset track EQ to flat">Reset</button>
+          </div>
+
+          <!-- Multi-band Waveform Preview & Camelot Meta -->
+          <div class="mixer-waveform-strip" id="mixerWaveformStrip">
+            <div class="mixer-waveform-meta-row">
+              <div class="mixer-dj-badges">
+                <span class="mixer-pill-badge" id="mixerBpmBadge"><strong>BPM</strong> <span id="valMixerBpm">--</span></span>
+                <span class="mixer-pill-badge dj-key-pill" id="mixerKeyBadge"><strong>KEY</strong> <span id="valMixerKey">--</span></span>
+              </div>
+              <span class="mixer-waveform-title">Multi-Band Frequency Spectrum</span>
+            </div>
+            <div class="mixer-waveform-canvas-box">
+              <canvas class="dj-waveform-canvas" id="mixerWaveformCanvas" width="460" height="52"></canvas>
+            </div>
           </div>
 
           <div class="mixer-sliders-container">

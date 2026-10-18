@@ -6836,5 +6836,167 @@ input:checked + .slider:before {
   }
 }
 
+/* ==========================================================================
+   AETHER MULTI-BAND FREQUENCY WAVEFORM & DJ ENGINE (v2.0.0)
+   ========================================================================== */
+
+.dj-analysis-card {
+  margin-top: 14px;
+}
+
+.dj-meta-badges-row,
+.mobile-dj-badges-row,
+.mixer-dj-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dj-pill-badge,
+.mobile-dj-pill,
+.mixer-pill-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  font-size: 0.74rem;
+  color: var(--text-color, #ffffff);
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.dj-pill-label {
+  font-size: 0.65rem;
+  color: var(--text-secondary, #94a3b8);
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.dj-pill-val {
+  font-weight: 700;
+  font-family: monospace;
+}
+
+.dj-key-pill {
+  border-color: rgba(124, 58, 237, 0.4);
+  background: rgba(124, 58, 237, 0.12);
+  box-shadow: 0 0 10px rgba(124, 58, 237, 0.15);
+}
+
+.dj-match-pill {
+  font-size: 0.68rem;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-weight: 700;
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  letter-spacing: 0.3px;
+}
+
+.dj-waveform-wrapper,
+.mixer-waveform-canvas-box,
+.mobile-np-waveform-box {
+  position: relative;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-top: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+
+.dj-waveform-wrapper:hover,
+.mixer-waveform-canvas-box:hover,
+.mobile-np-waveform-box:hover {
+  border-color: rgba(124, 58, 237, 0.35);
+}
+
+.dj-waveform-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: auto;
+}
+
+.waveform-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+  padding: 0 2px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.68rem;
+  color: var(--text-secondary, #94a3b8);
+}
+
+.legend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.dot-low {
+  background: #ffffff;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+}
+
+.dot-mid {
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.8);
+}
+
+.dot-high {
+  background: #38bdf8;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.8);
+}
+
+/* Mixer Modal Waveform Strip */
+.mixer-waveform-strip {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+}
+
+.mixer-waveform-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.mixer-waveform-title {
+  font-size: 0.72rem;
+  color: var(--text-secondary, #94a3b8);
+  font-weight: 500;
+}
+
+/* Mobile DJ Strip */
+.mobile-np-dj-block {
+  margin: 10px 0 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mobile-dj-badges-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 
 
