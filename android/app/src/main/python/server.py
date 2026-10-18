@@ -3,6 +3,7 @@ import sys
 import re
 import json
 import base64
+import time
 import urllib.request
 import urllib.parse
 from http.server import HTTPServer, SimpleHTTPRequestHandler
@@ -1025,21 +1026,50 @@ def resolve_spotify_track(track_id):
         print("Spotify scrape resolve error:", e)
         return None
 
+YOUTUBE_AUDIO_CACHE = {}
+
 def get_youtube_audio_url(video_id):
+    if not video_id:
+        return None
+    now = time.time()
+    if video_id in YOUTUBE_AUDIO_CACHE:
+        cached_url, exp = YOUTUBE_AUDIO_CACHE[video_id]
+        if now < exp:
+            return cached_url
+
+    # Primary: yt-dlp fast stream extraction
+    try:
+        import yt_dlp
+        ydl_opts = {
+            'format': 'bestaudio[ext=m4a]/bestaudio/best',
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'noplaylist': True,
+            'extract_flat': False
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
+            if info and 'url' in info:
+                url = info['url']
+                YOUTUBE_AUDIO_CACHE[video_id] = (url, now + 14400)
+                return url
+    except Exception as e:
+        print(f"[get_youtube_audio_url yt_dlp error] {e}")
+
+    # Fallback: Android client player payload
     try:
         url = "https://www.youtube.com/youtubei/v1/player"
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "com.google.android.apps.youtube.music/6.20.51 (Linux; U; Android 11; en_US) gzip",
-            "X-YouTube-Client-Name": "67",
-            "X-YouTube-Client-Version": "6.20.51"
+            "User-Agent": "com.google.android.youtube/19.09.37 (Linux; U; Android 14) gzip"
         }
         payload = {
             "context": {
                 "client": {
-                    "clientName": "ANDROID_MUSIC",
-                    "clientVersion": "6.20.51",
-                    "androidSdkVersion": 30,
+                    "clientName": "ANDROID",
+                    "clientVersion": "19.09.37",
+                    "androidSdkVersion": 34,
                     "hl": "en",
                     "gl": "US"
                 }
@@ -1047,44 +1077,20 @@ def get_youtube_audio_url(video_id):
             "videoId": video_id
         }
         req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers)
-        with urllib.request.urlopen(req, timeout=8) as res:
+        with urllib.request.urlopen(req, timeout=6) as res:
             data = json.loads(res.read().decode('utf-8'))
-        
-        streaming_data = data.get('streamingData', {})
-        formats = streaming_data.get('adaptiveFormats', []) + streaming_data.get('formats', [])
-        
+        formats = data.get('streamingData', {}).get('adaptiveFormats', [])
         audio_formats = [f for f in formats if f.get('mimeType', '').startswith('audio/')]
         if audio_formats:
             audio_formats.sort(key=lambda x: x.get('bitrate', 0), reverse=True)
             for af in audio_formats:
                 if 'url' in af:
-                    return af['url']
-        
-        # Web client fallback
-        payload_web = {
-            "context": {
-                "client": {
-                    "clientName": "WEB",
-                    "clientVersion": "2.20231201.00.00",
-                    "hl": "en",
-                    "gl": "US"
-                }
-            },
-            "videoId": video_id
-        }
-        req_web = urllib.request.Request(url, data=json.dumps(payload_web).encode('utf-8'), headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req_web, timeout=8) as res_web:
-            data_web = json.loads(res_web.read().decode('utf-8'))
-        streaming_data_web = data_web.get('streamingData', {})
-        formats_web = streaming_data_web.get('adaptiveFormats', []) + streaming_data_web.get('formats', [])
-        audio_formats_web = [f for f in formats_web if f.get('mimeType', '').startswith('audio/')]
-        if audio_formats_web:
-            audio_formats_web.sort(key=lambda x: x.get('bitrate', 0), reverse=True)
-            for af in audio_formats_web:
-                if 'url' in af:
-                    return af['url']
+                    u = af['url']
+                    YOUTUBE_AUDIO_CACHE[video_id] = (u, now + 14400)
+                    return u
     except Exception as e:
-        print("YouTube audio stream extraction error:", e)
+        print(f"[get_youtube_audio_url fallback error] {e}")
+
     return None
 
 def scrape_spotify_embed_playlist(playlist_id, limit=100):
@@ -1649,7 +1655,7 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(res, ensure_ascii=False).encode('utf-8'))
             return
 
-        elif path == '/api/offline/audio':
+        elif path == '/api/offline/audio' or path == '/api/offline/stream':
             song_id = query_params.get('id', [''])[0].strip()
             if not song_id:
                 self.send_error(400, "Track ID required")

@@ -2143,9 +2143,11 @@
     </div>
   </div>
 
-  <!-- DJ TRANSITION STUDIO MODAL (v2.0.0 Pacemaker DJ Engine) -->
+  <!-- DJ TRANSITION STUDIO MODAL (Pacemaker / Spotify Mix v2.0.0) -->
   <div class="modal-overlay" id="modalDjTransition">
     <div class="modal-card modal-premium-card dj-transition-modal-card">
+      
+      <!-- HEADER & TOP PRESET SELECTOR (Print 4 Top Clean Style) -->
       <div class="modal-header dj-transition-header">
         <div style="display: flex; align-items: center; gap: 10px;">
           <div class="dj-transition-icon-glow">
@@ -2159,108 +2161,145 @@
           </div>
           <div>
             <h3 style="margin: 0; font-size: 1.15rem;">Aether DJ Transition Studio</h3>
-            <span class="dj-transition-status-pill">Dual-Deck Crossfade Engine • Harmonic Mixing</span>
+            <span class="dj-transition-status-pill">Interactive Dual-Waveform Mixer • Pacemaker Engine</span>
           </div>
         </div>
+
         <div style="display: flex; align-items: center; gap: 10px;">
+          <!-- Clean Preset Selector Box on Top -->
+          <div class="dj-top-preset-container">
+            <label class="dj-top-preset-label">Style:</label>
+            <select class="dj-top-preset-select" id="selTransitionPreset">
+              <option value="bass_swap" selected>Bass Swap (Recommended)</option>
+              <option value="equal_power">Equal Power Crossfade</option>
+              <option value="drop_cut">Drop Cut (Sudden Drop)</option>
+              <option value="hipass_sweep">High-Pass Filter Sweep</option>
+              <option value="smooth_fade">Smooth Linear Blend</option>
+              <option value="custom">Custom Curves (User Edit)</option>
+            </select>
+          </div>
+
           <span class="dj-match-pill" id="transitionHarmonicMatchBadge">Harmonic Match</span>
           <button class="btn btn-sm btn-icon-only btn-close-modal" id="btnCloseDjTransition" aria-label="Close modal">&times;</button>
         </div>
       </div>
 
       <div class="dj-transition-body">
-        <!-- DECK A: OUTGOING TRACK -->
-        <div class="dj-deck-card deck-outgoing" id="djDeckACard">
-          <div class="dj-deck-meta-row">
-            <div class="dj-deck-badge-tag tag-deck-a">DECK A • OUTGOING</div>
-            <div class="dj-deck-track-info">
-              <div class="dj-deck-thumb" id="deckAThumb">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
-              </div>
-              <div class="dj-deck-text">
-                <span class="dj-deck-title" id="deckATitle">No Track</span>
-                <span class="dj-deck-artist" id="deckAArtist">Select an outgoing song</span>
-              </div>
+        
+        <!-- DECK A & DECK B COMPACT HEADER INFO -->
+        <div class="dj-decks-overview-row">
+          <!-- Outgoing Track Summary -->
+          <div class="dj-deck-pill-info deck-pill-a">
+            <div class="dj-pill-badge-tag tag-deck-a">DECK A • OUTGOING</div>
+            <div class="dj-deck-thumb-sm" id="deckAThumb">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
             </div>
-            <div class="dj-deck-stats">
+            <div class="dj-deck-text-sm">
+              <span class="dj-deck-title" id="deckATitle">No Track</span>
+              <span class="dj-deck-artist" id="deckAArtist">Select outgoing track</span>
+            </div>
+            <div class="dj-deck-badges-sm">
               <span class="dj-pill-badge" id="deckABpmBadge"><strong>BPM</strong> <span id="valDeckABpm">--</span></span>
               <span class="dj-pill-badge dj-key-pill" id="deckAKeyBadge"><strong>KEY</strong> <span id="valDeckAKey">--</span></span>
             </div>
           </div>
-          <div class="dj-deck-waveform-wrapper">
-            <canvas class="dj-deck-canvas" id="canvasDeckAWaveform" width="480" height="48"></canvas>
-            <div class="dj-transition-overlay-zone zone-outgoing" id="deckATransitionZone"></div>
-          </div>
-        </div>
 
-        <!-- TRANSITION CONTROLS & CURVE VISUALIZER -->
-        <div class="dj-transition-controls-strip">
-          <div class="dj-controls-subrow">
-            <!-- Bar Count Selector -->
-            <div class="dj-control-group">
-              <span class="dj-control-label">Transition Window:</span>
-              <div class="dj-pill-selector" id="transitionBarSelector">
-                <button class="dj-selector-pill" data-bars="4">4 Bars</button>
-                <button class="dj-selector-pill active" data-bars="8">8 Bars</button>
-                <button class="dj-selector-pill" data-bars="16">16 Bars</button>
-                <button class="dj-selector-pill" data-bars="32">32 Bars</button>
-              </div>
+          <!-- Incoming Track Summary -->
+          <div class="dj-deck-pill-info deck-pill-b">
+            <div class="dj-pill-badge-tag tag-deck-b">DECK B • INCOMING</div>
+            <div class="dj-deck-thumb-sm" id="deckBThumb">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
             </div>
-
-            <!-- Calculated duration badge -->
-            <div class="dj-duration-indicator">
-              <span class="dj-duration-label">Transition Duration</span>
-              <span class="dj-duration-val" id="valTransitionDuration">16.0s</span>
+            <div class="dj-deck-text-sm">
+              <span class="dj-deck-title" id="deckBTitle">No Next Track</span>
+              <span class="dj-deck-artist" id="deckBArtist">Next song in queue</span>
             </div>
-          </div>
-
-          <div class="dj-controls-subrow" style="margin-top: 10px;">
-            <!-- Transition Curve Style -->
-            <div class="dj-control-group">
-              <span class="dj-control-label">Crossfade Curve:</span>
-              <div class="dj-pill-selector" id="transitionCurveSelector">
-                <button class="dj-selector-pill active" data-curve="bass_swap">Bass Swap</button>
-                <button class="dj-selector-pill" data-curve="equal_power">Equal Power</button>
-                <button class="dj-selector-pill" data-curve="drop_cut">Drop Cut</button>
-                <button class="dj-selector-pill" data-curve="smooth">Smooth Fade</button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Real-time Crossfade Curve Graph Canvas -->
-          <div class="dj-curve-visualizer-box">
-            <canvas id="canvasTransitionCurves" width="480" height="52"></canvas>
-            <div class="curve-legend-row">
-              <span class="curve-legend-item"><span class="curve-legend-line line-deck-a"></span>Deck A Volume Out</span>
-              <span class="curve-legend-item"><span class="curve-legend-line line-deck-b"></span>Deck B Volume In</span>
-              <span class="curve-legend-item"><span class="curve-legend-line line-bass"></span>Bass Crossover Point</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- DECK B: INCOMING TRACK -->
-        <div class="dj-deck-card deck-incoming" id="djDeckBCard">
-          <div class="dj-deck-meta-row">
-            <div class="dj-deck-badge-tag tag-deck-b">DECK B • INCOMING</div>
-            <div class="dj-deck-track-info">
-              <div class="dj-deck-thumb" id="deckBThumb">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
-              </div>
-              <div class="dj-deck-text">
-                <span class="dj-deck-title" id="deckBTitle">No Next Track</span>
-                <span class="dj-deck-artist" id="deckBArtist">Next song in queue</span>
-              </div>
-            </div>
-            <div class="dj-deck-stats">
+            <div class="dj-deck-badges-sm">
               <span class="dj-pill-badge" id="deckBBpmBadge"><strong>BPM</strong> <span id="valDeckBBpm">--</span></span>
               <span class="dj-pill-badge dj-key-pill" id="deckBKeyBadge"><strong>KEY</strong> <span id="valDeckBKey">--</span></span>
             </div>
           </div>
-          <div class="dj-deck-waveform-wrapper">
-            <canvas class="dj-deck-canvas" id="canvasDeckBWaveform" width="480" height="48"></canvas>
-            <div class="dj-transition-overlay-zone zone-incoming" id="deckBTransitionZone"></div>
+        </div>
+
+        <!-- UNIFIED DUAL-WAVEFORM TRANSITION STAGE (Prints 3 & 4) -->
+        <div class="dj-stage-outer-container">
+          
+          <div class="dj-stage-header-legend">
+            <span class="dj-stage-title-text">Transition Stage (Last 15s Outgoing &bull; First 15s Incoming)</span>
+            <div class="dj-curve-legend-inline">
+              <span class="legend-chip chip-cyan"><span class="legend-color-dot dot-cyan"></span>Volume</span>
+              <span class="legend-chip chip-yellow"><span class="legend-color-dot dot-yellow"></span>EQ / Bass</span>
+              <span class="legend-chip chip-purple"><span class="legend-color-dot dot-purple"></span>Filter / FX</span>
+            </div>
+          </div>
+
+          <!-- Interactive Canvas with Stacked Waveforms, Draggable Handles, and Neon Green Playhead Line -->
+          <div class="dj-canvas-viewport" id="djCanvasViewport">
+            <canvas id="canvasDjStage" width="600" height="240"></canvas>
+            
+            <!-- Floating Center Audition Play/Stop Button (Print 3 style) -->
+            <button class="dj-center-audition-btn" id="btnCenterAudition" title="Audition / Stop Transition">
+              <svg id="iconAuditionPlay" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="6 4 20 12 6 20 6 4"></polygon>
+              </svg>
+              <svg id="iconAuditionStop" viewBox="0 0 24 24" fill="currentColor" style="display: none;">
+                <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Bar Selector Row Beneath Waveforms (Print 3 & 4 style) -->
+          <div class="dj-stage-bar-row">
+            <div class="dj-bar-selector-box">
+              <span class="dj-bar-label">Window Length:</span>
+              <div class="dj-pill-selector" id="transitionBarSelector">
+                <button class="dj-selector-pill" data-bars="4">4 Bars</button>
+                <button class="dj-selector-pill" data-bars="8">8 Bars</button>
+                <button class="dj-selector-pill active" data-bars="16">16 Bars</button>
+                <button class="dj-selector-pill" data-bars="32">32 Bars</button>
+              </div>
+            </div>
+
+            <div class="dj-stage-duration-tag">
+              <span class="dj-duration-label">Transition Window</span>
+              <span class="dj-duration-val" id="valTransitionDuration">16.0s</span>
+            </div>
           </div>
         </div>
+
+        <!-- BOTTOM FILTER & AUTOMATION CARD (Print 4 Style) -->
+        <div class="dj-filters-card-strip">
+          <div class="dj-filter-select-col">
+            <span class="dj-filter-cat-label color-cyan">Volume</span>
+            <select class="dj-filter-dropdown" id="selFilterVolume">
+              <option value="equal_power" selected>Equal Power Crossfade</option>
+              <option value="linear">Fade Out (Linear)</option>
+              <option value="drop_cut">Drop Cut (Sudden)</option>
+              <option value="slow_fade">Slow Fade Out</option>
+            </select>
+          </div>
+
+          <div class="dj-filter-select-col">
+            <span class="dj-filter-cat-label color-yellow">EQ / Bass</span>
+            <select class="dj-filter-dropdown" id="selFilterEq">
+              <option value="bass_swap" selected>Bass Swap (Crossover)</option>
+              <option value="low_cut">Low Cut (High-Pass Out)</option>
+              <option value="neutral">Neutral (No EQ Change)</option>
+              <option value="mids_dip">Vocal / Mids Dip</option>
+            </select>
+          </div>
+
+          <div class="dj-filter-select-col">
+            <span class="dj-filter-cat-label color-purple">Efeitos / Filter</span>
+            <select class="dj-filter-dropdown" id="selFilterFx">
+              <option value="none" selected>Bypass / None</option>
+              <option value="hipass_sweep">High-Pass Filter Sweep</option>
+              <option value="lowpass_sweep">Low-Pass Filter Sweep</option>
+              <option value="resonant_peak">Resonant Peak Filter</option>
+            </select>
+          </div>
+        </div>
+
       </div>
 
       <!-- FOOTER ACTIONS -->

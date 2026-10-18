@@ -176,11 +176,17 @@ const AetherAudioEngine = {
     high.frequency.setValueAtTime(7500, this.ctx.currentTime);
     high.gain.setValueAtTime(0, this.ctx.currentTime);
 
-    // Connect audio -> low -> mid -> high -> gainNode -> masterEq.low
+    // Filter / FX Node (for live transition sweeps & effects)
+    const fx = this.ctx.createBiquadFilter();
+    fx.type = 'allpass';
+    fx.frequency.setValueAtTime(20000, this.ctx.currentTime);
+
+    // Connect audio -> low -> mid -> high -> fx -> gainNode -> masterEq.low
     sourceNode.connect(low);
     low.connect(mid);
     mid.connect(high);
-    high.connect(gainNode);
+    high.connect(fx);
+    fx.connect(gainNode);
     gainNode.connect(this.masterEq.low);
 
     return {
@@ -188,15 +194,22 @@ const AetherAudioEngine = {
       audio,
       sourceNode,
       gainNode,
-      eq: { low, mid, high }
+      eq: { low, mid, high },
+      fx
     };
+  },
+
+  async resumeContext() {
+    if (this.ctx && this.ctx.state === 'suspended') {
+      try {
+        await this.ctx.resume();
+      } catch (e) {}
+    }
   },
 
   init() {
     if (this.initialized) {
-      if (this.ctx && this.ctx.state === 'suspended') {
-        this.ctx.resume().catch(() => {});
-      }
+      this.resumeContext();
       return;
     }
 
@@ -275,15 +288,43 @@ const AetherAudioEngine = {
 
   setMasterVolume(ratio) {
     if (this.masterGain && this.ctx) {
-      const effective = ratio <= 0.001 ? 0 : Math.pow(ratio, 2.2);
+      const effective = ratio <= 0.001 ? 0 : Math.max(0, Math.min(1, ratio));
       this.masterGain.gain.setTargetAtTime(effective, this.ctx.currentTime, 0.03);
     }
     if (this.deckA && this.deckA.audio) {
-      try { this.deckA.audio.volume = Math.max(0, Math.min(1, ratio)); } catch (e) {}
+      try { this.deckA.audio.volume = 1.0; } catch (e) {}
     }
     if (this.deckB && this.deckB.audio) {
-      try { this.deckB.audio.volume = Math.max(0, Math.min(1, ratio)); } catch (e) {}
+      try { this.deckB.audio.volume = 1.0; } catch (e) {}
     }
+  },
+
+  setDeckFx(type, value, targetDeckId = null) {
+    if (!this.ctx) return;
+    const deck = targetDeckId ? (targetDeckId === 'A' ? this.deckA : this.deckB) : this.getActiveDeck();
+    if (!deck || !deck.fx) return;
+    const now = this.ctx.currentTime;
+    if (type === 'hipass_sweep') {
+      deck.fx.type = 'highpass';
+      const freq = Math.max(20, Math.min(12000, 20 + Math.pow(value, 2.5) * 8000));
+      deck.fx.frequency.setTargetAtTime(freq, now, 0.03);
+    } else if (type === 'lowpass_sweep') {
+      deck.fx.type = 'lowpass';
+      const freq = Math.max(200, Math.min(20000, 20000 - Math.pow(value, 2) * 19500));
+      deck.fx.frequency.setTargetAtTime(freq, now, 0.03);
+    } else if (type === 'resonant_peak') {
+      deck.fx.type = 'peaking';
+      deck.fx.Q.setTargetAtTime(4.0, now, 0.03);
+      deck.fx.gain.setTargetAtTime(value * 12, now, 0.03);
+    } else {
+      deck.fx.type = 'allpass';
+    }
+  },
+
+  resetDeckFx(targetDeckId = null) {
+    const deck = targetDeckId ? (targetDeckId === 'A' ? this.deckA : this.deckB) : this.getActiveDeck();
+    if (!deck || !deck.fx || !this.ctx) return;
+    deck.fx.type = 'allpass';
   },
 
   setMasterEq(lowDb, midDb, highDb) {
@@ -1323,9 +1364,42 @@ function setupWaveformScrubbers() {
 // ============================================================================
 // AETHER DJ TRANSITION STUDIO (Pacemaker DJ Architecture v2.0.0)
 // ============================================================================
+// ============================================================================
+// AETHER DJ TRANSITION STUDIO (Pacemaker DJ Architecture v2.0.0)
+// ============================================================================
 const AetherDjStudio = {
-  activeAuditionTimeout: null,
   isAuditioning: false,
+  auditionRafId: null,
+  auditionStartTime: 0,
+  playheadProgress: 0.0,
+  analysisA: null,
+  analysisB: null,
+  draggingHandle: null,
+
+  // Curve control points (normalized 0.0 to 1.0)
+  curves: {
+    // Deck A volume (outgoing): starts at 1.0, ramps down to 0.0
+    outVolume: [
+      { x: 0.0, y: 1.0, fixed: true },
+      { x: 0.65, y: 0.95 },
+      { x: 1.0, y: 0.0, fixed: true }
+    ],
+    // Deck B volume (incoming): starts at 0.0, ramps up to 1.0
+    inVolume: [
+      { x: 0.0, y: 0.0, fixed: true },
+      { x: 0.35, y: 0.05 },
+      { x: 1.0, y: 1.0, fixed: true }
+    ],
+    // EQ Bass crossover X position (0.15 to 0.85)
+    bassCrossover: 0.50,
+    // Filter / FX automation points (Purple)
+    filterFx: [
+      { x: 0.0, y: 0.0, fixed: true },
+      { x: 0.50, y: 0.15 },
+      { x: 0.80, y: 0.75 },
+      { x: 1.0, y: 0.0, fixed: true }
+    ]
+  },
 
   openModal() {
     const modal = document.getElementById('modalDjTransition');
@@ -1344,7 +1418,6 @@ const AetherDjStudio = {
     }
 
     this.renderStudioUI(outgoing, incoming);
-    this.drawCurves();
   },
 
   closeModal() {
@@ -1356,7 +1429,7 @@ const AetherDjStudio = {
   },
 
   async renderStudioUI(songA, songB) {
-    // 1. Deck A Render
+    // 1. Deck A Pill Render
     const titleA = document.getElementById('deckATitle');
     const artistA = document.getElementById('deckAArtist');
     const thumbA = document.getElementById('deckAThumb');
@@ -1364,7 +1437,7 @@ const AetherDjStudio = {
     const keyValA = document.getElementById('valDeckAKey');
     const keyBadgeA = document.getElementById('deckAKeyBadge');
 
-    let analysisA = null;
+    this.analysisA = null;
     if (songA) {
       if (titleA) titleA.textContent = songA.title || 'Unknown Title';
       if (artistA) artistA.textContent = songA.artist || 'Unknown Artist';
@@ -1375,18 +1448,14 @@ const AetherDjStudio = {
           thumbA.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
         }
       }
-      analysisA = await AetherAudioAnalyzer.getOrAnalyzeTrack(songA);
-      if (analysisA) {
-        if (bpmValA) bpmValA.textContent = analysisA.bpm;
-        if (keyValA) keyValA.textContent = analysisA.camelot;
+      this.analysisA = await AetherAudioAnalyzer.getOrAnalyzeTrack(songA);
+      if (this.analysisA) {
+        if (bpmValA) bpmValA.textContent = this.analysisA.bpm;
+        if (keyValA) keyValA.textContent = this.analysisA.camelot;
         if (keyBadgeA) {
-          const color = getCamelotColor(analysisA.camelot);
+          const color = getCamelotColor(this.analysisA.camelot);
           keyBadgeA.style.borderColor = `${color}88`;
           keyBadgeA.style.background = `${color}20`;
-        }
-        const canvasA = document.getElementById('canvasDeckAWaveform');
-        if (canvasA) {
-          drawMultiBandWaveform(canvasA, analysisA, 0.85);
         }
       }
     } else {
@@ -1396,7 +1465,7 @@ const AetherDjStudio = {
       if (keyValA) keyValA.textContent = '--';
     }
 
-    // 2. Deck B Render
+    // 2. Deck B Pill Render
     const titleB = document.getElementById('deckBTitle');
     const artistB = document.getElementById('deckBArtist');
     const thumbB = document.getElementById('deckBThumb');
@@ -1404,7 +1473,7 @@ const AetherDjStudio = {
     const keyValB = document.getElementById('valDeckBKey');
     const keyBadgeB = document.getElementById('deckBKeyBadge');
 
-    let analysisB = null;
+    this.analysisB = null;
     if (songB) {
       if (titleB) titleB.textContent = songB.title || 'Unknown Title';
       if (artistB) artistB.textContent = songB.artist || 'Unknown Artist';
@@ -1415,18 +1484,14 @@ const AetherDjStudio = {
           thumbB.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
         }
       }
-      analysisB = await AetherAudioAnalyzer.getOrAnalyzeTrack(songB);
-      if (analysisB) {
-        if (bpmValB) bpmValB.textContent = analysisB.bpm;
-        if (keyValB) keyValB.textContent = analysisB.camelot;
+      this.analysisB = await AetherAudioAnalyzer.getOrAnalyzeTrack(songB);
+      if (this.analysisB) {
+        if (bpmValB) bpmValB.textContent = this.analysisB.bpm;
+        if (keyValB) keyValB.textContent = this.analysisB.camelot;
         if (keyBadgeB) {
-          const color = getCamelotColor(analysisB.camelot);
+          const color = getCamelotColor(this.analysisB.camelot);
           keyBadgeB.style.borderColor = `${color}88`;
           keyBadgeB.style.background = `${color}20`;
-        }
-        const canvasB = document.getElementById('canvasDeckBWaveform');
-        if (canvasB) {
-          drawMultiBandWaveform(canvasB, analysisB, 0.15);
         }
       }
     } else {
@@ -1436,48 +1501,46 @@ const AetherDjStudio = {
       if (keyValB) keyValB.textContent = '--';
     }
 
-    // 3. Harmonic Compatibility Badge
-    const matchBadge = document.getElementById('transitionHarmonicMatchBadge');
-    if (matchBadge) {
-      if (analysisA && analysisB) {
-        const match = AetherAudioAnalyzer.getHarmonicCompatibility(analysisA.camelot, analysisB.camelot);
-        matchBadge.textContent = match.label;
-        matchBadge.style.display = 'inline-block';
-        if (match.type === 'perfect') {
-          matchBadge.style.background = 'rgba(16, 185, 129, 0.2)';
-          matchBadge.style.borderColor = '#10b981';
-          matchBadge.style.color = '#34d399';
-        } else if (match.type === 'lift' || match.type === 'surge') {
-          matchBadge.style.background = 'rgba(56, 189, 248, 0.2)';
-          matchBadge.style.borderColor = '#38bdf8';
-          matchBadge.style.color = '#38bdf8';
-        } else if (match.type === 'mode_shift') {
-          matchBadge.style.background = 'rgba(168, 85, 247, 0.2)';
-          matchBadge.style.borderColor = '#a855f7';
-          matchBadge.style.color = '#c084fc';
-        } else {
-          matchBadge.style.background = 'rgba(245, 158, 11, 0.2)';
-          matchBadge.style.borderColor = '#f59e0b';
-          matchBadge.style.color = '#fbbf24';
-        }
-      } else {
-        matchBadge.style.display = 'none';
-      }
-    }
-
-    // 4. Load Saved Transition for this track pair (if exists)
+    // 3. Load Saved Transition (if any exists)
     if (songA) {
       const transKey = songB ? `${songA.id}_to_${songB.id}` : `${songA.id}_default`;
       const saved = await AetherAudioDB.getTransition(transKey) || await AetherAudioDB.getTransition(`${songA.id}_default`);
       if (saved) {
         state.djTransitionSettings.bars = saved.bars || state.djTransitionSettings.bars;
         state.djTransitionSettings.curveType = saved.curveType || state.djTransitionSettings.curveType;
+        if (saved.curves) {
+          this.curves = saved.curves;
+        } else {
+          this.applyPreset(state.djTransitionSettings.curveType, false);
+        }
+        if (saved.filterVolume) {
+          const selVol = document.getElementById('selFilterVolume');
+          if (selVol) selVol.value = saved.filterVolume;
+        }
+        if (saved.filterEq) {
+          const selEq = document.getElementById('selFilterEq');
+          if (selEq) selEq.value = saved.filterEq;
+        }
+        if (saved.filterFx) {
+          const selFx = document.getElementById('selFilterFx');
+          if (selFx) selFx.value = saved.filterFx;
+        }
+      } else {
+        this.applyPreset(state.djTransitionSettings.curveType || 'bass_swap', false);
       }
+    } else {
+      this.applyPreset(state.djTransitionSettings.curveType || 'bass_swap', false);
     }
 
-    // 5. Update Duration & Overlay Zones
-    this.updateDuration(analysisA);
-    this.updatePillSelectors();
+    // 4. Update Preset Selector and Duration
+    const topPresetSel = document.getElementById('selTransitionPreset');
+    if (topPresetSel) {
+      topPresetSel.value = state.djTransitionSettings.curveType || 'bass_swap';
+    }
+
+    this.updateDuration(this.analysisA);
+    this.updateBarPills();
+    this.drawStage();
   },
 
   updateDuration(analysisA = null) {
@@ -1489,31 +1552,161 @@ const AetherDjStudio = {
     if (valDuration) {
       valDuration.textContent = `${durSecs}s`;
     }
-
-    const baseDuration = (state.duration > 0 ? state.duration : 180);
-    const transPct = Math.min(45, Math.max(8, (durSecs / baseDuration) * 100));
-
-    const zoneA = document.getElementById('deckATransitionZone');
-    if (zoneA) zoneA.style.width = `${transPct}%`;
-
-    const zoneB = document.getElementById('deckBTransitionZone');
-    if (zoneB) zoneB.style.width = `${transPct}%`;
   },
 
-  updatePillSelectors() {
+  updateBarPills() {
     document.querySelectorAll('#transitionBarSelector .dj-selector-pill').forEach(pill => {
       const b = parseInt(pill.getAttribute('data-bars'), 10);
       pill.classList.toggle('active', b === state.djTransitionSettings.bars);
     });
-
-    document.querySelectorAll('#transitionCurveSelector .dj-selector-pill').forEach(pill => {
-      const c = pill.getAttribute('data-curve');
-      pill.classList.toggle('active', c === state.djTransitionSettings.curveType);
-    });
   },
 
-  drawCurves() {
-    const canvas = document.getElementById('canvasTransitionCurves');
+  applyPreset(presetKey, updatePresetDropdown = true) {
+    state.djTransitionSettings.curveType = presetKey;
+    const selVol = document.getElementById('selFilterVolume');
+    const selEq = document.getElementById('selFilterEq');
+    const selFx = document.getElementById('selFilterFx');
+
+    if (presetKey === 'bass_swap') {
+      this.curves.outVolume = [
+        { x: 0.0, y: 1.0, fixed: true },
+        { x: 0.60, y: 0.85 },
+        { x: 1.0, y: 0.0, fixed: true }
+      ];
+      this.curves.inVolume = [
+        { x: 0.0, y: 0.0, fixed: true },
+        { x: 0.40, y: 0.15 },
+        { x: 1.0, y: 1.0, fixed: true }
+      ];
+      this.curves.bassCrossover = 0.50;
+      this.curves.filterFx = [
+        { x: 0.0, y: 0.0, fixed: true },
+        { x: 0.50, y: 0.0 },
+        { x: 0.80, y: 0.0 },
+        { x: 1.0, y: 0.0, fixed: true }
+      ];
+      if (selVol) selVol.value = 'equal_power';
+      if (selEq) selEq.value = 'bass_swap';
+      if (selFx) selFx.value = 'none';
+    } else if (presetKey === 'equal_power') {
+      this.curves.outVolume = [
+        { x: 0.0, y: 1.0, fixed: true },
+        { x: 0.50, y: 0.707 },
+        { x: 1.0, y: 0.0, fixed: true }
+      ];
+      this.curves.inVolume = [
+        { x: 0.0, y: 0.0, fixed: true },
+        { x: 0.50, y: 0.707 },
+        { x: 1.0, y: 1.0, fixed: true }
+      ];
+      this.curves.bassCrossover = 0.50;
+      this.curves.filterFx = [
+        { x: 0.0, y: 0.0, fixed: true },
+        { x: 0.50, y: 0.0 },
+        { x: 0.80, y: 0.0 },
+        { x: 1.0, y: 0.0, fixed: true }
+      ];
+      if (selVol) selVol.value = 'equal_power';
+      if (selEq) selEq.value = 'neutral';
+      if (selFx) selFx.value = 'none';
+    } else if (presetKey === 'drop_cut') {
+      this.curves.outVolume = [
+        { x: 0.0, y: 1.0, fixed: true },
+        { x: 0.88, y: 1.0 },
+        { x: 1.0, y: 0.0, fixed: true }
+      ];
+      this.curves.inVolume = [
+        { x: 0.0, y: 0.0, fixed: true },
+        { x: 0.88, y: 0.0 },
+        { x: 1.0, y: 1.0, fixed: true }
+      ];
+      this.curves.bassCrossover = 0.88;
+      this.curves.filterFx = [
+        { x: 0.0, y: 0.0, fixed: true },
+        { x: 0.50, y: 0.0 },
+        { x: 0.80, y: 0.0 },
+        { x: 1.0, y: 0.0, fixed: true }
+      ];
+      if (selVol) selVol.value = 'drop_cut';
+      if (selEq) selEq.value = 'bass_swap';
+      if (selFx) selFx.value = 'none';
+    } else if (presetKey === 'hipass_sweep') {
+      this.curves.outVolume = [
+        { x: 0.0, y: 1.0, fixed: true },
+        { x: 0.65, y: 0.90 },
+        { x: 1.0, y: 0.0, fixed: true }
+      ];
+      this.curves.inVolume = [
+        { x: 0.0, y: 0.0, fixed: true },
+        { x: 0.40, y: 0.20 },
+        { x: 1.0, y: 1.0, fixed: true }
+      ];
+      this.curves.bassCrossover = 0.50;
+      this.curves.filterFx = [
+        { x: 0.0, y: 0.0, fixed: true },
+        { x: 0.45, y: 0.25 },
+        { x: 0.85, y: 0.85 },
+        { x: 1.0, y: 0.0, fixed: true }
+      ];
+      if (selVol) selVol.value = 'equal_power';
+      if (selEq) selEq.value = 'low_cut';
+      if (selFx) selFx.value = 'hipass_sweep';
+    } else if (presetKey === 'smooth_blend') {
+      this.curves.outVolume = [
+        { x: 0.0, y: 1.0, fixed: true },
+        { x: 0.50, y: 0.50 },
+        { x: 1.0, y: 0.0, fixed: true }
+      ];
+      this.curves.inVolume = [
+        { x: 0.0, y: 0.0, fixed: true },
+        { x: 0.50, y: 0.50 },
+        { x: 1.0, y: 1.0, fixed: true }
+      ];
+      this.curves.bassCrossover = 0.50;
+      this.curves.filterFx = [
+        { x: 0.0, y: 0.0, fixed: true },
+        { x: 0.50, y: 0.0 },
+        { x: 0.80, y: 0.0 },
+        { x: 1.0, y: 0.0, fixed: true }
+      ];
+      if (selVol) selVol.value = 'linear';
+      if (selEq) selEq.value = 'neutral';
+      if (selFx) selFx.value = 'none';
+    }
+
+    if (updatePresetDropdown) {
+      const topPresetSel = document.getElementById('selTransitionPreset');
+      if (topPresetSel) topPresetSel.value = presetKey;
+    }
+
+    this.drawStage();
+  },
+
+  // Synthesize realistic rhythmic multi-band waveform peaks if raw peaks aren't ready
+  _synthesizePeaks(seedStr, count = 80) {
+    let hash = 0;
+    for (let i = 0; i < seedStr.length; i++) {
+      hash = (hash << 5) - hash + seedStr.charCodeAt(i);
+      hash |= 0;
+    }
+    const lows = new Float32Array(count);
+    const mids = new Float32Array(count);
+    const highs = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      const beatPhase = (i % 8) / 8;
+      const kick = (beatPhase === 0 || beatPhase === 0.5) ? 0.85 : 0.35;
+      const snare = (beatPhase === 0.25 || beatPhase === 0.75) ? 0.7 : 0.25;
+      const rand = Math.abs(Math.sin((hash + i) * 12.9898) * 43758.5453) % 1;
+      lows[i] = Math.max(0.2, Math.min(1.0, kick * 0.7 + rand * 0.3));
+      mids[i] = Math.max(0.2, Math.min(1.0, snare * 0.6 + rand * 0.4));
+      highs[i] = Math.max(0.15, Math.min(1.0, 0.4 + rand * 0.6));
+    }
+    return { lows, mids, highs };
+  },
+
+  // Draw unified dual-deck stage with last 15s of Deck A & first 15s of Deck B
+  drawStage() {
+    const canvas = document.getElementById('canvasDjStage');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -1532,91 +1725,253 @@ const AetherDjStudio = {
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
 
-    const pad = 6 * dpr;
-    const plotW = w - (pad * 2);
-    const plotH = h - (pad * 2);
+    const halfH = h / 2;
+    const barColumns = 72;
+    const colW = w / barColumns;
+    const pad = 8 * dpr;
 
-    // Subtle Grid & 50% Crossover marker
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    // 1. Draw 16 Vertical Beat-Grid Lines
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
     ctx.lineWidth = 1 * dpr;
-    ctx.beginPath();
-    ctx.moveTo(w / 2, 0);
-    ctx.lineTo(w / 2, h);
-    ctx.stroke();
-
-    const curveType = state.djTransitionSettings.curveType;
-    const steps = 100;
-
-    // Deck A Curve (Purple #a855f7)
-    ctx.beginPath();
-    ctx.strokeStyle = '#a855f7';
-    ctx.lineWidth = 2.5 * dpr;
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      let val = 0;
-      if (curveType === 'equal_power' || curveType === 'bass_swap') {
-        val = Math.cos(t * 0.5 * Math.PI);
-      } else if (curveType === 'smooth') {
-        val = 1 - t;
-      } else if (curveType === 'drop_cut') {
-        val = t < 0.95 ? 1.0 : (1.0 - (t - 0.95) / 0.05);
-      } else {
-        val = Math.cos(t * 0.5 * Math.PI);
-      }
-      const x = pad + t * plotW;
-      const y = pad + (1 - val) * plotH;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+    const gridDivs = 16;
+    for (let i = 1; i < gridDivs; i++) {
+      const gx = (i / gridDivs) * w;
+      ctx.beginPath();
+      ctx.moveTo(gx, 0);
+      ctx.lineTo(gx, h);
+      ctx.stroke();
     }
+
+    // 2. Draw Top Waveform: DECK A (Last 15 seconds)
+    const midYA = halfH / 2;
+    const maxBarHA = (halfH - pad * 2) / 2;
+
+    const durA = (state.duration > 0 ? state.duration : 180);
+    const slicePctA = Math.min(1.0, 15.0 / durA);
+    const startFracA = 1.0 - slicePctA;
+
+    let peaksA = (this.analysisA && this.analysisA.peaks && this.analysisA.peaks.lows)
+      ? this.analysisA.peaks
+      : this._synthesizePeaks((state.currentSong ? state.currentSong.title : 'deckA') + '_seed', barColumns);
+
+    const totalBinsA = peaksA.lows.length;
+    for (let i = 0; i < barColumns; i++) {
+      const sampleFrac = startFracA + (i / barColumns) * slicePctA;
+      const binIdx = Math.max(0, Math.min(totalBinsA - 1, Math.floor(sampleFrac * totalBinsA)));
+
+      const lowVal = peaksA.lows[binIdx] || 0.2;
+      const midVal = peaksA.mids[binIdx] || 0.25;
+      const highVal = peaksA.highs[binIdx] || 0.3;
+
+      const x = i * colW;
+      const bw = Math.max(1.8 * dpr, colW - (1.2 * dpr));
+
+      // Outer Highs (Cyan / Blue)
+      const hH = Math.max(3 * dpr, highVal * maxBarHA);
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.28)';
+      ctx.fillRect(x, midYA - hH, bw, hH * 2);
+
+      // Mids (Amber / Warm)
+      const mH = Math.max(2 * dpr, midVal * maxBarHA * 0.75);
+      ctx.fillStyle = 'rgba(234, 179, 8, 0.55)';
+      ctx.fillRect(x, midYA - mH, bw, mH * 2);
+
+      // Core Lows (Crisp White / Glow)
+      const lH = Math.max(1.5 * dpr, lowVal * maxBarHA * 0.5);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.fillRect(x, midYA - lH, bw, lH * 2);
+    }
+
+    // 3. Center Deck Divider
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(0, halfH);
+    ctx.lineTo(w, halfH);
     ctx.stroke();
 
-    // Deck B Curve (Cyan #38bdf8)
+    // 4. Draw Bottom Waveform: DECK B (First 15 seconds)
+    const midYB = halfH + (halfH / 2);
+    const maxBarHB = (halfH - pad * 2) / 2;
+
+    const nextSong = (state.playQueue && state.playQueue.length > state.currentQueueIndex + 1)
+      ? state.playQueue[state.currentQueueIndex + 1]
+      : null;
+    const durB = 180;
+    const slicePctB = Math.min(1.0, 15.0 / durB);
+
+    let peaksB = (this.analysisB && this.analysisB.peaks && this.analysisB.peaks.lows)
+      ? this.analysisB.peaks
+      : this._synthesizePeaks((nextSong ? nextSong.title : 'deckB') + '_seed', barColumns);
+
+    const totalBinsB = peaksB.lows.length;
+    for (let i = 0; i < barColumns; i++) {
+      const sampleFrac = (i / barColumns) * slicePctB;
+      const binIdx = Math.max(0, Math.min(totalBinsB - 1, Math.floor(sampleFrac * totalBinsB)));
+
+      const lowVal = peaksB.lows[binIdx] || 0.2;
+      const midVal = peaksB.mids[binIdx] || 0.25;
+      const highVal = peaksB.highs[binIdx] || 0.3;
+
+      const x = i * colW;
+      const bw = Math.max(1.8 * dpr, colW - (1.2 * dpr));
+
+      // Outer Highs (Cyan / Blue)
+      const hH = Math.max(3 * dpr, highVal * maxBarHB);
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.28)';
+      ctx.fillRect(x, midYB - hH, bw, hH * 2);
+
+      // Mids (Amber / Warm)
+      const mH = Math.max(2 * dpr, midVal * maxBarHB * 0.75);
+      ctx.fillStyle = 'rgba(234, 179, 8, 0.55)';
+      ctx.fillRect(x, midYB - mH, bw, mH * 2);
+
+      // Core Lows (Crisp White / Glow)
+      const lH = Math.max(1.5 * dpr, lowVal * maxBarHB * 0.5);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.fillRect(x, midYB - lH, bw, lH * 2);
+    }
+
+    // 5. OVERLAID INTERACTIVE AUTOMATION CURVES (Prints 3 & 4)
+
+    // Helper functions to map normalized curve Y (0.0 to 1.0) into canvas coordinates
+    const mapTopY = (normY) => pad + (1.0 - normY) * (halfH - pad * 2);
+    const mapBotY = (normY) => halfH + pad + (1.0 - normY) * (halfH - pad * 2);
+
+    // 5.1 Volume Curve: Deck A (Cyan)
     ctx.beginPath();
     ctx.strokeStyle = '#38bdf8';
-    ctx.lineWidth = 2.5 * dpr;
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      let val = 0;
-      if (curveType === 'equal_power' || curveType === 'bass_swap') {
-        val = Math.sin(t * 0.5 * Math.PI);
-      } else if (curveType === 'smooth') {
-        val = t;
-      } else if (curveType === 'drop_cut') {
-        val = t > 0.05 ? 1.0 : (t / 0.05);
-      } else {
-        val = Math.sin(t * 0.5 * Math.PI);
-      }
-      const x = pad + t * plotW;
-      const y = pad + (1 - val) * plotH;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
+    ctx.lineWidth = 2.8 * dpr;
+    ctx.shadowColor = 'rgba(56, 189, 248, 0.7)';
+    ctx.shadowBlur = 6 * dpr;
+    this.curves.outVolume.forEach((pt, idx) => {
+      const cx = pt.x * w;
+      const cy = mapTopY(pt.y);
+      if (idx === 0) ctx.moveTo(cx, cy);
+      else ctx.lineTo(cx, cy);
+    });
     ctx.stroke();
 
-    // If Bass Swap: draw amber crossover dashed line and indicator
-    if (curveType === 'bass_swap') {
-      ctx.setLineDash([4 * dpr, 3 * dpr]);
-      ctx.strokeStyle = '#f59e0b';
-      ctx.lineWidth = 2 * dpr;
-      ctx.beginPath();
-      ctx.moveTo(w / 2, 0);
-      ctx.lineTo(w / 2, h);
-      ctx.stroke();
-      ctx.setLineDash([]);
+    // 5.2 Volume Curve: Deck B (Cyan)
+    ctx.beginPath();
+    this.curves.inVolume.forEach((pt, idx) => {
+      const cx = pt.x * w;
+      const cy = mapBotY(pt.y);
+      if (idx === 0) ctx.moveTo(cx, cy);
+      else ctx.lineTo(cx, cy);
+    });
+    ctx.stroke();
+    ctx.shadowBlur = 0;
 
-      ctx.fillStyle = '#f59e0b';
+    // 5.3 EQ / Bass Curve (Yellow / Amber)
+    // Deck A bass drops at crossover point, Deck B bass steps up
+    const crossX = this.curves.bassCrossover * w;
+    ctx.beginPath();
+    ctx.strokeStyle = '#eab308';
+    ctx.lineWidth = 2.5 * dpr;
+    ctx.shadowColor = 'rgba(234, 179, 8, 0.7)';
+    ctx.shadowBlur = 6 * dpr;
+
+    // Deck A Yellow line: center of top deck, then drops to bottom of top deck at crossX
+    ctx.moveTo(0, midYA);
+    ctx.lineTo(crossX, midYA);
+    ctx.lineTo(crossX, halfH - pad);
+    ctx.lineTo(w, halfH - pad);
+    ctx.stroke();
+
+    // Deck B Yellow line: bottom of bottom deck, then steps up to center of bottom deck at crossX
+    ctx.beginPath();
+    ctx.moveTo(0, h - pad);
+    ctx.lineTo(crossX, h - pad);
+    ctx.lineTo(crossX, midYB);
+    ctx.lineTo(w, midYB);
+    ctx.stroke();
+
+    // Vertical dashed yellow crossover connector
+    ctx.setLineDash([4 * dpr, 4 * dpr]);
+    ctx.beginPath();
+    ctx.moveTo(crossX, midYA);
+    ctx.lineTo(crossX, h - pad);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.shadowBlur = 0;
+
+    // 5.4 Filter / FX Curve (Purple / Violet)
+    ctx.beginPath();
+    ctx.strokeStyle = '#c084fc';
+    ctx.lineWidth = 2.5 * dpr;
+    ctx.shadowColor = 'rgba(192, 132, 252, 0.7)';
+    ctx.shadowBlur = 6 * dpr;
+    this.curves.filterFx.forEach((pt, idx) => {
+      const cx = pt.x * w;
+      // Filter curve spans middle of stage
+      const cy = (h * 0.75) - (pt.y * (h * 0.5));
+      if (idx === 0) ctx.moveTo(cx, cy);
+      else ctx.lineTo(cx, cy);
+    });
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // 6. DRAW DRAGGABLE HANDLES
+    const drawHandle = (x, y, color, isCross = false) => {
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2 * dpr;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 8 * dpr;
       ctx.beginPath();
-      ctx.arc(w / 2, h / 2, 4 * dpr, 0, Math.PI * 2);
+      ctx.arc(x, y, (isCross ? 6.5 : 5.5) * dpr, 0, Math.PI * 2);
       ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    // Volume handles (Cyan)
+    this.curves.outVolume.forEach((pt, idx) => {
+      if (!pt.fixed) drawHandle(pt.x * w, mapTopY(pt.y), '#38bdf8');
+    });
+    this.curves.inVolume.forEach((pt, idx) => {
+      if (!pt.fixed) drawHandle(pt.x * w, mapBotY(pt.y), '#38bdf8');
+    });
+
+    // Yellow Bass crossover handle (at center divider)
+    drawHandle(crossX, halfH, '#eab308', true);
+
+    // Filter FX handles (Purple)
+    this.curves.filterFx.forEach((pt, idx) => {
+      if (!pt.fixed) {
+        const cy = (h * 0.75) - (pt.y * (h * 0.5));
+        drawHandle(pt.x * w, cy, '#c084fc');
+      }
+    });
+
+    // 7. NEON GREEN VERTICAL PLAYHEAD NEEDLE `|` (Print 3 style)
+    if (this.playheadProgress >= 0.0 && this.playheadProgress <= 1.0) {
+      const needleX = this.playheadProgress * w;
+      ctx.save();
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 2.8 * dpr;
+      ctx.shadowColor = '#22c55e';
+      ctx.shadowBlur = 10 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(needleX, 0);
+      ctx.lineTo(needleX, h);
+      ctx.stroke();
+      ctx.restore();
+    }
+  },
+
+  // Toggle live audition playback
+  async toggleAudition() {
+    if (this.isAuditioning) {
+      this.stopAudition();
+    } else {
+      await this.startAudition();
     }
   },
 
   async startAudition() {
-    if (this.isAuditioning) {
-      this.stopAudition();
-      return;
-    }
-
     const songA = state.currentSong;
     let songB = null;
     if (state.playQueue && state.playQueue.length > state.currentQueueIndex + 1) {
@@ -1626,90 +1981,165 @@ const AetherDjStudio = {
     }
 
     if (!songA || !songB) {
-      showToast('Need at least 2 tracks in queue to audition');
+      showToast('Need at least 2 tracks in queue to audition transition');
       return;
     }
 
     AetherAudioEngine.init();
-    if (!AetherAudioEngine.initialized) {
-      showToast('Audio engine not ready');
-      return;
+    if (AetherAudioEngine.resumeContext) {
+      await AetherAudioEngine.resumeContext();
     }
 
     this.isAuditioning = true;
-    const btn = document.getElementById('btnPreviewTransition');
-    const txt = document.getElementById('txtPreviewTransition');
-    if (btn) btn.classList.add('btn-primary');
-    if (txt) txt.textContent = 'Stop Audition';
+    this.playheadProgress = 0.0;
+    this.auditionStartTime = performance.now();
 
-    const transSecs = state.djTransitionSettings.durationSeconds;
-    const curveType = state.djTransitionSettings.curveType;
+    // Update Audition button icons (center button & footer button)
+    const btnCenter = document.getElementById('btnCenterAudition');
+    const iconPlay = document.getElementById('iconAuditionPlay');
+    const iconStop = document.getElementById('iconAuditionStop');
+    const btnPreview = document.getElementById('btnPreviewTransition');
+    const txtPreview = document.getElementById('txtPreviewTransition');
 
+    if (btnCenter) btnCenter.classList.add('auditioning');
+    if (iconPlay) iconPlay.style.display = 'none';
+    if (iconStop) iconStop.style.display = 'block';
+    if (btnPreview) btnPreview.classList.add('btn-primary');
+    if (txtPreview) txtPreview.textContent = 'Stop Audition';
+
+    const transSecs = state.djTransitionSettings.durationSeconds || 16;
     const deckA = AetherAudioEngine.deckA;
     const deckB = AetherAudioEngine.deckB;
 
     let srcB = '';
     const isOfflineB = (state.downloadedTrackIds && state.downloadedTrackIds.has(songB.id));
     if (isOfflineB) {
-      srcB = `/api/offline/stream?id=${encodeURIComponent(songB.id)}`;
+      srcB = `/api/offline/audio?id=${encodeURIComponent(songB.id)}`;
     } else {
       const vidB = songB._preResolvedYtId || songB.id;
       srcB = `/api/stream/proxy?id=${encodeURIComponent(vidB)}`;
     }
 
+    deckB.audio.crossOrigin = 'anonymous';
     deckB.audio.src = srcB;
     deckB.audio.currentTime = 0;
 
-    // Start Deck A slightly before transition (e.g. 2s pre-roll + transSecs)
-    const preRoll = 2.0;
-    const seekA = Math.max(0, (state.duration || 180) - transSecs - preRoll);
-    deckA.audio.currentTime = seekA;
+    // Deck A seek position: last transSecs of the track
+    const durA = (state.duration > 0 ? state.duration : 180);
+    deckA.audio.currentTime = Math.max(0, durA - transSecs);
 
     try {
       await deckA.audio.play();
     } catch (e) {}
+    try {
+      await deckB.audio.play();
+    } catch (e) {}
 
     showToast(`Auditioning ${state.djTransitionSettings.bars} Bars Transition...`);
 
-    // Wait pre-roll seconds then trigger crossfade
-    this.activeAuditionTimeout = setTimeout(async () => {
-      try {
-        await deckB.audio.play();
-      } catch (e) {}
+    // Animation frame loop for needle movement and live Web Audio DSP sweeps
+    const filterType = document.getElementById('selFilterFx') ? document.getElementById('selFilterFx').value : 'none';
 
-      AetherAudioEngine.executeCrossfade({
-        duration: transSecs,
-        curveType: curveType,
-        onComplete: () => {
-          this.stopAudition();
-          showToast('Audition Complete');
+    const loop = (now) => {
+      if (!this.isAuditioning) return;
+
+      const elapsed = (now - this.auditionStartTime) / 1000;
+      const progress = Math.min(1.0, elapsed / transSecs);
+      this.playheadProgress = progress;
+
+      // Evaluate Volume A & B at current progress
+      const volA = this._evaluateCurve(this.curves.outVolume, progress);
+      const volB = this._evaluateCurve(this.curves.inVolume, progress);
+
+      if (AetherAudioEngine.ctx) {
+        const ct = AetherAudioEngine.ctx.currentTime;
+        deckA.gainNode.gain.setValueAtTime(Math.max(0, Math.min(1, volA)), ct);
+        deckB.gainNode.gain.setValueAtTime(Math.max(0, Math.min(1, volB)), ct);
+
+        // EQ / Bass Swap crossover
+        if (progress < this.curves.bassCrossover) {
+          deckA.eq.low.gain.setValueAtTime(0, ct);
+          deckB.eq.low.gain.setValueAtTime(-24, ct);
+        } else {
+          deckA.eq.low.gain.setValueAtTime(-24, ct);
+          deckB.eq.low.gain.setValueAtTime(0, ct);
         }
-      });
-    }, preRoll * 1000);
+
+        // Live Filter / FX Sweep
+        if (filterType !== 'none') {
+          const fxVal = this._evaluateCurve(this.curves.filterFx, progress);
+          AetherAudioEngine.setDeckFx(filterType, fxVal, 'A');
+        }
+      }
+
+      this.drawStage();
+
+      if (progress < 1.0) {
+        this.auditionRafId = requestAnimationFrame(loop);
+      } else {
+        this.stopAudition();
+        showToast('Audition Complete');
+      }
+    };
+
+    this.auditionRafId = requestAnimationFrame(loop);
+  },
+
+  // Helper to linearly interpolate curve points at time t
+  _evaluateCurve(points, t) {
+    if (!points || points.length === 0) return 0;
+    if (t <= points[0].x) return points[0].y;
+    if (t >= points[points.length - 1].x) return points[points.length - 1].y;
+
+    for (let i = 0; i < points.length - 1; i++) {
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      if (t >= p1.x && t <= p2.x) {
+        const span = p2.x - p1.x;
+        const frac = span > 0 ? (t - p1.x) / span : 0;
+        return p1.y + frac * (p2.y - p1.y);
+      }
+    }
+    return points[points.length - 1].y;
   },
 
   stopAudition() {
     this.isAuditioning = false;
-    if (this.activeAuditionTimeout) {
-      clearTimeout(this.activeAuditionTimeout);
-      this.activeAuditionTimeout = null;
+    if (this.auditionRafId) {
+      cancelAnimationFrame(this.auditionRafId);
+      this.auditionRafId = null;
     }
-    AetherAudioEngine.cancelCrossfade();
+    this.playheadProgress = 0.0;
+
+    // Reset button states
+    const btnCenter = document.getElementById('btnCenterAudition');
+    const iconPlay = document.getElementById('iconAuditionPlay');
+    const iconStop = document.getElementById('iconAuditionStop');
+    const btnPreview = document.getElementById('btnPreviewTransition');
+    const txtPreview = document.getElementById('txtPreviewTransition');
+
+    if (btnCenter) btnCenter.classList.remove('auditioning');
+    if (iconPlay) iconPlay.style.display = 'block';
+    if (iconStop) iconStop.style.display = 'none';
+    if (btnPreview) btnPreview.classList.remove('btn-primary');
+    if (txtPreview) txtPreview.textContent = 'Audition Transition';
+
     try {
       if (AetherAudioEngine.deckB && AetherAudioEngine.deckB.audio) {
         AetherAudioEngine.deckB.audio.pause();
-        AetherAudioEngine.deckB.gainNode.gain.setValueAtTime(0, AetherAudioEngine.ctx.currentTime);
+        if (AetherAudioEngine.ctx) {
+          AetherAudioEngine.deckB.gainNode.gain.setValueAtTime(0, AetherAudioEngine.ctx.currentTime);
+          AetherAudioEngine.deckB.eq.low.gain.setValueAtTime(0, AetherAudioEngine.ctx.currentTime);
+        }
       }
-      if (AetherAudioEngine.deckA && AetherAudioEngine.deckA.gainNode) {
-        AetherAudioEngine.deckA.gainNode.gain.setValueAtTime(1, AetherAudioEngine.ctx.currentTime);
+      if (AetherAudioEngine.deckA && AetherAudioEngine.ctx) {
+        AetherAudioEngine.deckA.gainNode.gain.setValueAtTime(1.0, AetherAudioEngine.ctx.currentTime);
         AetherAudioEngine.deckA.eq.low.gain.setValueAtTime(0, AetherAudioEngine.ctx.currentTime);
+        AetherAudioEngine.resetDeckFx('A');
       }
     } catch (e) {}
 
-    const btn = document.getElementById('btnPreviewTransition');
-    const txt = document.getElementById('txtPreviewTransition');
-    if (btn) btn.classList.remove('btn-primary');
-    if (txt) txt.textContent = 'Audition Transition';
+    this.drawStage();
   },
 
   async saveCurrentTransition() {
@@ -1724,10 +2154,18 @@ const AetherDjStudio = {
       return;
     }
 
+    const selVol = document.getElementById('selFilterVolume');
+    const selEq = document.getElementById('selFilterEq');
+    const selFx = document.getElementById('selFilterFx');
+
     const payload = {
       bars: state.djTransitionSettings.bars,
       curveType: state.djTransitionSettings.curveType,
-      durationSeconds: state.djTransitionSettings.durationSeconds
+      durationSeconds: state.djTransitionSettings.durationSeconds,
+      curves: this.curves,
+      filterVolume: selVol ? selVol.value : 'equal_power',
+      filterEq: selEq ? selEq.value : 'bass_swap',
+      filterFx: selFx ? selFx.value : 'none'
     };
 
     const transKey = songB ? `${songA.id}_to_${songB.id}` : `${songA.id}_default`;
@@ -1791,36 +2229,222 @@ function setupDjStudioEventListeners() {
     }
   });
 
+  // Top Clean Preset Selector (Print 4)
+  const selPreset = document.getElementById('selTransitionPreset');
+  if (selPreset) {
+    selPreset.addEventListener('change', () => {
+      const val = selPreset.value;
+      if (val !== 'custom') {
+        AetherDjStudio.applyPreset(val, false);
+      }
+    });
+  }
+
+  // Floating Center Audition Button (Print 3)
+  const btnCenterAudition = document.getElementById('btnCenterAudition');
+  if (btnCenterAudition) {
+    btnCenterAudition.addEventListener('click', (e) => {
+      e.stopPropagation();
+      AetherDjStudio.toggleAudition();
+    });
+  }
+
   // Bar selector pills
   document.querySelectorAll('#transitionBarSelector .dj-selector-pill').forEach(pill => {
     pill.addEventListener('click', () => {
       const bars = parseInt(pill.getAttribute('data-bars'), 10);
       state.djTransitionSettings.bars = bars;
-      AetherDjStudio.updateDuration(state.currentSong && state.trackAnalysisCache ? state.trackAnalysisCache[state.currentSong.id] : null);
-      AetherDjStudio.updatePillSelectors();
-      AetherDjStudio.drawCurves();
+      AetherDjStudio.updateDuration(AetherDjStudio.analysisA);
+      AetherDjStudio.updateBarPills();
+      AetherDjStudio.drawStage();
     });
   });
 
-  // Curve selector pills
-  document.querySelectorAll('#transitionCurveSelector .dj-selector-pill').forEach(pill => {
-    pill.addEventListener('click', () => {
-      const curve = pill.getAttribute('data-curve');
-      state.djTransitionSettings.curveType = curve;
-      AetherDjStudio.updatePillSelectors();
-      AetherDjStudio.drawCurves();
-    });
-  });
-
-  // Audition button
-  const btnPreview = document.getElementById('btnPreviewTransition');
-  if (btnPreview) {
-    btnPreview.addEventListener('click', () => {
-      AetherDjStudio.startAudition();
+  // Bottom Filter Selectors (Print 4)
+  const selFilterVolume = document.getElementById('selFilterVolume');
+  if (selFilterVolume) {
+    selFilterVolume.addEventListener('change', () => {
+      const v = selFilterVolume.value;
+      if (v === 'equal_power') {
+        AetherDjStudio.curves.outVolume[1] = { x: 0.5, y: 0.707 };
+        AetherDjStudio.curves.inVolume[1] = { x: 0.5, y: 0.707 };
+      } else if (v === 'drop_cut') {
+        AetherDjStudio.curves.outVolume[1] = { x: 0.88, y: 1.0 };
+        AetherDjStudio.curves.inVolume[1] = { x: 0.88, y: 0.0 };
+      } else if (v === 'linear') {
+        AetherDjStudio.curves.outVolume[1] = { x: 0.5, y: 0.5 };
+        AetherDjStudio.curves.inVolume[1] = { x: 0.5, y: 0.5 };
+      } else if (v === 'slow_fade') {
+        AetherDjStudio.curves.outVolume[1] = { x: 0.35, y: 0.4 };
+        AetherDjStudio.curves.inVolume[1] = { x: 0.65, y: 0.6 };
+      }
+      if (selPreset) selPreset.value = 'custom';
+      AetherDjStudio.drawStage();
     });
   }
 
-  // Save button
+  const selFilterEq = document.getElementById('selFilterEq');
+  if (selFilterEq) {
+    selFilterEq.addEventListener('change', () => {
+      const eqVal = selFilterEq.value;
+      if (eqVal === 'bass_swap') {
+        AetherDjStudio.curves.bassCrossover = 0.50;
+      } else if (eqVal === 'low_cut') {
+        AetherDjStudio.curves.bassCrossover = 0.25;
+      }
+      if (selPreset) selPreset.value = 'custom';
+      AetherDjStudio.drawStage();
+    });
+  }
+
+  const selFilterFx = document.getElementById('selFilterFx');
+  if (selFilterFx) {
+    selFilterFx.addEventListener('change', () => {
+      const fxVal = selFilterFx.value;
+      if (fxVal === 'hipass_sweep') {
+        AetherDjStudio.curves.filterFx = [
+          { x: 0.0, y: 0.0, fixed: true },
+          { x: 0.45, y: 0.25 },
+          { x: 0.85, y: 0.85 },
+          { x: 1.0, y: 0.0, fixed: true }
+        ];
+      } else if (fxVal === 'none') {
+        AetherDjStudio.curves.filterFx = [
+          { x: 0.0, y: 0.0, fixed: true },
+          { x: 0.50, y: 0.0 },
+          { x: 0.80, y: 0.0 },
+          { x: 1.0, y: 0.0, fixed: true }
+        ];
+      }
+      if (selPreset) selPreset.value = 'custom';
+      AetherDjStudio.drawStage();
+    });
+  }
+
+  // Interactive Drag & Drop on Stage Canvas
+  const canvasStage = document.getElementById('canvasDjStage');
+  if (canvasStage) {
+    let activeDrag = null;
+
+    canvasStage.addEventListener('pointerdown', (e) => {
+      const rect = canvasStage.getBoundingClientRect();
+      const normX = (e.clientX - rect.left) / rect.width;
+      const normY = (e.clientY - rect.top) / rect.height;
+      const w = rect.width;
+      const h = rect.height;
+      const halfH = h / 2;
+      const pad = 8;
+
+      const mapTopY = (y) => pad + (1.0 - y) * (halfH - pad * 2);
+      const mapBotY = (y) => halfH + pad + (1.0 - y) * (halfH - pad * 2);
+
+      const hitRadius = 16;
+      let found = null;
+
+      // 1. Check Yellow Bass Crossover Handle
+      const crossCanvasX = AetherDjStudio.curves.bassCrossover * w;
+      const distCross = Math.hypot(e.clientX - rect.left - crossCanvasX, e.clientY - rect.top - halfH);
+      if (distCross <= hitRadius + 4) {
+        found = { type: 'bassCrossover' };
+      }
+
+      // 2. Check Volume Out Handles (Deck A)
+      if (!found) {
+        AetherDjStudio.curves.outVolume.forEach((pt, idx) => {
+          if (!pt.fixed) {
+            const hx = pt.x * w;
+            const hy = mapTopY(pt.y);
+            if (Math.hypot(e.clientX - rect.left - hx, e.clientY - rect.top - hy) <= hitRadius) {
+              found = { type: 'outVolume', idx };
+            }
+          }
+        });
+      }
+
+      // 3. Check Volume In Handles (Deck B)
+      if (!found) {
+        AetherDjStudio.curves.inVolume.forEach((pt, idx) => {
+          if (!pt.fixed) {
+            const hx = pt.x * w;
+            const hy = mapBotY(pt.y);
+            if (Math.hypot(e.clientX - rect.left - hx, e.clientY - rect.top - hy) <= hitRadius) {
+              found = { type: 'inVolume', idx };
+            }
+          }
+        });
+      }
+
+      // 4. Check Filter FX Handles
+      if (!found) {
+        AetherDjStudio.curves.filterFx.forEach((pt, idx) => {
+          if (!pt.fixed) {
+            const hx = pt.x * w;
+            const hy = (h * 0.75) - (pt.y * (h * 0.5));
+            if (Math.hypot(e.clientX - rect.left - hx, e.clientY - rect.top - hy) <= hitRadius) {
+              found = { type: 'filterFx', idx };
+            }
+          }
+        });
+      }
+
+      if (found) {
+        activeDrag = found;
+        try { canvasStage.setPointerCapture(e.pointerId); } catch (err) {}
+      } else {
+        // Scrub playhead if clicking outside handles
+        AetherDjStudio.playheadProgress = Math.max(0.0, Math.min(1.0, normX));
+        AetherDjStudio.drawStage();
+      }
+    });
+
+    canvasStage.addEventListener('pointermove', (e) => {
+      if (!activeDrag) return;
+      const rect = canvasStage.getBoundingClientRect();
+      const normX = Math.max(0.05, Math.min(0.95, (e.clientX - rect.left) / rect.width));
+      const normY = Math.max(0.0, Math.min(1.0, (e.clientY - rect.top) / rect.height));
+
+      if (activeDrag.type === 'bassCrossover') {
+        AetherDjStudio.curves.bassCrossover = normX;
+      } else if (activeDrag.type === 'outVolume') {
+        const pt = AetherDjStudio.curves.outVolume[activeDrag.idx];
+        pt.x = normX;
+        // Invert for top track volume: 0 at middle divider, 1 at top
+        pt.y = Math.max(0.0, Math.min(1.0, 1.0 - (normY * 2.0)));
+      } else if (activeDrag.type === 'inVolume') {
+        const pt = AetherDjStudio.curves.inVolume[activeDrag.idx];
+        pt.x = normX;
+        // Invert for bottom track volume: 0 at bottom, 1 at middle divider
+        pt.y = Math.max(0.0, Math.min(1.0, 1.0 - ((normY - 0.5) * 2.0)));
+      } else if (activeDrag.type === 'filterFx') {
+        const pt = AetherDjStudio.curves.filterFx[activeDrag.idx];
+        pt.x = normX;
+        pt.y = Math.max(0.0, Math.min(1.0, 1.0 - normY));
+      }
+
+      if (selPreset) selPreset.value = 'custom';
+      AetherDjStudio.drawStage();
+    });
+
+    const endDrag = (e) => {
+      if (activeDrag) {
+        activeDrag = null;
+        try { canvasStage.releasePointerCapture(e.pointerId); } catch (err) {}
+      }
+    };
+
+    canvasStage.addEventListener('pointerup', endDrag);
+    canvasStage.addEventListener('pointercancel', endDrag);
+  }
+
+  // Audition button (Footer)
+  const btnPreview = document.getElementById('btnPreviewTransition');
+  if (btnPreview) {
+    btnPreview.addEventListener('click', () => {
+      AetherDjStudio.toggleAudition();
+    });
+  }
+
+  // Save button (Footer)
   const btnSave = document.getElementById('btnSaveDjTransition');
   if (btnSave) {
     btnSave.addEventListener('click', () => {
@@ -4819,9 +5443,14 @@ async function playYouTubeTrack(videoId, startTime = 0) {
         try { ytPlayer.pauseVideo(); } catch (e) {}
       }
 
+      if (AetherAudioEngine.resumeContext) {
+        await AetherAudioEngine.resumeContext();
+      }
+
       state.currentPlaybackType = 'audio';
       const audio = AetherAudioEngine.audioElement;
       activeAudio = audio;
+      audio.crossOrigin = 'anonymous';
       audio.src = `/api/stream/proxy?id=${encodeURIComponent(videoId)}`;
 
       audio.onloadedmetadata = () => {
@@ -4845,7 +5474,14 @@ async function playYouTubeTrack(videoId, startTime = 0) {
         playYouTubeIFrameFallback(videoId, startTime);
       };
 
-      await audio.play();
+      try {
+        await audio.play();
+      } catch (playErr) {
+        console.warn('[AudioEngine] audio.play() was prevented, attempting resume:', playErr);
+        if (AetherAudioEngine.resumeContext) await AetherAudioEngine.resumeContext();
+        await audio.play();
+      }
+
       state.isPlaying = true;
       updatePlayButtonUI(true);
       startProgressTimer('audio');
