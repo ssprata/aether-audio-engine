@@ -7575,15 +7575,36 @@ input:checked + .slider:before {
   border-color: rgba(168, 85, 247, 0.8);
 }
 
-/* Bottom Player Bar DJ Button disabled state */
-#btnToggleDjTransition.disabled {
-  opacity: 0.42;
-  filter: grayscale(0.7);
+/* Bottom Player Bar & Mobile DJ Button states */
+#btnToggleDjTransition.active,
+#btnMobileNpTransition.active {
+  color: #c084fc !important;
+  text-shadow: 0 0 10px rgba(168, 85, 247, 0.6);
 }
 
-#btnToggleDjTransition.disabled:hover {
-  opacity: 0.8;
-  filter: none;
+#btnToggleDjTransition.active svg,
+#btnMobileNpTransition.active svg {
+  stroke: #c084fc !important;
+  filter: drop-shadow(0 0 5px rgba(168, 85, 247, 0.5));
+}
+
+#btnToggleDjTransition.disabled,
+#btnMobileNpTransition.disabled {
+  opacity: 0.38 !important;
+  filter: grayscale(0.8) !important;
+  color: var(--text-secondary, #94a3b8) !important;
+}
+
+#btnToggleDjTransition.disabled svg,
+#btnMobileNpTransition.disabled svg {
+  stroke: var(--text-secondary, #94a3b8) !important;
+  filter: none !important;
+}
+
+#btnToggleDjTransition.disabled:hover,
+#btnMobileNpTransition.disabled:hover {
+  opacity: 0.75 !important;
+  filter: none !important;
 }
 
 

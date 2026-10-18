@@ -2282,14 +2282,7 @@ const AetherDjStudio = {
     await AetherAudioDB.saveTransition(transKey, payload);
     await AetherAudioDB.saveTransition(`${songA.id}_default`, payload);
 
-    if (!state.djTransitionEnabled) {
-      state.djTransitionEnabled = true;
-      localStorage.setItem('aether_dj_transition_enabled', 'true');
-      this.updateToggleUI();
-    }
-
-    const dot = document.getElementById('transitionActiveDot');
-    if (dot) dot.style.display = 'block';
+    updateDjTransitionIndicator(songA);
 
     showToast(`DJ Transition Saved (${payload.bars} Bars • ${payload.curveType.replace('_', ' ')})`);
     this.closeModal();
@@ -2304,44 +2297,55 @@ const AetherDjStudio = {
     localStorage.setItem('aether_dj_transition_enabled', state.djTransitionEnabled ? 'true' : 'false');
     this.updateToggleUI();
     updateDjTransitionIndicator(state.currentSong);
-    showToast(state.djTransitionEnabled ? 'DJ Auto-Transitions Enabled' : 'DJ Transitions Disabled (Quick Cut Mode)');
+    showToast(state.djTransitionEnabled ? 'DJ Transitions: ON (Smooth Crossfade)' : 'DJ Transitions: OFF (Quick Cut Mode)');
   },
 
   updateToggleUI() {
+    const isEnabled = !!state.djTransitionEnabled;
     const btnToggle = document.getElementById('btnToggleDjActive');
     const txtToggle = document.getElementById('txtDjToggleState');
     if (btnToggle) {
-      btnToggle.classList.toggle('active', !!state.djTransitionEnabled);
-      btnToggle.setAttribute('aria-pressed', state.djTransitionEnabled ? 'true' : 'false');
+      btnToggle.classList.toggle('active', isEnabled);
+      btnToggle.setAttribute('aria-pressed', isEnabled ? 'true' : 'false');
     }
     if (txtToggle) {
-      txtToggle.textContent = state.djTransitionEnabled ? 'ON' : 'OFF';
+      txtToggle.textContent = isEnabled ? 'ON' : 'OFF';
     }
   }
 };
 
 async function updateDjTransitionIndicator(song) {
+  const isEnabled = !!state.djTransitionEnabled;
   const dot = document.getElementById('transitionActiveDot');
   const btn = document.getElementById('btnToggleDjTransition');
+  const btnMobile = document.getElementById('btnMobileNpTransition');
+
   if (btn) {
-    if (!state.djTransitionEnabled) {
-      btn.classList.add('disabled');
-      btn.title = 'DJ Transitions: OFF (Click to open studio, Right-click to toggle ON)';
-    } else {
-      btn.classList.remove('disabled');
-      btn.title = 'DJ Transitions: ON (Click to open studio, Right-click to toggle OFF)';
-    }
+    btn.classList.toggle('active', isEnabled);
+    btn.classList.toggle('disabled', !isEnabled);
+    btn.title = isEnabled
+      ? 'DJ Auto-Transitions: ON (Click to toggle OFF, Right-click or Double-click for Studio)'
+      : 'DJ Auto-Transitions: OFF (Click to toggle ON, Right-click or Double-click for Studio)';
   }
-  if (!dot) return;
-  if (!state.djTransitionEnabled) {
-    dot.style.display = 'none';
-    return;
+
+  if (btnMobile) {
+    btnMobile.classList.toggle('active', isEnabled);
+    btnMobile.classList.toggle('disabled', !isEnabled);
   }
-  if (!song) return;
-  const nextSong = (state.playQueue && state.playQueue.length > state.currentQueueIndex + 1) ? state.playQueue[state.currentQueueIndex + 1] : null;
-  const transKey = nextSong ? `${song.id}_to_${nextSong.id}` : `${song.id}_default`;
-  const saved = await AetherAudioDB.getTransition(transKey) || await AetherAudioDB.getTransition(`${song.id}_default`);
-  dot.style.display = saved ? 'block' : 'none';
+
+  if (dot) {
+    dot.style.display = isEnabled ? 'block' : 'none';
+  }
+
+  const btnToggleActive = document.getElementById('btnToggleDjActive');
+  const txtToggleState = document.getElementById('txtDjToggleState');
+  if (btnToggleActive) {
+    btnToggleActive.classList.toggle('active', isEnabled);
+    btnToggleActive.setAttribute('aria-pressed', isEnabled ? 'true' : 'false');
+  }
+  if (txtToggleState) {
+    txtToggleState.textContent = isEnabled ? 'ON' : 'OFF';
+  }
 }
 
 function setupDjStudioEventListeners() {
@@ -2349,18 +2353,31 @@ function setupDjStudioEventListeners() {
   if (btnToggle) {
     btnToggle.addEventListener('click', (e) => {
       e.stopPropagation();
+      AetherDjStudio.toggleDjTransitionMaster();
+    });
+    btnToggle.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
       AetherDjStudio.openModal();
     });
     btnToggle.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      AetherDjStudio.toggleDjTransitionMaster();
+      AetherDjStudio.openModal();
     });
   }
 
   const btnMobileNp = document.getElementById('btnMobileNpTransition');
   if (btnMobileNp) {
     btnMobileNp.addEventListener('click', (e) => {
+      e.stopPropagation();
+      AetherDjStudio.toggleDjTransitionMaster();
+    });
+    btnMobileNp.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      AetherDjStudio.openModal();
+    });
+    btnMobileNp.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
       e.stopPropagation();
       AetherDjStudio.openModal();
     });
@@ -6185,7 +6202,7 @@ function updateTimelineUI(currentSec) {
 }
 
 async function triggerAutomatedQueueTransition(nextSong, transConfig) {
-  if (state.isExecutingTransition) return;
+  if (!state.djTransitionEnabled || state.isExecutingTransition) return;
   state.isExecutingTransition = true;
   state.isTransitioning = true;
   state.transitionStartTime = Date.now();
