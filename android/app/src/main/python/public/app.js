@@ -82,6 +82,7 @@ let state = {
   trackAnalysisCache: {},    // In-memory cache for audio analysis: { [songId]: { bpm, camelot, peaks, ... } }
   trackTransitionsCache: {}, // In-memory cache for DJ transitions: { [key]: { bars, curveType, durationSeconds } }
   isExecutingTransition: false,
+  djTransitionEnabled: localStorage.getItem('aether_dj_transition_enabled') !== 'false',
   djTransitionSettings: { bars: 8, curveType: 'bass_swap', durationSeconds: 16 },
   masterEqSettings: { low: 0, mid: 0, high: 0, preset: 'flat' }
 };
@@ -1543,12 +1544,13 @@ const AetherDjStudio = {
       this.applyPreset(state.djTransitionSettings.curveType || 'bass_swap', false);
     }
 
-    // 4. Update Preset Selector and Duration
+    // 4. Update Preset Selector, Toggle UI, and Duration
     const topPresetSel = document.getElementById('selTransitionPreset');
     if (topPresetSel) {
       topPresetSel.value = state.djTransitionSettings.curveType || 'bass_swap';
     }
 
+    this.updateToggleUI();
     this.updateDuration(this.analysisA);
     this.updateBarPills();
     this.drawStage();
@@ -2280,17 +2282,62 @@ const AetherDjStudio = {
     await AetherAudioDB.saveTransition(transKey, payload);
     await AetherAudioDB.saveTransition(`${songA.id}_default`, payload);
 
+    if (!state.djTransitionEnabled) {
+      state.djTransitionEnabled = true;
+      localStorage.setItem('aether_dj_transition_enabled', 'true');
+      this.updateToggleUI();
+    }
+
     const dot = document.getElementById('transitionActiveDot');
     if (dot) dot.style.display = 'block';
 
     showToast(`DJ Transition Saved (${payload.bars} Bars • ${payload.curveType.replace('_', ' ')})`);
     this.closeModal();
+  },
+
+  toggleDjTransitionMaster(forcedValue) {
+    if (typeof forcedValue === 'boolean') {
+      state.djTransitionEnabled = forcedValue;
+    } else {
+      state.djTransitionEnabled = !state.djTransitionEnabled;
+    }
+    localStorage.setItem('aether_dj_transition_enabled', state.djTransitionEnabled ? 'true' : 'false');
+    this.updateToggleUI();
+    updateDjTransitionIndicator(state.currentSong);
+    showToast(state.djTransitionEnabled ? 'DJ Auto-Transitions Enabled' : 'DJ Transitions Disabled (Quick Cut Mode)');
+  },
+
+  updateToggleUI() {
+    const btnToggle = document.getElementById('btnToggleDjActive');
+    const txtToggle = document.getElementById('txtDjToggleState');
+    if (btnToggle) {
+      btnToggle.classList.toggle('active', !!state.djTransitionEnabled);
+      btnToggle.setAttribute('aria-pressed', state.djTransitionEnabled ? 'true' : 'false');
+    }
+    if (txtToggle) {
+      txtToggle.textContent = state.djTransitionEnabled ? 'ON' : 'OFF';
+    }
   }
 };
 
 async function updateDjTransitionIndicator(song) {
   const dot = document.getElementById('transitionActiveDot');
-  if (!dot || !song) return;
+  const btn = document.getElementById('btnToggleDjTransition');
+  if (btn) {
+    if (!state.djTransitionEnabled) {
+      btn.classList.add('disabled');
+      btn.title = 'DJ Transitions: OFF (Click to open studio, Right-click to toggle ON)';
+    } else {
+      btn.classList.remove('disabled');
+      btn.title = 'DJ Transitions: ON (Click to open studio, Right-click to toggle OFF)';
+    }
+  }
+  if (!dot) return;
+  if (!state.djTransitionEnabled) {
+    dot.style.display = 'none';
+    return;
+  }
+  if (!song) return;
   const nextSong = (state.playQueue && state.playQueue.length > state.currentQueueIndex + 1) ? state.playQueue[state.currentQueueIndex + 1] : null;
   const transKey = nextSong ? `${song.id}_to_${nextSong.id}` : `${song.id}_default`;
   const saved = await AetherAudioDB.getTransition(transKey) || await AetherAudioDB.getTransition(`${song.id}_default`);
@@ -2303,6 +2350,11 @@ function setupDjStudioEventListeners() {
     btnToggle.addEventListener('click', (e) => {
       e.stopPropagation();
       AetherDjStudio.openModal();
+    });
+    btnToggle.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      AetherDjStudio.toggleDjTransitionMaster();
     });
   }
 
@@ -2559,6 +2611,19 @@ function setupDjStudioEventListeners() {
       AetherDjStudio.saveCurrentTransition();
     });
   }
+
+  // Master DJ Transition Active Toggle Button in Header
+  const btnToggleDjActive = document.getElementById('btnToggleDjActive');
+  if (btnToggleDjActive) {
+    btnToggleDjActive.addEventListener('click', (e) => {
+      e.stopPropagation();
+      AetherDjStudio.toggleDjTransitionMaster();
+    });
+  }
+
+  // Initial sync of DJ transition state
+  AetherDjStudio.updateToggleUI();
+  updateDjTransitionIndicator(state.currentSong);
 }
 
 // Global one-time unlock for AudioContext on first user interaction
@@ -5342,6 +5407,123 @@ function addSongToPlaylist(playlistId, song) {
   }
 }
 
+// --- TRACK METADATA ANIMATION HELPER ---
+let metadataAnimTimer1 = null;
+let metadataAnimTimer2 = null;
+
+function animateTrackMetadataUpdate(song, isDjTransition = false) {
+  if (!song) return;
+
+  const artEl = document.getElementById('playerAlbumArt');
+  const detailsEl = document.querySelector('.player-song-details');
+  const badgeEl = document.getElementById('playerPlatformBadge');
+  const mobileCover = document.getElementById('mobileNpCoverWrapper');
+  const mobileTitles = document.querySelector('.mobile-np-titles');
+
+  const animTargets = [artEl, detailsEl, badgeEl, mobileCover, mobileTitles].filter(Boolean);
+
+  if (metadataAnimTimer1) clearTimeout(metadataAnimTimer1);
+  if (metadataAnimTimer2) clearTimeout(metadataAnimTimer2);
+
+  const cleanAllAnimClasses = () => {
+    animTargets.forEach(el => {
+      el.classList.remove(
+        'track-anim-smooth-out', 'track-anim-smooth-in-init', 'track-anim-smooth-in-active',
+        'track-anim-quick-out', 'track-anim-quick-in-init', 'track-anim-quick-in-active'
+      );
+    });
+  };
+
+  const applyDomUpdates = () => {
+    const titleEl = document.getElementById('playerSongTitle');
+    const artistEl = document.getElementById('playerSongArtist');
+    if (titleEl) titleEl.textContent = song.title || 'Unknown Title';
+    if (artistEl) artistEl.textContent = song.artist || 'Unknown';
+    if (badgeEl) {
+      badgeEl.textContent = song.platform || 'music';
+      badgeEl.style.display = 'inline-block';
+    }
+    if (artEl) {
+      if (song.thumbnail) {
+        artEl.innerHTML = `<img src="${song.thumbnail}" alt="Art">`;
+      } else {
+        artEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
+      }
+    }
+
+    const mobileNpTitle = document.getElementById('mobileNpTitle');
+    const mobileNpArtist = document.getElementById('mobileNpArtist');
+    const mobileNpSource = document.getElementById('mobileNpSource');
+    const mobileNpCoverImg = document.getElementById('mobileNpCoverImg');
+    const mobileNpCoverPlaceholder = document.getElementById('mobileNpCoverPlaceholder');
+
+    if (mobileNpTitle) mobileNpTitle.textContent = song.title || 'Unknown Title';
+    if (mobileNpArtist) mobileNpArtist.textContent = song.artist || 'Unknown Artist';
+    if (mobileNpSource) mobileNpSource.textContent = (song.platform ? song.platform.toUpperCase() : 'AETHER MUSIC');
+    if (mobileNpCoverImg && mobileNpCoverPlaceholder) {
+      if (song.thumbnail) {
+        mobileNpCoverImg.src = song.thumbnail;
+        mobileNpCoverImg.style.display = 'block';
+        mobileNpCoverPlaceholder.style.display = 'none';
+      } else {
+        mobileNpCoverImg.style.display = 'none';
+        mobileNpCoverPlaceholder.style.display = 'flex';
+      }
+    }
+  };
+
+  // If initial load or idle player, apply immediately without exit transition
+  const currentTitle = document.getElementById('playerSongTitle')?.textContent;
+  if (!currentTitle || currentTitle === 'No Song Playing') {
+    cleanAllAnimClasses();
+    applyDomUpdates();
+    return;
+  }
+
+  // Smooth mode when DJ Transition is ON and this is a DJ transition; otherwise Quick Cut mode
+  const useSmooth = !!(isDjTransition && state.djTransitionEnabled);
+
+  cleanAllAnimClasses();
+
+  if (useSmooth) {
+    // Smooth DJ Transition (soft blur, scale & glide out, then in)
+    animTargets.forEach(el => el.classList.add('track-anim-smooth-out'));
+
+    metadataAnimTimer1 = setTimeout(() => {
+      applyDomUpdates();
+      animTargets.forEach(el => {
+        el.classList.remove('track-anim-smooth-out');
+        el.classList.add('track-anim-smooth-in-init');
+        void el.offsetWidth;
+        el.classList.remove('track-anim-smooth-in-init');
+        el.classList.add('track-anim-smooth-in-active');
+      });
+
+      metadataAnimTimer2 = setTimeout(() => {
+        cleanAllAnimClasses();
+      }, 380);
+    }, 220);
+  } else {
+    // Quick Cut mode (crisp, snappy micro-transition)
+    animTargets.forEach(el => el.classList.add('track-anim-quick-out'));
+
+    metadataAnimTimer1 = setTimeout(() => {
+      applyDomUpdates();
+      animTargets.forEach(el => {
+        el.classList.remove('track-anim-quick-out');
+        el.classList.add('track-anim-quick-in-init');
+        void el.offsetWidth;
+        el.classList.remove('track-anim-quick-in-init');
+        el.classList.add('track-anim-quick-in-active');
+      });
+
+      metadataAnimTimer2 = setTimeout(() => {
+        cleanAllAnimClasses();
+      }, 120);
+    }, 70);
+  }
+}
+
 // --- MULTI-SOURCE AUDIO PLAYBACK ENGINE ---
 function playSongList(songs, startIndex) {
   state.playQueue = songs.map(s => ({ ...s }));
@@ -5401,17 +5583,8 @@ function playSong(song, index) {
   // Sync Spotify-style Queue UI
   renderQueueUI();
 
-  // Update UI Player Details
-  document.getElementById('playerSongTitle').textContent = song.title;
-  document.getElementById('playerSongArtist').textContent = song.artist || 'Unknown';
-  document.getElementById('playerPlatformBadge').textContent = song.platform;
-  document.getElementById('playerPlatformBadge').style.display = 'inline-block';
-
-  if (song.thumbnail) {
-    document.getElementById('playerAlbumArt').innerHTML = `<img src="${song.thumbnail}" alt="Art">`;
-  } else {
-    document.getElementById('playerAlbumArt').innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
-  }
+  // Update UI Player Details with animation (Quick Cut by default when DJ transition is off / manual song select)
+  animateTrackMetadataUpdate(song, false);
 
   // Parse Duration
   const durationParts = (song.duration || '3:00').split(':');
@@ -5424,33 +5597,14 @@ function playSong(song, index) {
   document.getElementById('playerCurrentTime').textContent = '0:00';
   document.getElementById('playerTimeline').value = 0;
 
-  // Sync Mobile Now Playing Modal
-  const mobileNpTitle = document.getElementById('mobileNpTitle');
-  const mobileNpArtist = document.getElementById('mobileNpArtist');
-  const mobileNpSource = document.getElementById('mobileNpSource');
-  const mobileNpCoverImg = document.getElementById('mobileNpCoverImg');
-  const mobileNpCoverPlaceholder = document.getElementById('mobileNpCoverPlaceholder');
+  // Sync Mobile Now Playing Modal Timeline
   const mobileNpTotalDuration = document.getElementById('mobileNpTotalDuration');
   const mobileNpCurrentTime = document.getElementById('mobileNpCurrentTime');
   const mobileNpTimeline = document.getElementById('mobileNpTimeline');
 
-  if (mobileNpTitle) mobileNpTitle.textContent = song.title;
-  if (mobileNpArtist) mobileNpArtist.textContent = song.artist || 'Unknown Artist';
-  if (mobileNpSource) mobileNpSource.textContent = (song.platform ? song.platform.toUpperCase() : 'AETHER MUSIC');
   if (mobileNpTotalDuration) mobileNpTotalDuration.textContent = song.duration || '3:00';
   if (mobileNpCurrentTime) mobileNpCurrentTime.textContent = '0:00';
   if (mobileNpTimeline) mobileNpTimeline.value = 0;
-
-  if (mobileNpCoverImg && mobileNpCoverPlaceholder) {
-    if (song.thumbnail) {
-      mobileNpCoverImg.src = song.thumbnail;
-      mobileNpCoverImg.style.display = 'block';
-      mobileNpCoverPlaceholder.style.display = 'none';
-    } else {
-      mobileNpCoverImg.style.display = 'none';
-      mobileNpCoverPlaceholder.style.display = 'flex';
-    }
-  }
 
   // Update Native MediaSession Metadata for Android Lockscreen & Notification tray
   if ('mediaSession' in navigator) {
@@ -6143,31 +6297,20 @@ async function triggerAutomatedQueueTransition(nextSong, transConfig) {
   }
   renderQueueUI();
 
-  const titleEl = document.getElementById('playerSongTitle');
-  const artistEl = document.getElementById('playerSongArtist');
-  const badgeEl = document.getElementById('playerPlatformBadge');
-  const artEl = document.getElementById('playerAlbumArt');
+  // Trigger smooth cinematic metadata transition
+  animateTrackMetadataUpdate(nextSong, true);
+
   const durEl = document.getElementById('playerTotalDuration');
   const curEl = document.getElementById('playerCurrentTime');
   const timeSlider = document.getElementById('playerTimeline');
 
-  if (titleEl) titleEl.textContent = nextSong.title;
-  if (artistEl) artistEl.textContent = nextSong.artist || 'Unknown';
-  if (badgeEl) badgeEl.textContent = nextSong.platform;
-  if (artEl && nextSong.thumbnail) {
-    artEl.innerHTML = `<img src="${nextSong.thumbnail}" alt="Art">`;
-  }
   if (durEl) durEl.textContent = formatSeconds(state.duration);
   if (curEl) curEl.textContent = '0:00';
   if (timeSlider) timeSlider.value = 0;
 
-  const mobileNpTitle = document.getElementById('mobileNpTitle');
-  const mobileNpArtist = document.getElementById('mobileNpArtist');
   const mobileNpTotalDuration = document.getElementById('mobileNpTotalDuration');
   const mobileNpCurrentTime = document.getElementById('mobileNpCurrentTime');
   const mobileNpTimeline = document.getElementById('mobileNpTimeline');
-  if (mobileNpTitle) mobileNpTitle.textContent = nextSong.title;
-  if (mobileNpArtist) mobileNpArtist.textContent = nextSong.artist || 'Unknown Artist';
   if (mobileNpTotalDuration) mobileNpTotalDuration.textContent = formatSeconds(state.duration);
   if (mobileNpCurrentTime) mobileNpCurrentTime.textContent = '0:00';
   if (mobileNpTimeline) mobileNpTimeline.value = 0;
@@ -6229,8 +6372,8 @@ function startProgressTimer(platform) {
     state.playbackPosition = currentSec;
     throttledSavePlaybackSession();
 
-    // DJ Transition Engine (Pacemaker style)
-    if (state.duration > 0 && !state.isExecutingTransition && state.currentSong && state.playQueue && state.currentQueueIndex + 1 < state.playQueue.length) {
+    // DJ Transition Engine (Pacemaker style) - only triggers when DJ Transition toggle is enabled
+    if (state.djTransitionEnabled && state.duration > 0 && !state.isExecutingTransition && state.currentSong && state.playQueue && state.currentQueueIndex + 1 < state.playQueue.length) {
       const nextSong = state.playQueue[state.currentQueueIndex + 1];
       const transKey = `${state.currentSong.id}_to_${nextSong.id}`;
       const savedTrans = state.trackTransitionsCache[transKey] || state.trackTransitionsCache[`${state.currentSong.id}_default`] || state.djTransitionSettings;

@@ -7465,3 +7465,125 @@ input:checked + .slider:before {
   }
 }
 
+/* ==========================================================================
+   TRACK METADATA CHANGE ANIMATIONS (SMOOTH DJ & QUICK CUT)
+   ========================================================================== */
+
+/* Mode 1: Smooth DJ Transition (Cinematic ~600ms total) */
+.track-anim-smooth-out {
+  opacity: 0 !important;
+  transform: translateY(-6px) scale(0.95) !important;
+  filter: blur(3px) !important;
+  transition: opacity 220ms cubic-bezier(0.4, 0, 0.2, 1),
+              transform 220ms cubic-bezier(0.4, 0, 0.2, 1),
+              filter 220ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.track-anim-smooth-in-init {
+  opacity: 0 !important;
+  transform: translateY(7px) scale(1.04) !important;
+  filter: blur(3px) !important;
+  transition: none !important;
+}
+
+.track-anim-smooth-in-active {
+  opacity: 1 !important;
+  transform: translateY(0) scale(1) !important;
+  filter: blur(0) !important;
+  transition: opacity 380ms cubic-bezier(0.16, 1, 0.3, 1),
+              transform 380ms cubic-bezier(0.16, 1, 0.3, 1),
+              filter 380ms cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+/* Mode 2: Quick Cut Transition (Snappy micro-animation ~190ms total) */
+.track-anim-quick-out {
+  opacity: 0 !important;
+  transform: translateY(-2px) scale(0.98) !important;
+  transition: opacity 70ms ease-out, transform 70ms ease-out !important;
+}
+
+.track-anim-quick-in-init {
+  opacity: 0 !important;
+  transform: translateY(3px) scale(1.01) !important;
+  transition: none !important;
+}
+
+.track-anim-quick-in-active {
+  opacity: 1 !important;
+  transform: translateY(0) scale(1) !important;
+  transition: opacity 120ms cubic-bezier(0, 0, 0.2, 1),
+              transform 120ms cubic-bezier(0, 0, 0.2, 1) !important;
+}
+
+/* Master DJ Transition Toggle Pill Switch (Print 4 Header Style) */
+.dj-master-toggle-wrap {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 5px 10px;
+  border-radius: 10px;
+  user-select: none;
+}
+
+.dj-toggle-label {
+  font-size: 0.72rem;
+  color: var(--text-secondary, #94a3b8);
+  font-weight: 600;
+}
+
+.dj-toggle-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--text-secondary, #94a3b8);
+  padding: 3px 9px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  outline: none;
+}
+
+.dj-toggle-pill-knob {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #64748b;
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dj-toggle-pill-btn.active {
+  background: rgba(168, 85, 247, 0.22);
+  border-color: rgba(168, 85, 247, 0.65);
+  color: #c084fc;
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.35);
+}
+
+.dj-toggle-pill-btn.active .dj-toggle-pill-knob {
+  background: #a855f7;
+  box-shadow: 0 0 8px #a855f7;
+}
+
+.dj-toggle-pill-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(168, 85, 247, 0.8);
+}
+
+/* Bottom Player Bar DJ Button disabled state */
+#btnToggleDjTransition.disabled {
+  opacity: 0.42;
+  filter: grayscale(0.7);
+}
+
+#btnToggleDjTransition.disabled:hover {
+  opacity: 0.8;
+  filter: none;
+}
+
+
