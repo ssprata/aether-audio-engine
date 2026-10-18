@@ -5261,6 +5261,39 @@ function renderPlaylistSongRows(pl, songsToDisplay) {
     return;
   }
 
+  const isReorderable = pl.id !== 'system_downloaded' && songsToDisplay.length === pl.songs.length;
+
+  // Shared placeholder element for smooth drop preview expansion
+  let placeholder = document.getElementById('playlistDragPlaceholder');
+  if (!placeholder) {
+    placeholder = document.createElement('div');
+    placeholder.className = 'drag-drop-placeholder';
+    placeholder.id = 'playlistDragPlaceholder';
+    placeholder.innerHTML = `
+      <div class="drag-drop-placeholder-inner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        <span>Drop track here</span>
+      </div>
+    `;
+  }
+
+  let dragHoverTimer = null;
+  let activeDropBeforeNode = null;
+
+  container.addEventListener('dragover', (e) => {
+    e.preventDefault();
+  });
+  container.addEventListener('dragleave', (e) => {
+    if (!container.contains(e.relatedTarget)) {
+      if (dragHoverTimer) clearTimeout(dragHoverTimer);
+      placeholder.classList.remove('active');
+      activeDropBeforeNode = null;
+    }
+  });
+
   songsToDisplay.forEach((song, displayIdx) => {
     // Locate the song's real position in the full playlist
     const realIdx = pl.songs.findIndex(s => s.id === song.id);
@@ -5269,8 +5302,107 @@ function renderPlaylistSongRows(pl, songsToDisplay) {
     const row = document.createElement('div');
     row.className = 'song-row';
     row.dataset.songId = song.id;
+    row.dataset.index = resolvedOriginalIdx;
     if (state.currentSong && state.currentSong.id === song.id) {
       row.classList.add('active');
+    }
+
+    if (isReorderable) {
+      row.draggable = true;
+      row.classList.add('is-draggable');
+
+      row.addEventListener('dragstart', (e) => {
+        // Disallow dragging if started on interactive buttons or links
+        if (e.target.closest('button, .clickable-artist, .clickable-album')) {
+          e.preventDefault();
+          return;
+        }
+        window._playlistDragSrcIdx = resolvedOriginalIdx;
+        window._playlistDragSrcSong = song;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(resolvedOriginalIdx));
+
+        requestAnimationFrame(() => {
+          row.classList.add('is-dragging');
+        });
+      });
+
+      row.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+
+        if (window._playlistDragSrcIdx === undefined || window._playlistDragSrcIdx === null) return;
+
+        const rect = row.getBoundingClientRect();
+        const isLowerHalf = (e.clientY - rect.top) > (rect.height / 2);
+        const insertBeforeNode = isLowerHalf ? row.nextSibling : row;
+
+        if (activeDropBeforeNode !== insertBeforeNode) {
+          activeDropBeforeNode = insertBeforeNode;
+          if (dragHoverTimer) clearTimeout(dragHoverTimer);
+
+          // Smooth 300ms gap preview animation
+          dragHoverTimer = setTimeout(() => {
+            if (window._playlistDragSrcIdx === null || window._playlistDragSrcIdx === undefined) return;
+            if (insertBeforeNode) {
+              container.insertBefore(placeholder, insertBeforeNode);
+            } else {
+              container.appendChild(placeholder);
+            }
+            requestAnimationFrame(() => {
+              placeholder.classList.add('active');
+            });
+          }, 300);
+        }
+      });
+
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (dragHoverTimer) clearTimeout(dragHoverTimer);
+
+        const srcIdx = window._playlistDragSrcIdx;
+        if (srcIdx === null || srcIdx === undefined) return;
+
+        const rect = row.getBoundingClientRect();
+        const isLowerHalf = (e.clientY - rect.top) > (rect.height / 2);
+        let targetIdx = resolvedOriginalIdx + (isLowerHalf ? 1 : 0);
+
+        if (targetIdx > srcIdx) {
+          targetIdx -= 1;
+        }
+
+        if (targetIdx !== srcIdx && targetIdx >= 0 && targetIdx < pl.songs.length) {
+          const [movedTrack] = pl.songs.splice(srcIdx, 1);
+          pl.songs.splice(targetIdx, 0, movedTrack);
+          savePlaylists();
+
+          if (!state.isRadioSession && state.playQueue && state.playQueue.length > 0) {
+            state.playQueue = pl.songs.map(s => ({ ...s }));
+          }
+
+          showToast(`Track moved to #${targetIdx + 1}`);
+        }
+
+        placeholder.classList.remove('active');
+        if (placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
+        window._playlistDragSrcIdx = null;
+        window._playlistDragSrcSong = null;
+        activeDropBeforeNode = null;
+
+        renderPlaylistSongRows(pl, pl.songs);
+      });
+
+      row.addEventListener('dragend', () => {
+        if (dragHoverTimer) clearTimeout(dragHoverTimer);
+        row.classList.remove('is-dragging');
+        document.querySelectorAll('#playlistSongsContainer .song-row').forEach(r => r.classList.remove('is-dragging'));
+        placeholder.classList.remove('active');
+        if (placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
+        window._playlistDragSrcIdx = null;
+        window._playlistDragSrcSong = null;
+        activeDropBeforeNode = null;
+      });
     }
 
     row.addEventListener('click', () => {
@@ -5641,9 +5773,10 @@ function playSong(song, index) {
 
       navigator.mediaSession.playbackState = 'playing';
 
-      // Attach Native notification control handlers
+      // Attach Native notification and taskbar media control handlers
       navigator.mediaSession.setActionHandler('play', () => togglePlayPause());
       navigator.mediaSession.setActionHandler('pause', () => togglePlayPause());
+      navigator.mediaSession.setActionHandler('stop', () => togglePlayPause());
       navigator.mediaSession.setActionHandler('previoustrack', () => playPrev());
       navigator.mediaSession.setActionHandler('nexttrack', () => playNext());
       navigator.mediaSession.setActionHandler('seekto', (details) => {
@@ -5651,6 +5784,16 @@ function playSong(song, index) {
           seekToPercentage(details.seekTime / state.duration);
         }
       });
+      try {
+        navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+          const skip = (details && details.seekOffset) || 10;
+          if (state.duration) seekToPercentage(Math.max(0, (state.playbackPosition - skip) / state.duration));
+        });
+        navigator.mediaSession.setActionHandler('seekforward', (details) => {
+          const skip = (details && details.seekOffset) || 10;
+          if (state.duration) seekToPercentage(Math.min(state.duration, (state.playbackPosition + skip) / state.duration));
+        });
+      } catch (err) {}
     } catch (e) {
       console.warn("MediaSession API error:", e);
     }
@@ -6198,6 +6341,19 @@ function updateTimelineUI(currentSec) {
   // Update Multi-Band Frequency Waveforms active playhead
   if (typeof updateActiveWaveformsPlayhead === 'function') {
     updateActiveWaveformsPlayhead(boundedPct / 100);
+  }
+
+  // Update OS System Media Transport Controls & Taskbar position
+  if ('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
+    try {
+      if (state.duration > 0 && typeof currentSec === 'number' && !isNaN(currentSec)) {
+        navigator.mediaSession.setPositionState({
+          duration: Math.max(1, state.duration),
+          playbackRate: 1,
+          position: Math.min(state.duration, Math.max(0, currentSec))
+        });
+      }
+    } catch (e) {}
   }
 }
 
@@ -8131,10 +8287,14 @@ async function initOfflineEngine() {
       state.downloadedTrackIds = new Set(tracks.map(t => t.id));
 
       if (data.settings) {
-        state.smartCacheEnabled = !!data.settings.smartCacheEnabled;
+        const isOfflineEnabled = localStorage.getItem('offline_music_enabled') !== 'false';
+        state.smartCacheEnabled = isOfflineEnabled ? !!data.settings.smartCacheEnabled : false;
         state.smartCacheLimit = data.settings.smartCacheLimit || 200;
         const toggle = document.getElementById('toggleSmartCache');
-        if (toggle) toggle.checked = state.smartCacheEnabled;
+        if (toggle) {
+          toggle.checked = state.smartCacheEnabled;
+          toggle.disabled = !isOfflineEnabled;
+        }
       }
 
       updateStorageMeterUI(data.stats);
@@ -8157,10 +8317,20 @@ function updateOfflineVisibility(enabled) {
     pinnedItem.style.display = enabled ? 'flex' : 'none';
   }
 
+  const toggleSmartCache = document.getElementById('toggleSmartCache');
+  if (toggleSmartCache) {
+    if (!enabled) {
+      toggleSmartCache.checked = false;
+      toggleSmartCache.disabled = true;
+      state.smartCacheEnabled = false;
+    } else {
+      toggleSmartCache.disabled = false;
+    }
+  }
+
   const offlineBody = document.getElementById('offlineCardBody');
   if (offlineBody) {
-    offlineBody.style.opacity = enabled ? '1' : '0.45';
-    offlineBody.style.pointerEvents = enabled ? 'auto' : 'none';
+    offlineBody.style.opacity = enabled ? '1' : '0.5';
   }
 
   // If user was viewing Downloaded Music playlist and disables the feature, switch away
@@ -8186,15 +8356,40 @@ function setupOfflineEventListeners() {
 
   // Master switch: Enable/Disable Offline Music & Storage
   const toggleOffline = document.getElementById('toggleOfflineMusicEnabled');
+  const toggleSmartCache = document.getElementById('toggleSmartCache');
+
   if (toggleOffline) {
     const isOfflineEnabled = localStorage.getItem('offline_music_enabled') !== 'false';
     toggleOffline.checked = isOfflineEnabled;
     updateOfflineVisibility(isOfflineEnabled);
 
-    toggleOffline.addEventListener('change', () => {
+    toggleOffline.addEventListener('change', async () => {
       const enabled = toggleOffline.checked;
       localStorage.setItem('offline_music_enabled', enabled ? 'true' : 'false');
       updateOfflineVisibility(enabled);
+
+      // Top to bottom connection:
+      // If user disables the offline playlist feature, turn off stream cache immediately
+      // because there is no need to cache anything if offline listening is turned off.
+      if (!enabled) {
+        if (toggleSmartCache) {
+          toggleSmartCache.checked = false;
+          toggleSmartCache.disabled = true;
+        }
+        state.smartCacheEnabled = false;
+        try {
+          await fetch('/api/offline/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ smartCacheEnabled: false, smartCacheLimit: state.smartCacheLimit || 200 })
+          });
+        } catch (e) {}
+      } else {
+        if (toggleSmartCache) {
+          toggleSmartCache.disabled = false;
+        }
+      }
+
       showToast(enabled ? 'Offline Music & Storage enabled' : 'Offline Music & Storage disabled');
     });
   } else {
@@ -8233,9 +8428,19 @@ function setupOfflineEventListeners() {
   }
 
   // Smart Stream Cache toggle in Profile
-  const toggleSmartCache = document.getElementById('toggleSmartCache');
   if (toggleSmartCache) {
     toggleSmartCache.addEventListener('change', async () => {
+      // Bottom to top connection:
+      // If user turns on Smart Stream Cache, ensure top switch is active.
+      // If user turns OFF Smart Stream Cache, KEEP top switch on! (keep downloaded playlist)
+      if (toggleSmartCache.checked) {
+        if (toggleOffline && !toggleOffline.checked) {
+          toggleOffline.checked = true;
+          localStorage.setItem('offline_music_enabled', 'true');
+          updateOfflineVisibility(true);
+        }
+      }
+
       state.smartCacheEnabled = toggleSmartCache.checked;
       try {
         await fetch('/api/offline/settings', {
@@ -8879,3 +9084,35 @@ function renderDownloadedSongsList(tracks) {
   });
 }
 
+// ========================================================
+// GLOBAL MEDIA SHORTCUTS & FOCUS MANAGEMENT
+// ========================================================
+
+// Spacebar Play/Pause Shortcut:
+// When the app is active/focused, pressing Space plays or pauses playback instead of repeating the last button click.
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' || e.key === ' ') {
+    const activeEl = document.activeElement;
+    const tagName = activeEl ? activeEl.tagName : '';
+    const isTextInput = tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';
+    const isEditable = activeEl && (activeEl.isContentEditable || (activeEl.getAttribute && activeEl.getAttribute('contenteditable') === 'true'));
+
+    // Allow normal typing inside input fields, textareas, contenteditable elements
+    if (isTextInput || isEditable) {
+      return;
+    }
+
+    // Intercept spacebar to toggle play/pause cleanly
+    e.preventDefault();
+    e.stopPropagation();
+    togglePlayPause();
+  }
+}, true); // Capture phase to intercept before focused buttons react
+
+// Auto-blur buttons after click so pressing Space never re-triggers the last clicked button
+document.addEventListener('mouseup', (e) => {
+  const btn = e.target && e.target.closest('button, [role="button"]');
+  if (btn && typeof btn.blur === 'function') {
+    btn.blur();
+  }
+});

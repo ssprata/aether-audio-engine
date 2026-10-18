@@ -35,12 +35,22 @@ def init_windows_audio_session():
     except Exception as e:
         print("Note: Could not init direct winmm audio endpoint:", e)
 
-# Route WebView2 audio sessions directly to host process so Volume Mixer controls it
+# Route WebView2 audio sessions directly to host process and enable Windows MediaSession/SMTC
 if sys.platform == 'win32':
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('AetherPlayer.DesktopApp')
+    except Exception:
+        pass
     existing_args = os.environ.get('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', '')
-    flag = '--disable-features=AudioServiceOutOfProcess'
-    if flag not in existing_args:
-        os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = (existing_args + ' ' + flag).strip()
+    flags_to_add = [
+        '--disable-features=AudioServiceOutOfProcess',
+        '--enable-features=HardwareMediaKeyHandling,MediaSessionService'
+    ]
+    for flag in flags_to_add:
+        if flag not in existing_args:
+            existing_args = (existing_args + ' ' + flag).strip()
+    os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = existing_args
 
 DEFAULT_START_PORT = 38241
 ACTIVE_PORT = DEFAULT_START_PORT
