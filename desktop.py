@@ -550,8 +550,13 @@ def start_server():
         print(f"Connecting to existing AetherPlayer server on port {ACTIVE_PORT}.")
 
 def launch_desktop():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
     icon_path = os.path.join(script_dir, 'icon.ico')
+    if not os.path.exists(icon_path):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        fallback = os.path.join(exe_dir, 'icon.ico')
+        if os.path.exists(fallback):
+            icon_path = fallback
 
     # 1. First choice: Use native system WebView (via pywebview) if available
     try:

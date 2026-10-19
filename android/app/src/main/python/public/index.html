@@ -15,6 +15,8 @@
   <link rel="stylesheet" href="style.css">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0d0b18">
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
   <link rel="apple-touch-icon" href="icon-512.png">
   <!-- YouTube IFrame Player API -->
   <script src="https://www.youtube.com/iframe_api"></script>
@@ -1418,7 +1420,10 @@
 
         <div class="playback-timeline">
           <span class="time-stamp" id="playerCurrentTime">0:00</span>
-          <input type="range" class="timeline-slider" id="playerTimeline" min="0" max="100" value="0">
+          <div class="timeline-slider-wrapper">
+            <input type="range" class="timeline-slider" id="playerTimeline" min="0" max="100" value="0" step="any">
+            <div class="dj-transition-zone" id="playerDjZone" title="DJ Transition Zone (15s Locked)"></div>
+          </div>
           <span class="time-stamp" id="playerTotalDuration">0:00</span>
         </div>
       </div>
@@ -1645,7 +1650,10 @@
 
       <!-- Timeline & Scrubber -->
       <div class="mobile-np-timeline-block">
-        <input type="range" class="timeline-slider" id="mobileNpTimeline" min="0" max="100" value="0">
+        <div class="timeline-slider-wrapper">
+          <input type="range" class="timeline-slider" id="mobileNpTimeline" min="0" max="100" value="0" step="any">
+          <div class="dj-transition-zone" id="mobileDjZone" title="DJ Transition Zone (15s Locked)"></div>
+        </div>
         <div class="mobile-np-time-labels">
           <span id="mobileNpCurrentTime">0:00</span>
           <span id="mobileNpTotalDuration">0:00</span>
