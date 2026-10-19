@@ -1,6 +1,10 @@
 # Script to build both onedir and standalone onefile executables into dist/
 $ErrorActionPreference = "Stop"
 
+Write-Host "Closing any running AetherPlayer processes..." -ForegroundColor Cyan
+Stop-Process -Name "AetherPlayer" -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
+
 Write-Host "Building AetherPlayer directory distribution..." -ForegroundColor Cyan
 pyinstaller AetherPlayer.spec --noconfirm
 

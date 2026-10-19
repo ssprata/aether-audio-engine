@@ -5755,19 +5755,22 @@ function playSong(song, index) {
   if (mobileNpCurrentTime) mobileNpCurrentTime.textContent = '0:00';
   if (mobileNpTimeline) mobileNpTimeline.value = 0;
 
-  // Update Native MediaSession Metadata for Android Lockscreen & Notification tray
+  // Update Window title and Native MediaSession Metadata for OS Transport Controls & Lockscreen
+  if (song && song.title) {
+    document.title = `${song.title} • ${song.artist || 'AetherPlayer'} - AetherPlayer`;
+  }
+
   if ('mediaSession' in navigator) {
     try {
-      const artUrl = song.thumbnail || 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=256&auto=format&fit=crop';
+      const fallbackArt = window.location.origin + '/icon-512.png';
+      const artUrl = song.thumbnail || fallbackArt;
       navigator.mediaSession.metadata = new MediaMetadata({
-        title: song.title,
+        title: song.title || 'Aether Track',
         artist: song.artist || 'AetherPlayer',
         album: song.album || 'Aether Music',
         artwork: [
-          { src: artUrl, sizes: '96x96', type: 'image/png' },
-          { src: artUrl, sizes: '128x128', type: 'image/png' },
-          { src: artUrl, sizes: '256x256', type: 'image/png' },
-          { src: artUrl, sizes: '512x512', type: 'image/png' }
+          { src: artUrl, sizes: '512x512', type: 'image/png' },
+          { src: fallbackArt, sizes: '512x512', type: 'image/png' }
         ]
       });
 
@@ -6639,6 +6642,13 @@ function updatePlayButtonUI(isPlaying) {
     try {
       navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
     } catch (e) { }
+  }
+
+  const activeTrack = state.currentQueue && state.currentQueue[state.currentTrackIndex];
+  if (activeTrack && activeTrack.title) {
+    document.title = (isPlaying ? '' : 'Paused: ') + activeTrack.title + ' • ' + (activeTrack.artist || 'AetherPlayer') + ' - AetherPlayer';
+  } else {
+    document.title = 'AetherPlayer';
   }
 
   if (window.AndroidAudio && typeof window.AndroidAudio.updatePlaybackState === 'function') {
@@ -9088,10 +9098,40 @@ function renderDownloadedSongsList(tracks) {
 // GLOBAL MEDIA SHORTCUTS & FOCUS MANAGEMENT
 // ========================================================
 
-// Spacebar Play/Pause Shortcut:
-// When the app is active/focused, pressing Space plays or pauses playback instead of repeating the last button click.
+// Hardware Media Keys & Spacebar Play/Pause Shortcut:
+// When the app is active/focused, pressing dedicated media keys or Space triggers playback controls.
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'Space' || e.key === ' ') {
+  const code = e.code || '';
+  const key = e.key || '';
+
+  // 1. Hardware Multimedia Keyboard Keys (Play/Pause, Next, Prev, Stop)
+  if (code === 'MediaPlayPause' || key === 'MediaPlayPause') {
+    e.preventDefault();
+    e.stopPropagation();
+    togglePlayPause();
+    return;
+  }
+  if (code === 'MediaTrackNext' || key === 'MediaTrackNext') {
+    e.preventDefault();
+    e.stopPropagation();
+    playNext();
+    return;
+  }
+  if (code === 'MediaTrackPrevious' || key === 'MediaTrackPrevious') {
+    e.preventDefault();
+    e.stopPropagation();
+    playPrev();
+    return;
+  }
+  if (code === 'MediaStop' || key === 'MediaStop') {
+    e.preventDefault();
+    e.stopPropagation();
+    togglePlayPause();
+    return;
+  }
+
+  // 2. Spacebar Play/Pause Shortcut
+  if (code === 'Space' || key === ' ') {
     const activeEl = document.activeElement;
     const tagName = activeEl ? activeEl.tagName : '';
     const isTextInput = tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';

@@ -14,27 +14,6 @@ import subprocess
 import threading
 import server
 
-WINMM_WAVEOUT_HANDLE = None
-
-def init_windows_audio_session():
-    """Ensure an active Windows audio session (WASAPI / standard endpoint) is tied to AetherPlayer
-    so Windows Volume Mixer exposes an independent volume slider for the process."""
-    global WINMM_WAVEOUT_HANDLE
-    if sys.platform != 'win32':
-        return
-    try:
-        import ctypes
-        import struct
-        # WAVEFORMATEX structure: 44.1kHz, 16-bit, stereo
-        wfx = struct.pack('<HHIIHHH', 1, 2, 44100, 44100 * 4, 4, 16, 0)
-        h_waveout = ctypes.c_void_p()
-        res = ctypes.windll.winmm.waveOutOpen(ctypes.byref(h_waveout), -1, wfx, 0, 0, 0)
-        if res == 0:
-            WINMM_WAVEOUT_HANDLE = h_waveout
-            print("Windows Audio Session initialized (WASAPI/WinMM endpoint active for Volume Mixer).")
-    except Exception as e:
-        print("Note: Could not init direct winmm audio endpoint:", e)
-
 # Route WebView2 audio sessions directly to host process and enable Windows MediaSession/SMTC
 if sys.platform == 'win32':
     try:
@@ -51,6 +30,175 @@ if sys.platform == 'win32':
         if flag not in existing_args:
             existing_args = (existing_args + ' ' + flag).strip()
     os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = existing_args
+
+def get_process_tree_pids(root_pid):
+    """Retrieve the set containing root_pid and all child process IDs (e.g., msedgewebview2.exe)."""
+    pids = {root_pid}
+    if sys.platform != 'win32':
+        return pids
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class PROCESSENTRY32(ctypes.Structure):
+            _fields_ = [
+                ('dwSize', wintypes.DWORD),
+                ('cntUsage', wintypes.DWORD),
+                ('th32ProcessID', wintypes.DWORD),
+                ('th32DefaultHeapID', ctypes.c_size_t),
+                ('th32ModuleID', wintypes.DWORD),
+                ('cntThreads', wintypes.DWORD),
+                ('th32ParentProcessID', wintypes.DWORD),
+                ('pcPriClassBase', ctypes.c_long),
+                ('dwFlags', wintypes.DWORD),
+                ('szExeFile', ctypes.c_char * 260)
+            ]
+
+        h_snap = ctypes.windll.kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+        if h_snap != -1:
+            pe = PROCESSENTRY32()
+            pe.dwSize = ctypes.sizeof(PROCESSENTRY32)
+            if ctypes.windll.kernel32.Process32First(h_snap, ctypes.byref(pe)):
+                more = True
+                while more:
+                    if pe.th32ParentProcessID in pids:
+                        pids.add(pe.th32ProcessID)
+                    more = ctypes.windll.kernel32.Process32Next(h_snap, ctypes.byref(pe))
+            ctypes.windll.kernel32.CloseHandle(h_snap)
+    except Exception:
+        pass
+    return pids
+
+def rename_windows_audio_sessions(icon_path):
+    """Ensure the active WebView2 audio session is branded as AetherPlayer with its icon in the Volume Mixer."""
+    if sys.platform != 'win32':
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        ole32 = ctypes.windll.ole32
+        ole32.CoInitialize(None)
+
+        class GUID(ctypes.Structure):
+            _fields_ = [
+                ('Data1', wintypes.DWORD),
+                ('Data2', wintypes.WORD),
+                ('Data3', wintypes.WORD),
+                ('Data4', ctypes.c_byte * 8)
+            ]
+
+        def get_guid(s):
+            g = GUID()
+            ole32.IIDFromString(ctypes.c_wchar_p(s), ctypes.byref(g))
+            return g
+
+        clsid_enum = get_guid('{BCDE0395-E52F-467C-8E3D-C4579291692E}')
+        iid_enum = get_guid('{A95664D2-9614-4F35-A746-DE8DB63617E6}')
+        iid_mgr = get_guid('{77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F}')
+        iid_ctrl2 = get_guid('{bfb7ff88-7239-4fc9-8fa2-07c950be9c6d}')
+
+        p_enum = ctypes.c_void_p()
+        hr = ole32.CoCreateInstance(ctypes.byref(clsid_enum), None, 1, ctypes.byref(iid_enum), ctypes.byref(p_enum))
+        if hr != 0 or not p_enum:
+            return
+
+        vt_enum = ctypes.cast(p_enum, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        GetDefaultEndpoint_fn = ctypes.WINFUNCTYPE(
+            ctypes.c_long, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)
+        )(vt_enum[4])
+
+        p_device = ctypes.c_void_p()
+        if GetDefaultEndpoint_fn(p_enum, 0, 1, ctypes.byref(p_device)) != 0 or not p_device:
+            return
+
+        vt_dev = ctypes.cast(p_device, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        Activate_fn = ctypes.WINFUNCTYPE(
+            ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(GUID), wintypes.DWORD, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+        )(vt_dev[3])
+
+        p_mgr = ctypes.c_void_p()
+        if Activate_fn(p_device, ctypes.byref(iid_mgr), 1, None, ctypes.byref(p_mgr)) != 0 or not p_mgr:
+            return
+
+        vt_mgr = ctypes.cast(p_mgr, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        GetSessionEnum_fn = ctypes.WINFUNCTYPE(
+            ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+        )(vt_mgr[5])
+
+        p_sess_enum = ctypes.c_void_p()
+        if GetSessionEnum_fn(p_mgr, ctypes.byref(p_sess_enum)) != 0 or not p_sess_enum:
+            return
+
+        vt_se = ctypes.cast(p_sess_enum, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        GetCount_fn = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int))(vt_se[3])
+        GetSession_fn = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))(vt_se[4])
+
+        count = ctypes.c_int(0)
+        GetCount_fn(p_sess_enum, ctypes.byref(count))
+
+        app_pids = get_process_tree_pids(os.getpid())
+
+        for i in range(count.value):
+            p_ctrl = ctypes.c_void_p()
+            GetSession_fn(p_sess_enum, i, ctypes.byref(p_ctrl))
+            if not p_ctrl:
+                continue
+            vt_ctrl = ctypes.cast(p_ctrl, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+            QI_fn = ctypes.WINFUNCTYPE(
+                ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p)
+            )(vt_ctrl[0])
+            p_ctrl2 = ctypes.c_void_p()
+            QI_fn(p_ctrl, ctypes.byref(iid_ctrl2), ctypes.byref(p_ctrl2))
+            if p_ctrl2:
+                vt_c2 = ctypes.cast(p_ctrl2, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+                GetPid_fn = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD))(vt_c2[14])
+                pid = wintypes.DWORD(0)
+                GetPid_fn(p_ctrl2, ctypes.byref(pid))
+                if pid.value in app_pids and pid.value != 0:
+                    SetDN_fn = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_void_p)(vt_c2[5])
+                    SetDN_fn(p_ctrl2, 'AetherPlayer', None)
+                    if icon_path and os.path.exists(icon_path):
+                        SetIP_fn = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_void_p)(vt_c2[6])
+                        SetIP_fn(p_ctrl2, icon_path, None)
+    except Exception:
+        pass
+
+def start_audio_session_monitor(icon_path):
+    def loop():
+        while True:
+            try:
+                rename_windows_audio_sessions(icon_path)
+            except Exception:
+                pass
+            time.sleep(1.5)
+    t = threading.Thread(target=loop, daemon=True)
+    t.start()
+
+def start_global_media_key_listener(window):
+    try:
+        from pynput import keyboard
+        def on_press(key):
+            try:
+                if key == keyboard.Key.media_play_pause:
+                    window.evaluate_js("if (typeof togglePlayPause === 'function') togglePlayPause();")
+                elif key == keyboard.Key.media_next:
+                    window.evaluate_js("if (typeof playNext === 'function') playNext();")
+                elif key == keyboard.Key.media_previous:
+                    window.evaluate_js("if (typeof playPrev === 'function') playPrev();")
+                elif getattr(key, 'name', '') == 'media_volume_mute':
+                    window.evaluate_js("if (typeof toggleMute === 'function') toggleMute();")
+            except Exception:
+                pass
+
+        listener = keyboard.Listener(on_press=on_press)
+        listener.daemon = True
+        listener.start()
+        print("Global keyboard media keys listener started.")
+        return listener
+    except Exception as e:
+        print("Note: Could not start global keyboard media key listener:", e)
+        return None
 
 DEFAULT_START_PORT = 38241
 ACTIVE_PORT = DEFAULT_START_PORT
@@ -123,6 +271,9 @@ def start_server():
         print(f"Connecting to existing AetherPlayer server on port {ACTIVE_PORT}.")
 
 def launch_desktop():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    icon_path = os.path.join(script_dir, 'icon.ico')
+
     # 1. First choice: Use native system WebView (via pywebview) if available
     try:
         import webview
@@ -137,8 +288,15 @@ def launch_desktop():
             resizable=True,
             min_size=(900, 600)
         )
-        # Start webview loop (blocks until window is closed)
-        webview.start()
+
+        def on_app_ready():
+            # Brand WebView2 audio session as AetherPlayer with its icon in Volume Mixer
+            start_audio_session_monitor(icon_path)
+            # Enable hardware keyboard media keys (Play/Pause, Next, Prev) globally
+            start_global_media_key_listener(window)
+
+        # Start webview loop with private_mode=False so Chromium passes full MediaSession metadata to Windows SMTC
+        webview.start(on_app_ready, private_mode=False, icon=icon_path if os.path.exists(icon_path) else None)
         print("Desktop window closed.")
         return
     except ImportError:
@@ -147,7 +305,6 @@ def launch_desktop():
         print("Error launching pywebview window, falling back:", e)
 
     # 2. Second choice: Open in standalone Application Mode using Chrome/Edge/Brave
-    # Common paths for browsers on Windows
     paths = [
         "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
         "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -164,7 +321,6 @@ def launch_desktop():
             
     if browser_path:
         print(f"Launching standalone app window using: {os.path.basename(browser_path)}")
-        # App mode opens a clean, borderless browser window frame with no URL bars or tabs
         browser_process = subprocess.Popen([browser_path, f"--app=http://localhost:{ACTIVE_PORT}"])
         browser_process.wait()
         print("App window closed.")
@@ -173,23 +329,15 @@ def launch_desktop():
         import webbrowser
         print("No native window wrapper found. Opening in default browser tab...")
         webbrowser.open(f"http://localhost:{ACTIVE_PORT}")
-        # Keep launcher process alive for a bit so they can see the tab open
         time.sleep(5)
 
 def main():
     try:
-        init_windows_audio_session()
         start_server()
         launch_desktop()
     except Exception as e:
         print("Error launching desktop app:", e)
     finally:
-        if WINMM_WAVEOUT_HANDLE:
-            try:
-                import ctypes
-                ctypes.windll.winmm.waveOutClose(WINMM_WAVEOUT_HANDLE)
-            except Exception:
-                pass
         if SERVER_PROCESS:
             print("Shutting down background server...")
             SERVER_PROCESS.terminate()
