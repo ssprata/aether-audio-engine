@@ -28,6 +28,7 @@ build/
 venv/
 .venv/
 env/
+*.log
 
 # Node dependencies & logs
 node_modules/

@@ -13,11 +13,18 @@ pyinstaller AetherPlayer_onefile.spec --distpath dist_onefile --workpath build_o
 
 Write-Host "Updating dist/AetherPlayer.exe..." -ForegroundColor Cyan
 Copy-Item -Force dist_onefile\AetherPlayer.exe dist\AetherPlayer.exe
-Remove-Item -Recurse -Force dist_onefile
-Remove-Item -Recurse -Force build_onefile
+Start-Sleep -Seconds 1
+try { Remove-Item -Recurse -Force dist_onefile -ErrorAction SilentlyContinue } catch {}
+try { Remove-Item -Recurse -Force build_onefile -ErrorAction SilentlyContinue } catch {}
 
 Write-Host "Updating portable zip archives..." -ForegroundColor Cyan
 Compress-Archive -Path "dist\AetherPlayer\*" -DestinationPath "dist\AetherPlayer-portable-windows-x64.zip" -Force
 Compress-Archive -Path "dist\AetherPlayer.exe" -DestinationPath "dist\AetherPlayer-windows-x64.zip" -Force
+
+$iscc = "C:\Users\tomas\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
+if (Test-Path $iscc) {
+    Write-Host "Compiling Windows Setup Installer..." -ForegroundColor Cyan
+    & $iscc installer.iss
+}
 
 Write-Host "Done! Dist executables and archives are up to date." -ForegroundColor Green

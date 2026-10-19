@@ -1943,9 +1943,80 @@ input[type="range"]::-webkit-slider-thumb:hover {
   text-align: center;
 }
 
-.timeline-slider {
+.timeline-slider-wrapper {
+  position: relative;
   flex: 1;
+  display: flex;
+  align-items: center;
+  height: 24px;
 }
+
+.timeline-slider {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, var(--accent-color) 0%, var(--accent-color) var(--progress, 0%), rgba(255, 255, 255, 0.12) var(--progress, 0%), rgba(255, 255, 255, 0.12) 100%);
+  outline: none;
+  cursor: pointer;
+  position: relative;
+  z-index: 2;
+  transition: height 0.15s ease;
+}
+
+.timeline-slider:hover {
+  height: 8px;
+}
+
+.timeline-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid var(--accent-color);
+  cursor: pointer;
+  box-shadow: 0 0 10px var(--accent-color);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.timeline-slider:hover::-webkit-slider-thumb {
+  transform: scale(1.25);
+  box-shadow: 0 0 14px var(--accent-color), 0 0 4px #ffffff;
+}
+
+.dj-transition-zone {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  right: 0;
+  height: 6px;
+  border-radius: 0 3px 3px 0;
+  pointer-events: none;
+  z-index: 3;
+  opacity: 0;
+  width: 0%;
+  transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), width 0.3s ease;
+  background: linear-gradient(90deg, rgba(var(--accent-rgb, 124, 58, 237), 0.2) 0%, rgba(var(--accent-rgb, 124, 58, 237), 0.75) 100%);
+  border-left: 2px solid var(--accent-color);
+  box-shadow: 0 0 10px var(--accent-color), inset 0 0 8px var(--accent-color);
+  animation: djZoneGlowPulse 2.2s ease-in-out infinite alternate;
+}
+
+.dj-transition-zone.active {
+  opacity: 1;
+}
+
+@keyframes djZoneGlowPulse {
+  0% {
+    box-shadow: 0 0 8px var(--accent-color), inset 0 0 6px var(--accent-color);
+    filter: brightness(1);
+  }
+  100% {
+    box-shadow: 0 0 16px var(--accent-color), 0 0 24px var(--accent-color), inset 0 0 10px var(--accent-color);
+    filter: brightness(1.4);
+  }
+}
+
 
 .player-right {
   display: flex;

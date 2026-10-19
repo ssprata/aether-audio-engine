@@ -1418,7 +1418,10 @@
 
         <div class="playback-timeline">
           <span class="time-stamp" id="playerCurrentTime">0:00</span>
-          <input type="range" class="timeline-slider" id="playerTimeline" min="0" max="100" value="0">
+          <div class="timeline-slider-wrapper">
+            <input type="range" class="timeline-slider" id="playerTimeline" min="0" max="100" value="0" step="any">
+            <div class="dj-transition-zone" id="playerDjZone" title="DJ Transition Zone (15s Locked)"></div>
+          </div>
           <span class="time-stamp" id="playerTotalDuration">0:00</span>
         </div>
       </div>
@@ -1645,7 +1648,10 @@
 
       <!-- Timeline & Scrubber -->
       <div class="mobile-np-timeline-block">
-        <input type="range" class="timeline-slider" id="mobileNpTimeline" min="0" max="100" value="0">
+        <div class="timeline-slider-wrapper">
+          <input type="range" class="timeline-slider" id="mobileNpTimeline" min="0" max="100" value="0" step="any">
+          <div class="dj-transition-zone" id="mobileDjZone" title="DJ Transition Zone (15s Locked)"></div>
+        </div>
         <div class="mobile-np-time-labels">
           <span id="mobileNpCurrentTime">0:00</span>
           <span id="mobileNpTotalDuration">0:00</span>

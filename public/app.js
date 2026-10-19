@@ -2346,7 +2346,39 @@ async function updateDjTransitionIndicator(song) {
   if (txtToggleState) {
     txtToggleState.textContent = isEnabled ? 'ON' : 'OFF';
   }
+
+  updateDjZoneUI();
 }
+
+function updateDjZoneUI() {
+  const isEnabled = !!state.djTransitionEnabled;
+  const dur = state.duration || 0;
+  const zoneEl = document.getElementById('playerDjZone');
+  const mobZoneEl = document.getElementById('mobileDjZone');
+
+  if (isEnabled && dur > 20) {
+    const pct = Math.min(100, Math.max(0, (15 / dur) * 100));
+    const widthStr = `${pct.toFixed(2)}%`;
+    if (zoneEl) {
+      zoneEl.style.width = widthStr;
+      zoneEl.classList.add('active');
+    }
+    if (mobZoneEl) {
+      mobZoneEl.style.width = widthStr;
+      mobZoneEl.classList.add('active');
+    }
+  } else {
+    if (zoneEl) {
+      zoneEl.style.width = '0%';
+      zoneEl.classList.remove('active');
+    }
+    if (mobZoneEl) {
+      mobZoneEl.style.width = '0%';
+      mobZoneEl.classList.remove('active');
+    }
+  }
+}
+window.updateDjZoneUI = updateDjZoneUI;
 
 function setupDjStudioEventListeners() {
   const btnToggle = document.getElementById('btnToggleDjTransition');
@@ -4027,7 +4059,21 @@ function setupEventListeners() {
     timelineEl.addEventListener('touchstart', () => { isUserSeeking = true; }, { passive: true });
     timelineEl.addEventListener('input', (e) => {
       isUserSeeking = true;
-      const pct = parseFloat(e.target.value) / 100;
+      let val = parseFloat(e.target.value);
+      if (state.djTransitionEnabled && state.duration > 20) {
+        const maxAllowedPct = ((state.duration - 15) / state.duration) * 100;
+        if (val > maxAllowedPct) {
+          val = maxAllowedPct;
+          e.target.value = val;
+          if (typeof showToast === 'function' && !e.target._toastShown) {
+            e.target._toastShown = true;
+            showToast('DJ Transition Zone: Locked for smooth mix');
+            setTimeout(() => { e.target._toastShown = false; }, 2500);
+          }
+        }
+      }
+      e.target.style.setProperty('--progress', `${val}%`);
+      const pct = val / 100;
       const seekSecs = pct * state.duration;
       const currTime = document.getElementById('playerCurrentTime');
       if (currTime) currTime.textContent = formatSeconds(seekSecs);
@@ -4036,7 +4082,16 @@ function setupEventListeners() {
     });
 
     timelineEl.addEventListener('change', (e) => {
-      const pct = parseFloat(e.target.value) / 100;
+      let val = parseFloat(e.target.value);
+      if (state.djTransitionEnabled && state.duration > 20) {
+        const maxAllowedPct = ((state.duration - 15) / state.duration) * 100;
+        if (val > maxAllowedPct) {
+          val = maxAllowedPct;
+          e.target.value = val;
+        }
+      }
+      e.target.style.setProperty('--progress', `${val}%`);
+      const pct = val / 100;
       seekToPercentage(pct);
     });
   }
@@ -4135,15 +4190,40 @@ function setupEventListeners() {
   // Mobile timeline scrubber
   document.getElementById('mobileNpTimeline')?.addEventListener('input', (e) => {
     e.stopPropagation();
-    const pct = parseFloat(e.target.value) / 100;
+    isUserSeeking = true;
+    let val = parseFloat(e.target.value);
+    if (state.djTransitionEnabled && state.duration > 20) {
+      const maxAllowedPct = ((state.duration - 15) / state.duration) * 100;
+      if (val > maxAllowedPct) {
+        val = maxAllowedPct;
+        e.target.value = val;
+        if (typeof showToast === 'function' && !e.target._toastShown) {
+          e.target._toastShown = true;
+          showToast('DJ Transition Zone: Locked for smooth mix');
+          setTimeout(() => { e.target._toastShown = false; }, 2500);
+        }
+      }
+    }
+    e.target.style.setProperty('--progress', `${val}%`);
+    const pct = val / 100;
     const seekSecs = pct * state.duration;
     document.getElementById('mobileNpCurrentTime').textContent = formatSeconds(seekSecs);
     document.getElementById('playerCurrentTime').textContent = formatSeconds(seekSecs);
     updateLyricsHighlight(seekSecs);
+    seekToPercentage(pct);
   });
   document.getElementById('mobileNpTimeline')?.addEventListener('change', (e) => {
     e.stopPropagation();
-    const pct = parseFloat(e.target.value) / 100;
+    let val = parseFloat(e.target.value);
+    if (state.djTransitionEnabled && state.duration > 20) {
+      const maxAllowedPct = ((state.duration - 15) / state.duration) * 100;
+      if (val > maxAllowedPct) {
+        val = maxAllowedPct;
+        e.target.value = val;
+      }
+    }
+    e.target.style.setProperty('--progress', `${val}%`);
+    const pct = val / 100;
     seekToPercentage(pct);
   });
 
@@ -5890,11 +5970,15 @@ async function playYouTubeTrack(videoId, startTime = 0) {
         }
       };
 
-      audio.onended = () => {
-        if (audio === activeAudio && !state.isExecutingTransition) {
+      const handleTrackEnd = () => {
+        if (!state.isExecutingTransition) {
+          console.log("[AudioEngine] Track completion detected on audio element, advancing queue...");
           playNext();
         }
       };
+      audio.onended = handleTrackEnd;
+      audio.removeEventListener('ended', handleTrackEnd);
+      audio.addEventListener('ended', handleTrackEnd);
 
       audio.onerror = (e) => {
         // Only fall back if this audio element is currently active and legitimately failed
@@ -6282,8 +6366,20 @@ window.applyVolume = applyVolume;
 
 let seekDebounceTimer = null;
 let isUserSeeking = false;
+let smoothProgressRaf = null;
+let lastRenderedSec = -1;
 
 function seekToPercentage(pct) {
+  if (state.djTransitionEnabled && state.duration > 20) {
+    const maxAllowedPct = (state.duration - 15) / state.duration;
+    if (pct > maxAllowedPct) {
+      pct = maxAllowedPct;
+      if (typeof showToast === 'function') {
+        showToast('DJ Transition Zone: Locked for smooth mix');
+      }
+    }
+  }
+
   const boundedPct = Math.min(1, Math.max(0, pct));
   const seekSeconds = boundedPct * state.duration;
 
@@ -6294,6 +6390,17 @@ function seekToPercentage(pct) {
   if (currTime) currTime.textContent = timeFormatted;
   const mobileTime = document.getElementById('mobileNpCurrentTime');
   if (mobileTime) mobileTime.textContent = timeFormatted;
+
+  const timeline = document.getElementById('playerTimeline');
+  if (timeline) {
+    timeline.value = boundedPct * 100;
+    timeline.style.setProperty('--progress', `${boundedPct * 100}%`);
+  }
+  const mobTimeline = document.getElementById('mobileNpTimeline');
+  if (mobTimeline) {
+    mobTimeline.value = boundedPct * 100;
+    mobTimeline.style.setProperty('--progress', `${boundedPct * 100}%`);
+  }
 
   isUserSeeking = true;
   if (seekDebounceTimer) {
@@ -6314,35 +6421,121 @@ function seekToPercentage(pct) {
     // Allow small cooldown before resume timer takes back timeline slider control
     setTimeout(() => {
       isUserSeeking = false;
-    }, 250);
+      if (state.isPlaying) {
+        runSmoothProgressLoop();
+      }
+    }, 200);
   }, 100);
 }
 
+function runSmoothProgressLoop() {
+  if (smoothProgressRaf) cancelAnimationFrame(smoothProgressRaf);
+
+  function tick() {
+    if (state.isPlaying && isAppVisible && !isUserSeeking) {
+      let currentSec = 0;
+      if ((state.currentPlaybackType === 'offline' || state.currentPlaybackType === 'audio' || state.currentPlaybackType === 'preview') && activeAudio && !isNaN(activeAudio.currentTime)) {
+        currentSec = activeAudio.currentTime;
+      } else if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+        currentSec = ytPlayer.getCurrentTime();
+      } else {
+        currentSec = state.playbackPosition || 0;
+      }
+
+      if (state.duration > 0) {
+        if (currentSec > state.duration) currentSec = state.duration;
+        state.playbackPosition = currentSec;
+        const pct = Math.min(100, Math.max(0, (currentSec / state.duration) * 100));
+
+        const timeline = document.getElementById('playerTimeline');
+        if (timeline && !isUserSeeking) {
+          timeline.value = pct;
+          timeline.style.setProperty('--progress', `${pct}%`);
+        }
+        const mobileTimeline = document.getElementById('mobileNpTimeline');
+        if (mobileTimeline && !isUserSeeking) {
+          mobileTimeline.value = pct;
+          mobileTimeline.style.setProperty('--progress', `${pct}%`);
+        }
+        const miniProg = document.getElementById('miniPlayerProgress');
+        if (miniProg) {
+          miniProg.style.width = `${pct}%`;
+        }
+      }
+
+      // Update whole second text only when changed to avoid DOM churn
+      const wholeSec = Math.floor(currentSec);
+      if (wholeSec !== lastRenderedSec) {
+        lastRenderedSec = wholeSec;
+        const timeFormatted = formatSeconds(currentSec);
+        const currentTime = document.getElementById('playerCurrentTime');
+        if (currentTime) currentTime.textContent = timeFormatted;
+        const mobileTime = document.getElementById('mobileNpCurrentTime');
+        if (mobileTime) mobileTime.textContent = timeFormatted;
+        updateLyricsHighlight(currentSec);
+
+        if (typeof updateActiveWaveformsPlayhead === 'function' && state.duration > 0) {
+          updateActiveWaveformsPlayhead(currentSec / state.duration);
+        }
+      }
+
+      // Fast-path ended check in 60fps tick
+      if (activeAudio && activeAudio.ended && !state.isExecutingTransition) {
+        const now = Date.now();
+        if (!state.isTransitioning || (now - (state.transitionStartTime || 0) > 2000)) {
+          state.isTransitioning = true;
+          state.transitionStartTime = now;
+          playNext();
+        }
+      }
+    }
+
+    if (state.isPlaying) {
+      smoothProgressRaf = requestAnimationFrame(tick);
+    } else {
+      smoothProgressRaf = null;
+    }
+  }
+
+  smoothProgressRaf = requestAnimationFrame(tick);
+}
+window.runSmoothProgressLoop = runSmoothProgressLoop;
+
 function updateTimelineUI(currentSec) {
   if (isUserSeeking) return; // Never fight or jerk slider thumb while user is scrubbing!
-  if (currentSec === undefined) currentSec = state.playbackPosition;
+  if (currentSec === undefined) currentSec = state.playbackPosition || 0;
+  if (state.duration > 0 && currentSec > state.duration) currentSec = state.duration;
   const pct = state.duration > 0 ? (currentSec / state.duration) * 100 : 0;
   const boundedPct = Math.min(100, Math.max(0, pct));
   const timeFormatted = formatSeconds(currentSec);
 
   const timeline = document.getElementById('playerTimeline');
-  if (timeline) timeline.value = boundedPct;
+  if (timeline) {
+    timeline.value = boundedPct;
+    timeline.style.setProperty('--progress', `${boundedPct}%`);
+  }
   const currentTime = document.getElementById('playerCurrentTime');
   if (currentTime) currentTime.textContent = timeFormatted;
 
   // Update Mobile Scrubber & Mini progress bar
   const mobileTimeline = document.getElementById('mobileNpTimeline');
-  if (mobileTimeline) mobileTimeline.value = boundedPct;
+  if (mobileTimeline) {
+    mobileTimeline.value = boundedPct;
+    mobileTimeline.style.setProperty('--progress', `${boundedPct}%`);
+  }
   const mobileTime = document.getElementById('mobileNpCurrentTime');
   if (mobileTime) mobileTime.textContent = timeFormatted;
   const miniProg = document.getElementById('miniPlayerProgress');
   if (miniProg) miniProg.style.width = `${boundedPct}%`;
 
+  // Update DJ 15s zone UI
+  updateDjZoneUI();
+
   // Update synced lyrics line
   updateLyricsHighlight(currentSec);
 
   // Update Multi-Band Frequency Waveforms active playhead
-  if (typeof updateActiveWaveformsPlayhead === 'function') {
+  if (typeof updateActiveWaveformsPlayhead === 'function' && state.duration > 0) {
     updateActiveWaveformsPlayhead(boundedPct / 100);
   }
 
@@ -6414,11 +6607,15 @@ async function triggerAutomatedQueueTransition(nextSong, transConfig) {
       if (mobileNpTotalDuration) mobileNpTotalDuration.textContent = formatSeconds(state.duration);
     }
   };
-  incomingDeck.audio.onended = () => {
-    if (incomingDeck.audio === activeAudio && !state.isExecutingTransition) {
+  const handleIncomingEnd = () => {
+    if (!state.isExecutingTransition) {
+      console.log("[DJ Engine] Track completion on incoming deck, advancing queue...");
       playNext();
     }
   };
+  incomingDeck.audio.onended = handleIncomingEnd;
+  incomingDeck.audio.removeEventListener('ended', handleIncomingEnd);
+  incomingDeck.audio.addEventListener('ended', handleIncomingEnd);
   incomingDeck.audio.onerror = () => {
     if (!incomingDeck.audio.src || incomingDeck.audio !== activeAudio || !state.isPlaying) return;
     console.warn('[DJ Engine] Incoming deck stream error, falling back to YouTube IFrame');
@@ -6529,6 +6726,8 @@ async function triggerAutomatedQueueTransition(nextSong, transConfig) {
 
 function startProgressTimer(platform) {
   if (progressInterval) clearInterval(progressInterval);
+  if (typeof runSmoothProgressLoop === 'function') runSmoothProgressLoop();
+  if (typeof updateDjZoneUI === 'function') updateDjZoneUI();
 
   progressInterval = setInterval(() => {
     if (!state.isPlaying) return;
@@ -6563,11 +6762,26 @@ function startProgressTimer(platform) {
       }
     }
 
-    // Background track-end detector:
-    // Only fire when NOT executing an active transition to prevent interrupting crossfades!
-    if (!state.isExecutingTransition && state.duration > 0 && currentSec >= state.duration - 0.75) {
+    // Robust track-end detector (active whether DJ transition is ON or OFF):
+    const isActuallyEnded = Boolean(
+      !state.isExecutingTransition && state.duration > 0 && (
+        // 1. Native HTML5 audio element flagged as ended
+        (activeAudio && activeAudio.ended) ||
+        // 2. Playhead is within 1.2s of duration estimate
+        (currentSec >= state.duration - 1.2) ||
+        // 3. Audio element duration is finite and reached
+        (activeAudio && activeAudio.duration && isFinite(activeAudio.duration) && currentSec >= activeAudio.duration - 1.0) ||
+        // 4. Audio naturally paused near the end of the stream without user pause
+        (activeAudio && activeAudio.paused && !state.isUserPaused && currentSec > 3 && (
+          currentSec >= state.duration - 3.0 ||
+          (activeAudio.duration && isFinite(activeAudio.duration) && currentSec >= activeAudio.duration - 2.0)
+        ))
+      )
+    );
+
+    if (isActuallyEnded) {
       const now = Date.now();
-      if (!state.isTransitioning || (now - (state.transitionStartTime || 0) > 3000)) {
+      if (!state.isTransitioning || (now - (state.transitionStartTime || 0) > 2000)) {
         console.log("Track completion detected by background ticker, advancing queue...");
         state.isTransitioning = true;
         state.transitionStartTime = now;
@@ -6638,6 +6852,10 @@ function updatePlayButtonUI(isPlaying) {
   const queueBars = document.getElementById('queueNowPlayingBars');
   if (queueBars) queueBars.style.display = isPlaying ? 'flex' : 'none';
 
+  window.__aether_is_playing = !!isPlaying;
+  if (isPlaying && typeof runSmoothProgressLoop === 'function') {
+    runSmoothProgressLoop();
+  }
   if ('mediaSession' in navigator) {
     try {
       navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
