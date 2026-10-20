@@ -7256,14 +7256,25 @@ function updateLyricsHighlight(currentTime) {
         const activeChild = liveContainer.children[targetIdx];
         const nextChild = liveContainer.children[targetIdx + 1];
 
-        if (prevChild && !prevChild.classList.contains('spacer')) prevChild.classList.add('prev');
-        if (activeChild) activeChild.classList.add('current');
-        if (nextChild && !nextChild.classList.contains('spacer')) nextChild.classList.add('next');
+        if (activeChild) {
+          activeChild.classList.add('current');
+          const isMultiLine = activeChild.offsetHeight > 38;
 
-        // Slide container up/down using offsetTop centering math
-        const widgetHeight = 90;
-        const offset = activeChild.offsetTop - (widgetHeight / 2 - activeChild.offsetHeight / 2);
-        liveContainer.style.transform = `translateY(${-offset}px)`;
+          if (prevChild && !prevChild.classList.contains('spacer')) {
+            prevChild.classList.add('prev');
+            prevChild.style.opacity = isMultiLine ? '0' : '';
+          }
+          if (nextChild && !nextChild.classList.contains('spacer')) {
+            nextChild.classList.add('next');
+            nextChild.style.opacity = isMultiLine ? '0' : '';
+          }
+
+          // Slide container up/down using offsetTop centering math
+          const widgetEl = document.getElementById('liveLyricsWidget');
+          const widgetHeight = widgetEl ? widgetEl.clientHeight : 94;
+          const offset = activeChild.offsetTop - (widgetHeight / 2 - activeChild.offsetHeight / 2);
+          liveContainer.style.transform = `translateY(${-offset}px)`;
+        }
       }
     }
   } else {
