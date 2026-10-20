@@ -69,73 +69,24 @@ img {
   left: 0;
   right: 0;
   bottom: 0;
-  background: var(--app-bg);
+  background:
+    radial-gradient(ellipse 700px 550px at 15% 10%, rgba(var(--accent-rgb, 124, 58, 237), 0.3) 0%, transparent 70%),
+    radial-gradient(ellipse 800px 650px at 90% 90%, var(--neon-glow-color, rgba(167, 139, 250, 0.25)) 0%, transparent 70%),
+    radial-gradient(ellipse 500px 500px at 60% 50%, rgba(var(--accent-rgb, 124, 58, 237), 0.15) 0%, transparent 65%),
+    var(--app-bg);
   background-size: cover;
   background-position: center;
   z-index: -2;
   transition: background 0.8s cubic-bezier(0.25, 1, 0.5, 1);
-}
-
-/* Floating background orbs */
-.bg-orbs-container {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: -2;
-  overflow: hidden;
   pointer-events: none;
 }
+
+/* Floating background orbs - replaced by hardware-accelerated static radial gradients in .app-bg-wrapper for 0% GPU load */
+.bg-orbs-container {
+  display: none !important;
+}
 .bg-orb {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(120px);
-  opacity: 0.25;
-  mix-blend-mode: screen;
-  transition: background 0.8s ease;
-  animation-duration: 20s;
-  animation-iteration-count: infinite;
-  animation-direction: alternate;
-  animation-timing-function: ease-in-out;
-}
-.orb-1 {
-  width: 500px;
-  height: 500px;
-  background: var(--accent-color);
-  top: -10%;
-  left: 10%;
-  animation-name: float-orb-1;
-}
-.orb-2 {
-  width: 650px;
-  height: 650px;
-  background: var(--neon-glow-color);
-  bottom: -15%;
-  right: 5%;
-  animation-name: float-orb-2;
-  animation-duration: 25s;
-}
-.orb-3 {
-  width: 400px;
-  height: 400px;
-  background: var(--accent-color);
-  top: 45%;
-  left: 55%;
-  animation-name: float-orb-3;
-  animation-duration: 18s;
-}
-@keyframes float-orb-1 {
-  0% { transform: translate(0, 0) scale(1); }
-  100% { transform: translate(120px, 80px) scale(1.15); }
-}
-@keyframes float-orb-2 {
-  0% { transform: translate(0, 0) scale(1); }
-  100% { transform: translate(-150px, -90px) scale(1.2); }
-}
-@keyframes float-orb-3 {
-  0% { transform: translate(0, 0) scale(1); }
-  100% { transform: translate(-60px, 100px) scale(0.85); }
+  display: none !important;
 }
 
 .app-bg-overlay {
@@ -154,7 +105,10 @@ img {
   display: grid;
   height: 100vh;
   width: 100vw;
-  filter: brightness(var(--brightness)) contrast(var(--contrast));
+}
+
+.app-container.has-custom-filter {
+  filter: brightness(var(--brightness, 100%)) contrast(var(--contrast, 100%));
   transition: filter 0.3s ease;
 }
 

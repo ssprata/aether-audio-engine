@@ -23,8 +23,12 @@ if sys.platform == 'win32':
         pass
     existing_args = os.environ.get('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', '')
     flags_to_add = [
-        '--disable-features=AudioServiceOutOfProcess',
-        '--enable-features=HardwareMediaKeyHandling,MediaSessionService'
+        '--disable-features=AudioServiceOutOfProcess,TranslateUI,AutofillServerCommunication,OptimizationHints',
+        '--enable-features=HardwareMediaKeyHandling,MediaSessionService,ResourceSaver',
+        '--js-flags="--max-old-space-size=256 --optimize-for-size"',
+        '--renderer-process-limit=2',
+        '--disk-cache-size=33554432',
+        '--media-cache-size=33554432'
     ]
     for flag in flags_to_add:
         if flag not in existing_args:
@@ -69,10 +73,11 @@ def get_process_tree_pids(root_pid):
         pass
     return pids
 
-def rename_windows_audio_sessions(icon_path):
+def rename_windows_audio_sessions(icon_path, app_pids=None):
     """Ensure the active WebView2 audio session is branded as AetherPlayer with its icon in the Volume Mixer."""
     if sys.platform != 'win32':
-        return
+        return False
+    branded_any = False
     try:
         import ctypes
         from ctypes import wintypes
@@ -101,7 +106,7 @@ def rename_windows_audio_sessions(icon_path):
         p_enum = ctypes.c_void_p()
         hr = ole32.CoCreateInstance(ctypes.byref(clsid_enum), None, 1, ctypes.byref(iid_enum), ctypes.byref(p_enum))
         if hr != 0 or not p_enum:
-            return
+            return False
 
         vt_enum = ctypes.cast(p_enum, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
         GetDefaultEndpoint_fn = ctypes.WINFUNCTYPE(
@@ -110,7 +115,7 @@ def rename_windows_audio_sessions(icon_path):
 
         p_device = ctypes.c_void_p()
         if GetDefaultEndpoint_fn(p_enum, 0, 1, ctypes.byref(p_device)) != 0 or not p_device:
-            return
+            return False
 
         vt_dev = ctypes.cast(p_device, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
         Activate_fn = ctypes.WINFUNCTYPE(
@@ -119,7 +124,7 @@ def rename_windows_audio_sessions(icon_path):
 
         p_mgr = ctypes.c_void_p()
         if Activate_fn(p_device, ctypes.byref(iid_mgr), 1, None, ctypes.byref(p_mgr)) != 0 or not p_mgr:
-            return
+            return False
 
         vt_mgr = ctypes.cast(p_mgr, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
         GetSessionEnum_fn = ctypes.WINFUNCTYPE(
@@ -128,7 +133,7 @@ def rename_windows_audio_sessions(icon_path):
 
         p_sess_enum = ctypes.c_void_p()
         if GetSessionEnum_fn(p_mgr, ctypes.byref(p_sess_enum)) != 0 or not p_sess_enum:
-            return
+            return False
 
         vt_se = ctypes.cast(p_sess_enum, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
         GetCount_fn = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int))(vt_se[3])
@@ -137,7 +142,8 @@ def rename_windows_audio_sessions(icon_path):
         count = ctypes.c_int(0)
         GetCount_fn(p_sess_enum, ctypes.byref(count))
 
-        app_pids = get_process_tree_pids(os.getpid())
+        if app_pids is None:
+            app_pids = get_process_tree_pids(os.getpid())
 
         for i in range(count.value):
             p_ctrl = ctypes.c_void_p()
@@ -161,17 +167,30 @@ def rename_windows_audio_sessions(icon_path):
                     if icon_path and os.path.exists(icon_path):
                         SetIP_fn = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_void_p)(vt_c2[6])
                         SetIP_fn(p_ctrl2, icon_path, None)
+                    branded_any = True
     except Exception:
         pass
+    return branded_any
 
 def start_audio_session_monitor(icon_path):
     def loop():
+        pids_cache = None
+        last_pid_scan = 0
+        consecutive_success = 0
         while True:
             try:
-                rename_windows_audio_sessions(icon_path)
+                now = time.time()
+                if pids_cache is None or (now - last_pid_scan) > 20.0:
+                    pids_cache = get_process_tree_pids(os.getpid())
+                    last_pid_scan = now
+                branded = rename_windows_audio_sessions(icon_path, app_pids=pids_cache)
+                if branded:
+                    consecutive_success += 1
+                else:
+                    consecutive_success = 0
             except Exception:
                 pass
-            time.sleep(1.5)
+            time.sleep(8.0 if consecutive_success >= 2 else 2.0)
     t = threading.Thread(target=loop, daemon=True)
     t.start()
 
@@ -454,7 +473,7 @@ def start_taskbar_thumbnail_toolbar(window):
             # Background synchronization loop to keep Play/Pause icon in sync with player state
             def sync_loop():
                 while True:
-                    time.sleep(0.4)
+                    time.sleep(1.0)
                     try:
                         val = window.evaluate_js("!!(window.__aether_is_playing || (window.audio && !window.audio.paused) || (window.audioA && !window.audioA.paused));")
                         is_playing = bool(val)
@@ -583,6 +602,13 @@ def launch_desktop():
 
         # Trigger toolbar attachment when the native form is shown or on app ready
         window.events.shown += lambda: start_taskbar_thumbnail_toolbar(window)
+
+        # Notify frontend to throttle/suspend animations and RAF loops when minimized
+        try:
+            window.events.minimized += lambda: window.evaluate_js("if (typeof window.setAppVisibilityState === 'function') window.setAppVisibilityState(false);")
+            window.events.restored += lambda: window.evaluate_js("if (typeof window.setAppVisibilityState === 'function') window.setAppVisibilityState(true);")
+        except Exception:
+            pass
 
         # Start webview loop with private_mode=False so Chromium passes full MediaSession metadata to Windows SMTC
         webview.start(on_app_ready, private_mode=False, icon=icon_path if os.path.exists(icon_path) else None)

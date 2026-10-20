@@ -14,7 +14,7 @@ try {
   console.warn("Visibility override failed:", e);
 }
 
-// Mobile Battery & Background Power Saver
+// Battery & Background Power Saver
 let isAppVisible = true;
 window.setAppVisibilityState = function(visible) {
   isAppVisible = !!visible;
@@ -22,8 +22,9 @@ window.setAppVisibilityState = function(visible) {
     document.body.classList.add('app-backgrounded');
   } else {
     document.body.classList.remove('app-backgrounded');
-    if (state.isPlaying && typeof updateTimelineUI === 'function') {
-      updateTimelineUI();
+    if (state.isPlaying) {
+      if (typeof updateTimelineUI === 'function') updateTimelineUI();
+      if (typeof runSmoothProgressLoop === 'function') runSmoothProgressLoop();
     }
   }
 };
@@ -448,12 +449,16 @@ const AetherAudioEngine = {
     if (this.deckA && this.deckA.audio) {
       try {
         this.deckA.audio.pause();
+        this.deckA.audio.removeAttribute('src');
+        this.deckA.audio.load();
         this.deckA.audio.currentTime = 0;
       } catch (e) {}
     }
     if (this.deckB && this.deckB.audio) {
       try {
         this.deckB.audio.pause();
+        this.deckB.audio.removeAttribute('src');
+        this.deckB.audio.load();
         this.deckB.audio.currentTime = 0;
       } catch (e) {}
     }
@@ -1152,14 +1157,13 @@ const AetherAudioAnalyzer = {
 };
 
 function drawMultiBandWaveform(canvas, analysis, progressPct = 0) {
-  if (!canvas) return;
+  if (!canvas || canvas.offsetParent === null || canvas.clientWidth === 0) return;
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
-  const rect = canvas.getBoundingClientRect();
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const targetW = Math.round(rect.width * dpr);
-  const targetH = Math.round(rect.height * dpr);
+  const targetW = Math.round(canvas.clientWidth * dpr);
+  const targetH = Math.round(canvas.clientHeight * dpr);
 
   if (targetW > 0 && targetH > 0 && (canvas.width !== targetW || canvas.height !== targetH)) {
     canvas.width = targetW;
@@ -1212,17 +1216,21 @@ function drawMultiBandWaveform(canvas, analysis, progressPct = 0) {
     ctx.fillRect(x, midY - lowH, barWidth - gap, lowH * 2);
   }
 
-  // Draw Glowing Playhead Cursor Line
+  // Draw Glowing Playhead Cursor Line (high-performance dual stroke, 0% shadowBlur CPU cost)
   if (progressPct >= 0 && progressPct <= 1) {
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2 * dpr;
-    ctx.shadowColor = 'rgba(124, 58, 237, 0.9)';
-    ctx.shadowBlur = 8 * dpr;
+    ctx.strokeStyle = 'rgba(124, 58, 237, 0.45)';
+    ctx.lineWidth = 5 * dpr;
     ctx.beginPath();
     ctx.moveTo(playheadX, 0);
     ctx.lineTo(playheadX, height);
     ctx.stroke();
-    ctx.shadowBlur = 0;
+
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(playheadX, 0);
+    ctx.lineTo(playheadX, height);
+    ctx.stroke();
   }
 }
 
@@ -4618,6 +4626,15 @@ function applyCurrentTheme() {
     container.classList.add('right-sidebar-collapsed');
   }
 
+  // Filter optimizations: only apply GPU filter pass if custom brightness or contrast is used
+  const b = parseInt(theme.brightness);
+  const c = parseInt(theme.contrast);
+  if ((!isNaN(b) && b !== 100) || (!isNaN(c) && c !== 100)) {
+    container.classList.add('has-custom-filter');
+  } else {
+    container.classList.remove('has-custom-filter');
+  }
+
   // Background
   const wrapper = document.getElementById('appBgWrapper');
   wrapper.style.background = '';
@@ -6155,9 +6172,15 @@ async function preloadNextTrackInQueue(currentIndex) {
   const isNextOffline = (state.downloadedTrackIds && state.downloadedTrackIds.has(nextTrack.id));
   if (isNextOffline) {
     try {
-      const warmAudio = new Audio();
-      warmAudio.preload = 'auto';
-      warmAudio.src = `/api/offline/stream?id=${encodeURIComponent(nextTrack.id)}`;
+      if (!window._warmAudioInstance) {
+        window._warmAudioInstance = new Audio();
+      } else {
+        window._warmAudioInstance.pause();
+        window._warmAudioInstance.removeAttribute('src');
+        window._warmAudioInstance.load();
+      }
+      window._warmAudioInstance.preload = 'auto';
+      window._warmAudioInstance.src = `/api/offline/stream?id=${encodeURIComponent(nextTrack.id)}`;
     } catch (e) {}
   }
 }
@@ -6512,16 +6535,88 @@ function seekToPercentage(pct) {
   }, 100);
 }
 
+let smoothProgressRaf = null;
+let smoothProgressTimer = null;
+let lastTickTime = 0;
+let lastRenderedPct = -1;
+let cachedTimelineEl = null;
+let cachedMobileTimelineEl = null;
+let cachedMiniProgEl = null;
+let cachedPlayerCurrentTimeEl = null;
+let cachedMobileNpCurrentTimeEl = null;
+
 function runSmoothProgressLoop() {
-  if (smoothProgressRaf) cancelAnimationFrame(smoothProgressRaf);
+  if (smoothProgressRaf) {
+    cancelAnimationFrame(smoothProgressRaf);
+    smoothProgressRaf = null;
+  }
+  if (smoothProgressTimer) {
+    clearTimeout(smoothProgressTimer);
+    smoothProgressTimer = null;
+  }
+
+  // Pre-cache DOM elements to eliminate document.getElementById DOM traversal on every frame
+  if (!cachedTimelineEl) cachedTimelineEl = document.getElementById('playerTimeline');
+  if (!cachedMobileTimelineEl) cachedMobileTimelineEl = document.getElementById('mobileNpTimeline');
+  if (!cachedMiniProgEl) cachedMiniProgEl = document.getElementById('miniPlayerProgress');
+  if (!cachedPlayerCurrentTimeEl) cachedPlayerCurrentTimeEl = document.getElementById('playerCurrentTime');
+  if (!cachedMobileNpCurrentTimeEl) cachedMobileNpCurrentTimeEl = document.getElementById('mobileNpCurrentTime');
 
   function tick() {
-    if (state.isPlaying && isAppVisible && !isUserSeeking) {
+    if (!state.isPlaying) {
+      smoothProgressRaf = null;
+      smoothProgressTimer = null;
+      return;
+    }
+
+    // Background Mode: If minimized/backgrounded, suspend 144Hz/60Hz RAF completely
+    if (!isAppVisible) {
+      const activeAudio = (AetherAudioEngine.initialized && AetherAudioEngine.audioElement)
+        ? AetherAudioEngine.audioElement
+        : window.audio;
+
       let currentSec = 0;
       if ((state.currentPlaybackType === 'offline' || state.currentPlaybackType === 'audio' || state.currentPlaybackType === 'preview') && activeAudio && !isNaN(activeAudio.currentTime)) {
         currentSec = activeAudio.currentTime;
       } else if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
-        currentSec = ytPlayer.getCurrentTime();
+        try { currentSec = ytPlayer.getCurrentTime(); } catch (e) {}
+      } else {
+        currentSec = state.playbackPosition || 0;
+      }
+      state.playbackPosition = currentSec;
+
+      if (activeAudio && activeAudio.ended && !state.isExecutingTransition) {
+        const now = Date.now();
+        if (!state.isTransitioning || (now - (state.transitionStartTime || 0) > 2000)) {
+          state.isTransitioning = true;
+          state.transitionStartTime = now;
+          playNext(true);
+        }
+      }
+
+      // Check once per second in background with zero GPU/DOM impact
+      smoothProgressTimer = setTimeout(tick, 1000);
+      return;
+    }
+
+    // Foreground Mode: Throttle visual updates to ~30 FPS (33ms) to prevent 144Hz/240Hz DOM layout churn
+    const now = performance.now();
+    if (now - lastTickTime < 33) {
+      smoothProgressRaf = requestAnimationFrame(tick);
+      return;
+    }
+    lastTickTime = now;
+
+    if (!isUserSeeking) {
+      const activeAudio = (AetherAudioEngine.initialized && AetherAudioEngine.audioElement)
+        ? AetherAudioEngine.audioElement
+        : window.audio;
+
+      let currentSec = 0;
+      if ((state.currentPlaybackType === 'offline' || state.currentPlaybackType === 'audio' || state.currentPlaybackType === 'preview') && activeAudio && !isNaN(activeAudio.currentTime)) {
+        currentSec = activeAudio.currentTime;
+      } else if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+        try { currentSec = ytPlayer.getCurrentTime(); } catch (e) {}
       } else {
         currentSec = state.playbackPosition || 0;
       }
@@ -6531,19 +6626,22 @@ function runSmoothProgressLoop() {
         state.playbackPosition = currentSec;
         const pct = Math.min(100, Math.max(0, (currentSec / state.duration) * 100));
 
-        const timeline = document.getElementById('playerTimeline');
-        if (timeline && !isUserSeeking) {
-          timeline.value = pct;
-          timeline.style.setProperty('--progress', `${pct}%`);
-        }
-        const mobileTimeline = document.getElementById('mobileNpTimeline');
-        if (mobileTimeline && !isUserSeeking) {
-          mobileTimeline.value = pct;
-          mobileTimeline.style.setProperty('--progress', `${pct}%`);
-        }
-        const miniProg = document.getElementById('miniPlayerProgress');
-        if (miniProg) {
-          miniProg.style.width = `${pct}%`;
+        // Only update progress styling if percentage moved noticeably (>= 0.05%)
+        if (Math.abs(pct - lastRenderedPct) >= 0.05) {
+          lastRenderedPct = pct;
+          const pctStr = `${pct}%`;
+
+          if (cachedTimelineEl) {
+            cachedTimelineEl.value = pct;
+            cachedTimelineEl.style.setProperty('--progress', pctStr);
+          }
+          if (cachedMobileTimelineEl) {
+            cachedMobileTimelineEl.value = pct;
+            cachedMobileTimelineEl.style.setProperty('--progress', pctStr);
+          }
+          if (cachedMiniProgEl) {
+            cachedMiniProgEl.style.width = pctStr;
+          }
         }
       }
 
@@ -6552,10 +6650,8 @@ function runSmoothProgressLoop() {
       if (wholeSec !== lastRenderedSec) {
         lastRenderedSec = wholeSec;
         const timeFormatted = formatSeconds(currentSec);
-        const currentTime = document.getElementById('playerCurrentTime');
-        if (currentTime) currentTime.textContent = timeFormatted;
-        const mobileTime = document.getElementById('mobileNpCurrentTime');
-        if (mobileTime) mobileTime.textContent = timeFormatted;
+        if (cachedPlayerCurrentTimeEl) cachedPlayerCurrentTimeEl.textContent = timeFormatted;
+        if (cachedMobileNpCurrentTimeEl) cachedMobileNpCurrentTimeEl.textContent = timeFormatted;
         updateLyricsHighlight(currentSec);
 
         if (typeof updateActiveWaveformsPlayhead === 'function' && state.duration > 0) {
@@ -6563,12 +6659,12 @@ function runSmoothProgressLoop() {
         }
       }
 
-      // Fast-path ended check in 60fps tick
+      // Fast-path ended check
       if (activeAudio && activeAudio.ended && !state.isExecutingTransition) {
-        const now = Date.now();
-        if (!state.isTransitioning || (now - (state.transitionStartTime || 0) > 2000)) {
+        const nowMs = Date.now();
+        if (!state.isTransitioning || (nowMs - (state.transitionStartTime || 0) > 2000)) {
           state.isTransitioning = true;
-          state.transitionStartTime = now;
+          state.transitionStartTime = nowMs;
           playNext(true);
         }
       }
