@@ -2065,6 +2065,21 @@ const AetherDjStudio = {
       await AetherAudioEngine.resumeContext();
     }
 
+    // Save active playback state so auditioning doesn't collide with current audio
+    this._savedPlayback = {
+      wasPlaying: state.isPlaying,
+      playbackType: state.currentPlaybackType,
+      position: state.playbackPosition,
+      activeAudioTime: (activeAudio && !isNaN(activeAudio.currentTime)) ? activeAudio.currentTime : 0
+    };
+
+    // Pause active playback during audition to prevent audio clash
+    if (state.currentPlaybackType === 'youtube' && ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+      try { ytPlayer.pauseVideo(); } catch (e) {}
+    } else if (activeAudio && typeof activeAudio.pause === 'function') {
+      try { activeAudio.pause(); } catch (e) {}
+    }
+
     this.isAuditioning = true;
     this.playheadProgress = 0.0;
     this.auditionStartTime = performance.now();
@@ -2126,6 +2141,25 @@ const AetherDjStudio = {
     try {
       deckA.audio.currentTime = Math.max(0, durA - transSecs);
     } catch (e) {}
+
+    // CRITICAL: Explicitly set gains and crossover BEFORE calling play() to prevent sudden blast
+    if (AetherAudioEngine.ctx) {
+      const ct = AetherAudioEngine.ctx.currentTime;
+      const initialVolA = this._evaluateCurve(this.curves.outVolume, 0);
+      const initialVolB = this._evaluateCurve(this.curves.inVolume, 0);
+
+      deckA.gainNode.gain.cancelScheduledValues(0);
+      deckA.gainNode.gain.setValueAtTime(Math.max(0, Math.min(1, initialVolA)), ct);
+
+      deckB.gainNode.gain.cancelScheduledValues(0);
+      deckB.gainNode.gain.setValueAtTime(Math.max(0, Math.min(1, initialVolB)), ct);
+
+      deckA.eq.low.gain.cancelScheduledValues(0);
+      deckA.eq.low.gain.setValueAtTime(0, ct);
+
+      deckB.eq.low.gain.cancelScheduledValues(0);
+      deckB.eq.low.gain.setValueAtTime(-24, ct);
+    }
 
     // Launch audio playback asynchronously without blocking the visual animation loop
     deckA.audio.play().catch(e => console.warn('[DJ Studio] Deck A play warning:', e));
@@ -2226,28 +2260,45 @@ const AetherDjStudio = {
       const now = AetherAudioEngine.ctx ? AetherAudioEngine.ctx.currentTime : 0;
 
       if (AetherAudioEngine.deckB && AetherAudioEngine.deckB.audio) {
-        if (actId !== 'B') {
-          AetherAudioEngine.deckB.audio.pause();
-        }
+        AetherAudioEngine.deckB.audio.pause();
         if (AetherAudioEngine.ctx) {
           AetherAudioEngine.deckB.gainNode.gain.cancelScheduledValues(now);
-          AetherAudioEngine.deckB.gainNode.gain.setValueAtTime(actId === 'B' ? 1.0 : 0.0, now);
+          AetherAudioEngine.deckB.gainNode.gain.setValueAtTime(0.0, now);
           AetherAudioEngine.deckB.eq.low.gain.setValueAtTime(0, now);
         }
       }
       if (AetherAudioEngine.deckA && AetherAudioEngine.deckA.audio) {
-        if (actId !== 'A') {
-          AetherAudioEngine.deckA.audio.pause();
-        }
+        AetherAudioEngine.deckA.audio.pause();
         if (AetherAudioEngine.ctx) {
           AetherAudioEngine.deckA.gainNode.gain.cancelScheduledValues(now);
-          AetherAudioEngine.deckA.gainNode.gain.setValueAtTime(actId === 'A' ? 1.0 : 0.0, now);
+          AetherAudioEngine.deckA.gainNode.gain.setValueAtTime(1.0, now);
           AetherAudioEngine.deckA.eq.low.gain.setValueAtTime(0, now);
         }
       }
       AetherAudioEngine.resetDeckFx('A');
       AetherAudioEngine.resetDeckFx('B');
     } catch (e) {}
+
+    // Restore previously active song if it was playing before audition started
+    if (this._savedPlayback && this._savedPlayback.wasPlaying) {
+      const saved = this._savedPlayback;
+      this._savedPlayback = null;
+      setTimeout(() => {
+        if (saved.playbackType === 'youtube' && ytPlayer && typeof ytPlayer.playVideo === 'function') {
+          try {
+            ytPlayer.seekTo(saved.position || 0, true);
+            ytPlayer.playVideo();
+          } catch(e) {}
+        } else if (activeAudio) {
+          try {
+            activeAudio.currentTime = saved.activeAudioTime || saved.position || 0;
+            activeAudio.play().catch(() => {});
+          } catch(e) {}
+        }
+      }, 150);
+    } else {
+      this._savedPlayback = null;
+    }
 
     this.drawStage();
   },
@@ -5137,8 +5188,30 @@ function importPlaylistFromData(name, songs, cover = null) {
 }
 
 
+function playPlaylistById(playlistId) {
+  if (playlistId === 'system_downloaded') {
+    if (state.offlineTracks && state.offlineTracks.length > 0) {
+      state.currentPlaylistId = 'system_downloaded';
+      playSongList(state.offlineTracks, 0);
+      showToast('Playing Downloaded Music');
+    } else {
+      showToast('No downloaded songs yet');
+    }
+    return;
+  }
+  const pl = state.playlists.find(p => p.id === playlistId);
+  if (pl && pl.songs && pl.songs.length > 0) {
+    state.currentPlaylistId = playlistId;
+    playSongList(pl.songs, 0);
+    showToast(`Playing "${pl.name}"`);
+  } else {
+    showToast('Playlist is empty');
+  }
+}
+
 function renderPlaylists() {
   const list = document.getElementById('playlistsList');
+  if (!list) return;
   list.innerHTML = '';
   list.className = `playlists-list style-${state.playlistStyle}`;
 
@@ -5165,10 +5238,8 @@ function renderPlaylists() {
       li.appendChild(thumb);
 
       const span = document.createElement('span');
+      span.className = 'playlist-item-name';
       span.textContent = pl.name;
-      span.style.overflow = 'hidden';
-      span.style.textOverflow = 'ellipsis';
-      span.style.whiteSpace = 'nowrap';
       li.appendChild(span);
 
     } else if (state.playlistStyle === 'image-only') {
@@ -5191,11 +5262,24 @@ function renderPlaylists() {
 
     } else {
       const span = document.createElement('span');
+      span.className = 'playlist-item-name';
       span.textContent = pl.name;
-      span.style.overflow = 'hidden';
-      span.style.textOverflow = 'ellipsis';
-      span.style.whiteSpace = 'nowrap';
       li.appendChild(span);
+    }
+
+    // Quick hover play button on the right edge of each playlist
+    if (state.playlistStyle !== 'image-only') {
+      const hoverPlayBtn = document.createElement('button');
+      hoverPlayBtn.className = 'playlist-play-hover-btn';
+      hoverPlayBtn.type = 'button';
+      hoverPlayBtn.title = `Play ${pl.name}`;
+      hoverPlayBtn.setAttribute('aria-label', `Play ${pl.name}`);
+      hoverPlayBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>`;
+      hoverPlayBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        playPlaylistById(pl.id);
+      });
+      li.appendChild(hoverPlayBtn);
     }
 
     li.addEventListener('click', () => {
@@ -5783,7 +5867,7 @@ function playSong(song, index) {
   state.transitionStartTime = Date.now();
   setTimeout(() => {
     state.isTransitioning = false;
-  }, 1200);
+  }, 800);
 
   // Persist session state across crashes / restarts
   savePlaybackSession();
@@ -5973,7 +6057,7 @@ async function playYouTubeTrack(videoId, startTime = 0) {
       const handleTrackEnd = () => {
         if (!state.isExecutingTransition) {
           console.log("[AudioEngine] Track completion detected on audio element, advancing queue...");
-          playNext();
+          playNext(true);
         }
       };
       audio.onended = handleTrackEnd;
@@ -6036,7 +6120,7 @@ function playPreviewTrack(previewUrl) {
   activeAudio = audio;
   audio.src = previewUrl;
   audio.onended = () => {
-    playNext();
+    playNext(true);
   };
   audio.play().then(() => {
     state.isPlaying = true;
@@ -6236,7 +6320,7 @@ window.onNativeAudioProgress = function(currentSec, totalSec) {
 };
 
 window.onNativeAudioEnded = function() {
-  playNext();
+  playNext(true);
 };
 
 window.onNativeAudioStateChange = function(isPlaying) {
@@ -6244,9 +6328,9 @@ window.onNativeAudioStateChange = function(isPlaying) {
   updatePlayButtonUI(isPlaying);
 };
 
-function playNext() {
+function playNext(forceAdvance = false) {
   const now = Date.now();
-  if (state.isTransitioning && (now - (state.transitionStartTime || 0) < 1800)) {
+  if (!forceAdvance && state.isTransitioning && (now - (state.transitionStartTime || 0) < 1800)) {
     console.log("Ignoring playNext() during rapid transition...");
     return;
   }
@@ -6485,7 +6569,7 @@ function runSmoothProgressLoop() {
         if (!state.isTransitioning || (now - (state.transitionStartTime || 0) > 2000)) {
           state.isTransitioning = true;
           state.transitionStartTime = now;
-          playNext();
+          playNext(true);
         }
       }
     }
@@ -6785,7 +6869,7 @@ function startProgressTimer(platform) {
         console.log("Track completion detected by background ticker, advancing queue...");
         state.isTransitioning = true;
         state.transitionStartTime = now;
-        playNext();
+        playNext(true);
         return;
       }
     }
@@ -6817,7 +6901,7 @@ function onPlayerStateChange(event) {
   }
   if (event.data === YT.PlayerState.ENDED) {
     state.isTransitioning = false;
-    playNext();
+    playNext(true);
   }
 }
 
@@ -8632,6 +8716,14 @@ function setupOfflineEventListeners() {
     });
   }
 
+  const btnPlayDownloadedHover = document.getElementById('btnPlayDownloadedHover');
+  if (btnPlayDownloadedHover) {
+    btnPlayDownloadedHover.addEventListener('click', (e) => {
+      e.stopPropagation();
+      playPlaylistById('system_downloaded');
+    });
+  }
+
   // Download Playlist button
   const btnDownloadPlaylist = document.getElementById('btnDownloadPlaylist');
   if (btnDownloadPlaylist) {
@@ -8921,7 +9013,7 @@ function playOfflineTrack(song) {
   };
 
   activeAudio.onended = () => {
-    playNext();
+    playNext(true);
   };
 
   activeAudio.play().then(() => {
@@ -8945,7 +9037,7 @@ function playOfflineTrack(song) {
   });
 
   activeAudio.onended = () => {
-    playNext();
+    playNext(true);
   };
 }
 
@@ -9364,6 +9456,28 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     e.stopPropagation();
     togglePlayPause();
+    return;
+  }
+
+  // 3. Ctrl+F / Cmd+F Playlist & Search Focus Shortcut
+  if ((e.ctrlKey || e.metaKey) && (code === 'KeyF' || key === 'f' || key === 'F')) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const playlistTab = document.getElementById('tab-playlist-detail');
+    const isPlaylistActive = playlistTab && (playlistTab.classList.contains('active') || playlistTab.style.display !== 'none');
+    const playlistSearch = document.getElementById('playlistSearchInput');
+    const globalSearch = document.getElementById('searchInput');
+
+    if (isPlaylistActive && playlistSearch) {
+      playlistSearch.focus();
+      playlistSearch.select();
+      playlistSearch.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } else if (globalSearch) {
+      globalSearch.focus();
+      globalSearch.select();
+    }
+    return;
   }
 }, true); // Capture phase to intercept before focused buttons react
 
