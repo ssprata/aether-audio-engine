@@ -23,10 +23,8 @@ if sys.platform == 'win32':
         pass
     existing_args = os.environ.get('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', '')
     flags_to_add = [
-        '--disable-features=AudioServiceOutOfProcess,TranslateUI,AutofillServerCommunication,OptimizationHints',
-        '--enable-features=HardwareMediaKeyHandling,MediaSessionService,ResourceSaver',
-        '--js-flags="--max-old-space-size=256 --optimize-for-size"',
-        '--renderer-process-limit=2',
+        '--disable-features=AudioServiceOutOfProcess',
+        '--enable-features=HardwareMediaKeyHandling,MediaSessionService',
         '--disk-cache-size=33554432',
         '--media-cache-size=33554432'
     ]

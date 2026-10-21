@@ -6535,7 +6535,6 @@ function seekToPercentage(pct) {
   }, 100);
 }
 
-let smoothProgressRaf = null;
 let smoothProgressTimer = null;
 let lastTickTime = 0;
 let lastRenderedPct = -1;
