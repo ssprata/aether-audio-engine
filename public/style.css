@@ -2055,16 +2055,18 @@ input[type="range"]::-webkit-slider-thumb:hover {
   pointer-events: none;
   z-index: 3;
   opacity: 0;
+  display: none;
   width: 0%;
   transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), width 0.3s ease;
   background: linear-gradient(90deg, rgba(var(--accent-rgb, 124, 58, 237), 0.2) 0%, rgba(var(--accent-rgb, 124, 58, 237), 0.75) 100%);
   border-left: 2px solid var(--accent-color);
-  box-shadow: 0 0 10px var(--accent-color), inset 0 0 8px var(--accent-color);
-  animation: djZoneGlowPulse 2.2s ease-in-out infinite alternate;
 }
 
 .dj-transition-zone.active {
+  display: block;
   opacity: 1;
+  box-shadow: 0 0 10px var(--accent-color), inset 0 0 8px var(--accent-color);
+  animation: djZoneGlowPulse 2.2s ease-in-out infinite alternate;
 }
 
 @keyframes djZoneGlowPulse {
@@ -2285,7 +2287,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   z-index: 2500 !important; /* Higher than full screen sheets (1000) and lyrics (1050) */
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: center;
   opacity: 0;
@@ -2296,6 +2298,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 .modal-overlay.active {
+  display: flex;
   opacity: 1;
   pointer-events: auto;
 }

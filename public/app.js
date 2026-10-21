@@ -6233,6 +6233,10 @@ function stopActivePlayback() {
     clearInterval(progressInterval);
     progressInterval = null;
   }
+  if (smoothProgressTimer) {
+    clearInterval(smoothProgressTimer);
+    smoothProgressTimer = null;
+  }
 
   // Stop YouTube iframe
   if (ytPlayer && typeof ytPlayer.stopVideo === 'function') {
@@ -6545,16 +6549,16 @@ let cachedPlayerCurrentTimeEl = null;
 let cachedMobileNpCurrentTimeEl = null;
 
 function runSmoothProgressLoop() {
+  if (smoothProgressTimer) {
+    clearInterval(smoothProgressTimer);
+    smoothProgressTimer = null;
+  }
   if (smoothProgressRaf) {
     cancelAnimationFrame(smoothProgressRaf);
     smoothProgressRaf = null;
   }
-  if (smoothProgressTimer) {
-    clearTimeout(smoothProgressTimer);
-    smoothProgressTimer = null;
-  }
 
-  // Pre-cache DOM elements to eliminate document.getElementById DOM traversal on every frame
+  // Pre-cache DOM elements to eliminate document.getElementById DOM traversal on every tick
   if (!cachedTimelineEl) cachedTimelineEl = document.getElementById('playerTimeline');
   if (!cachedMobileTimelineEl) cachedMobileTimelineEl = document.getElementById('mobileNpTimeline');
   if (!cachedMiniProgEl) cachedMiniProgEl = document.getElementById('miniPlayerProgress');
@@ -6563,48 +6567,12 @@ function runSmoothProgressLoop() {
 
   function tick() {
     if (!state.isPlaying) {
-      smoothProgressRaf = null;
-      smoothProgressTimer = null;
-      return;
-    }
-
-    // Background Mode: If minimized/backgrounded, suspend 144Hz/60Hz RAF completely
-    if (!isAppVisible) {
-      const activeAudio = (AetherAudioEngine.initialized && AetherAudioEngine.audioElement)
-        ? AetherAudioEngine.audioElement
-        : window.audio;
-
-      let currentSec = 0;
-      if ((state.currentPlaybackType === 'offline' || state.currentPlaybackType === 'audio' || state.currentPlaybackType === 'preview') && activeAudio && !isNaN(activeAudio.currentTime)) {
-        currentSec = activeAudio.currentTime;
-      } else if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
-        try { currentSec = ytPlayer.getCurrentTime(); } catch (e) {}
-      } else {
-        currentSec = state.playbackPosition || 0;
+      if (smoothProgressTimer) {
+        clearInterval(smoothProgressTimer);
+        smoothProgressTimer = null;
       }
-      state.playbackPosition = currentSec;
-
-      if (activeAudio && activeAudio.ended && !state.isExecutingTransition) {
-        const now = Date.now();
-        if (!state.isTransitioning || (now - (state.transitionStartTime || 0) > 2000)) {
-          state.isTransitioning = true;
-          state.transitionStartTime = now;
-          playNext(true);
-        }
-      }
-
-      // Check once per second in background with zero GPU/DOM impact
-      smoothProgressTimer = setTimeout(tick, 1000);
       return;
     }
-
-    // Foreground Mode: Throttle visual updates to ~30 FPS (33ms) to prevent 144Hz/240Hz DOM layout churn
-    const now = performance.now();
-    if (now - lastTickTime < 33) {
-      smoothProgressRaf = requestAnimationFrame(tick);
-      return;
-    }
-    lastTickTime = now;
 
     if (!isUserSeeking) {
       const activeAudio = (AetherAudioEngine.initialized && AetherAudioEngine.audioElement)
@@ -6625,21 +6593,23 @@ function runSmoothProgressLoop() {
         state.playbackPosition = currentSec;
         const pct = Math.min(100, Math.max(0, (currentSec / state.duration) * 100));
 
-        // Only update progress styling if percentage moved noticeably (>= 0.05%)
-        if (Math.abs(pct - lastRenderedPct) >= 0.05) {
-          lastRenderedPct = pct;
-          const pctStr = `${pct}%`;
+        // When window is visible, update timeline progress
+        if (isAppVisible) {
+          if (Math.abs(pct - lastRenderedPct) >= 0.05) {
+            lastRenderedPct = pct;
+            const pctStr = `${pct}%`;
 
-          if (cachedTimelineEl) {
-            cachedTimelineEl.value = pct;
-            cachedTimelineEl.style.setProperty('--progress', pctStr);
-          }
-          if (cachedMobileTimelineEl) {
-            cachedMobileTimelineEl.value = pct;
-            cachedMobileTimelineEl.style.setProperty('--progress', pctStr);
-          }
-          if (cachedMiniProgEl) {
-            cachedMiniProgEl.style.width = pctStr;
+            if (cachedTimelineEl) {
+              cachedTimelineEl.value = pct;
+              cachedTimelineEl.style.setProperty('--progress', pctStr);
+            }
+            if (cachedMobileTimelineEl) {
+              cachedMobileTimelineEl.value = pct;
+              cachedMobileTimelineEl.style.setProperty('--progress', pctStr);
+            }
+            if (cachedMiniProgEl) {
+              cachedMiniProgEl.style.width = pctStr;
+            }
           }
         }
       }
@@ -6648,13 +6618,15 @@ function runSmoothProgressLoop() {
       const wholeSec = Math.floor(currentSec);
       if (wholeSec !== lastRenderedSec) {
         lastRenderedSec = wholeSec;
-        const timeFormatted = formatSeconds(currentSec);
-        if (cachedPlayerCurrentTimeEl) cachedPlayerCurrentTimeEl.textContent = timeFormatted;
-        if (cachedMobileNpCurrentTimeEl) cachedMobileNpCurrentTimeEl.textContent = timeFormatted;
-        updateLyricsHighlight(currentSec);
+        if (isAppVisible) {
+          const timeFormatted = formatSeconds(currentSec);
+          if (cachedPlayerCurrentTimeEl) cachedPlayerCurrentTimeEl.textContent = timeFormatted;
+          if (cachedMobileNpCurrentTimeEl) cachedMobileNpCurrentTimeEl.textContent = timeFormatted;
+          updateLyricsHighlight(currentSec);
 
-        if (typeof updateActiveWaveformsPlayhead === 'function' && state.duration > 0) {
-          updateActiveWaveformsPlayhead(currentSec / state.duration);
+          if (typeof updateActiveWaveformsPlayhead === 'function' && state.duration > 0) {
+            updateActiveWaveformsPlayhead(currentSec / state.duration);
+          }
         }
       }
 
@@ -6668,17 +6640,19 @@ function runSmoothProgressLoop() {
         }
       }
     }
-
-    if (state.isPlaying) {
-      smoothProgressRaf = requestAnimationFrame(tick);
-    } else {
-      smoothProgressRaf = null;
-    }
   }
 
-  smoothProgressRaf = requestAnimationFrame(tick);
+  // Execute immediate tick
+  tick();
+
+  // Run steady, ultra-lightweight 250ms (4 FPS) interval when playing
+  if (state.isPlaying) {
+    smoothProgressTimer = setInterval(tick, 250);
+  }
 }
 window.runSmoothProgressLoop = runSmoothProgressLoop;
+
+let lastMediaSessionSyncSec = -100;
 
 function updateTimelineUI(currentSec) {
   if (isUserSeeking) return; // Never fight or jerk slider thumb while user is scrubbing!
@@ -6688,27 +6662,25 @@ function updateTimelineUI(currentSec) {
   const boundedPct = Math.min(100, Math.max(0, pct));
   const timeFormatted = formatSeconds(currentSec);
 
-  const timeline = document.getElementById('playerTimeline');
-  if (timeline) {
-    timeline.value = boundedPct;
-    timeline.style.setProperty('--progress', `${boundedPct}%`);
+  if (!cachedTimelineEl) cachedTimelineEl = document.getElementById('playerTimeline');
+  if (!cachedMobileTimelineEl) cachedMobileTimelineEl = document.getElementById('mobileNpTimeline');
+  if (!cachedMiniProgEl) cachedMiniProgEl = document.getElementById('miniPlayerProgress');
+  if (!cachedPlayerCurrentTimeEl) cachedPlayerCurrentTimeEl = document.getElementById('playerCurrentTime');
+  if (!cachedMobileNpCurrentTimeEl) cachedMobileNpCurrentTimeEl = document.getElementById('mobileNpCurrentTime');
+
+  if (cachedTimelineEl) {
+    cachedTimelineEl.value = boundedPct;
+    cachedTimelineEl.style.setProperty('--progress', `${boundedPct}%`);
   }
-  const currentTime = document.getElementById('playerCurrentTime');
-  if (currentTime) currentTime.textContent = timeFormatted;
+  if (cachedPlayerCurrentTimeEl) cachedPlayerCurrentTimeEl.textContent = timeFormatted;
 
   // Update Mobile Scrubber & Mini progress bar
-  const mobileTimeline = document.getElementById('mobileNpTimeline');
-  if (mobileTimeline) {
-    mobileTimeline.value = boundedPct;
-    mobileTimeline.style.setProperty('--progress', `${boundedPct}%`);
+  if (cachedMobileTimelineEl) {
+    cachedMobileTimelineEl.value = boundedPct;
+    cachedMobileTimelineEl.style.setProperty('--progress', `${boundedPct}%`);
   }
-  const mobileTime = document.getElementById('mobileNpCurrentTime');
-  if (mobileTime) mobileTime.textContent = timeFormatted;
-  const miniProg = document.getElementById('miniPlayerProgress');
-  if (miniProg) miniProg.style.width = `${boundedPct}%`;
-
-  // Update DJ 15s zone UI
-  updateDjZoneUI();
+  if (cachedMobileNpCurrentTimeEl) cachedMobileNpCurrentTimeEl.textContent = timeFormatted;
+  if (cachedMiniProgEl) cachedMiniProgEl.style.width = `${boundedPct}%`;
 
   // Update synced lyrics line
   updateLyricsHighlight(currentSec);
@@ -6718,15 +6690,18 @@ function updateTimelineUI(currentSec) {
     updateActiveWaveformsPlayhead(boundedPct / 100);
   }
 
-  // Update OS System Media Transport Controls & Taskbar position
+  // Update OS System Media Transport Controls & Taskbar position (throttled to avoid continuous IPC)
   if ('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
     try {
       if (state.duration > 0 && typeof currentSec === 'number' && !isNaN(currentSec)) {
-        navigator.mediaSession.setPositionState({
-          duration: Math.max(1, state.duration),
-          playbackRate: 1,
-          position: Math.min(state.duration, Math.max(0, currentSec))
-        });
+        if (Math.abs(currentSec - lastMediaSessionSyncSec) >= 4 || isUserSeeking) {
+          lastMediaSessionSyncSec = currentSec;
+          navigator.mediaSession.setPositionState({
+            duration: Math.max(1, state.duration),
+            playbackRate: 1,
+            position: Math.min(state.duration, Math.max(0, currentSec))
+          });
+        }
       }
     } catch (e) {}
   }
@@ -6972,7 +6947,9 @@ function startProgressTimer(platform) {
     // BATTERY SAVER: If screen is off or app is minimized, do NOT touch DOM / layout
     if (!isAppVisible) return;
 
-    updateTimelineUI(currentSec);
+    if (!smoothProgressTimer) {
+      updateTimelineUI(currentSec);
+    }
   }, 500);
 }
 
@@ -7034,6 +7011,11 @@ function updatePlayButtonUI(isPlaying) {
   window.__aether_is_playing = !!isPlaying;
   if (isPlaying && typeof runSmoothProgressLoop === 'function') {
     runSmoothProgressLoop();
+  } else if (!isPlaying) {
+    if (smoothProgressTimer) {
+      clearInterval(smoothProgressTimer);
+      smoothProgressTimer = null;
+    }
   }
   if ('mediaSession' in navigator) {
     try {
