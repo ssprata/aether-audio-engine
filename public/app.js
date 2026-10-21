@@ -3426,8 +3426,80 @@ function setupProfileSubtabs() {
   switchProfileSubtab(savedSubtab);
 }
 
+// --- SIDEBAR RESIZERS DRAG SYSTEM ---
+function setupSidebarResizers() {
+  const leftResizer = document.getElementById('leftSidebarResizer');
+  const rightResizer = document.getElementById('rightSidebarResizer');
+
+  // Restore saved widths from localStorage
+  const savedLeftWidth = localStorage.getItem('aether_sidebar_width');
+  if (savedLeftWidth) {
+    document.documentElement.style.setProperty('--sidebar-width', `${parseInt(savedLeftWidth)}px`);
+  }
+  const savedRightWidth = localStorage.getItem('aether_right_sidebar_width');
+  if (savedRightWidth) {
+    document.documentElement.style.setProperty('--right-sidebar-width', `${parseInt(savedRightWidth)}px`);
+  }
+
+  // Left Resizer Dragging
+  if (leftResizer) {
+    leftResizer.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      document.body.classList.add('is-resizing');
+      leftResizer.classList.add('dragging');
+
+      const onMouseMove = (moveEvent) => {
+        const newWidth = Math.min(460, Math.max(160, moveEvent.clientX));
+        document.documentElement.style.setProperty('--sidebar-width', `${newWidth}px`);
+      };
+
+      const onMouseUp = (upEvent) => {
+        document.body.classList.remove('is-resizing');
+        leftResizer.classList.remove('dragging');
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', onMouseUp);
+
+        const finalWidth = Math.min(460, Math.max(160, upEvent.clientX));
+        localStorage.setItem('aether_sidebar_width', finalWidth.toString());
+      };
+
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+    });
+  }
+
+  // Right Resizer Dragging
+  if (rightResizer) {
+    rightResizer.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      document.body.classList.add('is-resizing');
+      rightResizer.classList.add('dragging');
+
+      const onMouseMove = (moveEvent) => {
+        const newWidth = Math.min(520, Math.max(220, window.innerWidth - moveEvent.clientX));
+        document.documentElement.style.setProperty('--right-sidebar-width', `${newWidth}px`);
+      };
+
+      const onMouseUp = (upEvent) => {
+        document.body.classList.remove('is-resizing');
+        rightResizer.classList.remove('dragging');
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', onMouseUp);
+
+        const finalWidth = Math.min(520, Math.max(220, window.innerWidth - upEvent.clientX));
+        localStorage.setItem('aether_right_sidebar_width', finalWidth.toString());
+      };
+
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+    });
+  }
+}
+
 // --- EVENT LISTENERS SYSTEM ---
 function setupEventListeners() {
+  setupSidebarResizers();
+
   // Navigation Tabs Switching
   document.querySelectorAll('[data-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -5237,55 +5309,25 @@ function renderPlaylists() {
     li.dataset.playlistId = pl.id;
     li.classList.toggle('active', state.currentPlaylistId === pl.id);
 
-    if (state.playlistStyle === 'image-name') {
-      const thumb = document.createElement('div');
-      thumb.className = 'playlist-thumb';
-      if (pl.cover) {
-        const img = document.createElement('img');
-        img.src = pl.cover;
-        img.alt = 'Cover';
-        img.referrerPolicy = 'no-referrer';
-        img.onerror = () => {
-          thumb.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
-        };
-        thumb.appendChild(img);
-      } else {
+    const thumb = document.createElement('div');
+    thumb.className = 'playlist-thumb';
+    if (pl.cover) {
+      const img = document.createElement('img');
+      img.src = pl.cover;
+      img.alt = 'Cover';
+      img.referrerPolicy = 'no-referrer';
+      img.onerror = () => {
         thumb.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
-      }
-      li.appendChild(thumb);
-
-      const span = document.createElement('span');
-      span.className = 'playlist-item-name';
-      span.textContent = pl.name;
-      li.appendChild(span);
-
-    } else if (state.playlistStyle === 'image-only') {
-      li.title = pl.name;
-      const thumb = document.createElement('div');
-      thumb.className = 'playlist-thumb';
-      if (pl.cover) {
-        const img = document.createElement('img');
-        img.src = pl.cover;
-        img.alt = 'Cover';
-        img.referrerPolicy = 'no-referrer';
-        img.onerror = () => {
-          thumb.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
-        };
-        thumb.appendChild(img);
-      } else {
-        thumb.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
-      }
-      li.appendChild(thumb);
-
+        attachPlayOverlay();
+      };
+      thumb.appendChild(img);
     } else {
-      const span = document.createElement('span');
-      span.className = 'playlist-item-name';
-      span.textContent = pl.name;
-      li.appendChild(span);
+      thumb.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>`;
     }
 
-    // Quick hover play button on the right edge of each playlist
-    if (state.playlistStyle !== 'image-only') {
+    // Attach hover play button directly overlaying the playlist artwork
+    const attachPlayOverlay = () => {
+      if (thumb.querySelector('.playlist-play-hover-btn')) return;
       const hoverPlayBtn = document.createElement('button');
       hoverPlayBtn.className = 'playlist-play-hover-btn';
       hoverPlayBtn.type = 'button';
@@ -5296,7 +5338,24 @@ function renderPlaylists() {
         e.stopPropagation();
         playPlaylistById(pl.id);
       });
-      li.appendChild(hoverPlayBtn);
+      thumb.appendChild(hoverPlayBtn);
+    };
+    attachPlayOverlay();
+
+    if (state.playlistStyle === 'image-name') {
+      li.appendChild(thumb);
+      const span = document.createElement('span');
+      span.className = 'playlist-item-name';
+      span.textContent = pl.name;
+      li.appendChild(span);
+    } else if (state.playlistStyle === 'image-only') {
+      li.title = pl.name;
+      li.appendChild(thumb);
+    } else {
+      const span = document.createElement('span');
+      span.className = 'playlist-item-name';
+      span.textContent = pl.name;
+      li.appendChild(span);
     }
 
     li.addEventListener('click', () => {
@@ -6081,11 +6140,25 @@ async function playYouTubeTrack(videoId, startTime = 0) {
       audio.removeEventListener('ended', handleTrackEnd);
       audio.addEventListener('ended', handleTrackEnd);
 
-      audio.onerror = (e) => {
-        // Only fall back if this audio element is currently active and legitimately failed
+      audio.onerror = async (e) => {
+        // Only retry if this audio element is currently active and legitimately failed
         if (!audio.src || audio !== activeAudio || !state.isPlaying) return;
-        console.warn('[AudioEngine] Direct stream failed, falling back to YouTube IFrame:', e);
-        playYouTubeIFrameFallback(videoId, startTime);
+        console.warn('[AudioEngine] Direct stream proxy failed, attempting fresh direct stream URL...');
+        try {
+          const res = await fetch(`/api/stream-url?id=${encodeURIComponent(videoId)}&refresh=1`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.url) {
+              audio.src = data.url;
+              await audio.play();
+              return;
+            }
+          }
+        } catch (err) {}
+        console.warn('[AudioEngine] Pure audio playback failed');
+        showToast('Playback error: Unable to stream audio');
+        state.isPlaying = false;
+        updatePlayButtonUI(false);
       };
 
       try {
@@ -6181,6 +6254,14 @@ async function preloadNextTrackInQueue(currentIndex) {
       }
       window._warmAudioInstance.preload = 'auto';
       window._warmAudioInstance.src = `/api/offline/stream?id=${encodeURIComponent(nextTrack.id)}`;
+    } catch (e) {}
+  }
+
+  // 3. Pre-resolve YouTube audio stream URL in backend cache so next track starts with zero delay
+  const ytId = nextTrack.platform === 'youtube' ? nextTrack.id : nextTrack._preResolvedYtId;
+  if (ytId) {
+    try {
+      fetch(`/api/stream-url?id=${encodeURIComponent(ytId)}`).catch(() => {});
     } catch (e) {}
   }
 }

@@ -12,6 +12,8 @@
   --glass-blur: 16px;
   --brightness: 100%;
   --contrast: 100%;
+  --sidebar-width: 240px;
+  --right-sidebar-width: 310px;
   --app-bg: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #311042 100%);
 }
 
@@ -118,7 +120,7 @@ img {
     "header header header"
     "sidebar main right-sidebar"
     "player player player";
-  grid-template-columns: 240px 1fr 310px;
+  grid-template-columns: var(--sidebar-width, 240px) 1fr var(--right-sidebar-width, 310px);
   grid-template-rows: 70px 1fr 95px;
 }
 
@@ -127,7 +129,7 @@ img {
     "header header header"
     "main sidebar right-sidebar"
     "player player player";
-  grid-template-columns: 1fr 240px 310px;
+  grid-template-columns: 1fr var(--sidebar-width, 240px) var(--right-sidebar-width, 310px);
   grid-template-rows: 70px 1fr 95px;
 }
 
@@ -136,7 +138,7 @@ img {
     "header header header"
     "player player player"
     "sidebar main right-sidebar";
-  grid-template-columns: 240px 1fr 310px;
+  grid-template-columns: var(--sidebar-width, 240px) 1fr var(--right-sidebar-width, 310px);
   grid-template-rows: 70px 95px 1fr;
 }
 
@@ -145,8 +147,50 @@ img {
     "header header header"
     "player player player"
     "main sidebar right-sidebar";
-  grid-template-columns: 1fr 240px 310px;
+  grid-template-columns: 1fr var(--sidebar-width, 240px) var(--right-sidebar-width, 310px);
   grid-template-rows: 70px 95px 1fr;
+}
+
+/* Sidebar and Right Panel Resizer Dividers */
+.sidebar-resizer-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 100;
+  background: transparent;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.right-sidebar-resizer-handle {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 100;
+  background: transparent;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sidebar-resizer-handle:hover,
+.sidebar-resizer-handle.dragging,
+.right-sidebar-resizer-handle:hover,
+.right-sidebar-resizer-handle.dragging {
+  background: var(--accent-color, #7c3aed);
+  box-shadow: 0 0 10px var(--accent-color, #7c3aed);
+}
+
+body.is-resizing {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+body.is-resizing iframe,
+body.is-resizing * {
+  pointer-events: none !important;
 }
 
 .app-right-sidebar {
@@ -452,18 +496,23 @@ img {
   min-width: 0;
 }
 
-/* Quick Hover Play Button for Playlist Items in Sidebar */
-.playlist-play-hover-btn {
-  margin-left: auto;
-  opacity: 0;
-  transform: scale(0.75);
-  pointer-events: none;
-  transition: opacity 0.18s cubic-bezier(0.2, 0.9, 0.4, 1.1), transform 0.18s cubic-bezier(0.2, 0.9, 0.4, 1.1);
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  border-radius: 50%;
-  background: var(--accent-color);
+/* Quick Hover Play Button Overlay over Playlist Thumbnail in Sidebar */
+.playlist-thumb,
+.system-playlist-thumb {
+  position: relative !important;
+  overflow: hidden;
+}
+
+.playlist-thumb .playlist-play-hover-btn,
+.system-playlist-thumb .playlist-play-hover-btn {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(2px);
   color: #fff;
   border: none;
   cursor: pointer;
@@ -471,30 +520,42 @@ img {
   align-items: center;
   justify-content: center;
   padding: 0;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), 0 0 10px rgba(var(--accent-rgb), 0.45);
-  flex-shrink: 0;
-  z-index: 2;
+  margin: 0;
+  opacity: 0;
+  transform: scale(0.9);
+  pointer-events: none;
+  transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), background 0.15s ease;
+  z-index: 5;
+  box-shadow: none;
 }
 
-.playlists-list li:hover .playlist-play-hover-btn,
-.pinned-system-playlist:hover .playlist-play-hover-btn {
+.playlists-list li:hover .playlist-thumb .playlist-play-hover-btn,
+.pinned-system-playlist:hover .system-playlist-thumb .playlist-play-hover-btn {
   opacity: 1;
   transform: scale(1);
   pointer-events: auto;
 }
 
-.playlist-play-hover-btn:hover {
-  transform: scale(1.15) !important;
-  filter: brightness(1.18);
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5), 0 0 14px rgba(var(--accent-rgb), 0.7);
+.playlist-thumb .playlist-play-hover-btn:hover,
+.system-playlist-thumb .playlist-play-hover-btn:hover {
+  background: rgba(0, 0, 0, 0.82);
+  color: var(--accent-color);
+  transform: scale(1.05);
 }
 
-.playlist-play-hover-btn svg {
-  width: 12px;
-  height: 12px;
-  margin: 0;
+.playlist-thumb .playlist-play-hover-btn svg,
+.system-playlist-thumb .playlist-play-hover-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
   margin-left: 1px;
-  display: block;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6));
+}
+
+/* Hide any legacy button placed beside playlist row text */
+.playlists-list li > .playlist-play-hover-btn,
+.pinned-system-playlist > .playlist-play-hover-btn {
+  display: none !important;
 }
 
 /* Playlist Layout Modifiers & Thumbnails */
@@ -582,22 +643,34 @@ img {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Custom Scrollbars */
-.sidebar-scroll::-webkit-scrollbar,
-.app-main-content::-webkit-scrollbar,
-.results-container::-webkit-scrollbar {
+/* Universal Sleek & Clean Custom Scrollbars (No arrow buttons, low opacity) */
+*::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
-.sidebar-scroll::-webkit-scrollbar-thumb,
-.app-main-content::-webkit-scrollbar-thumb,
-.results-container::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
+*::-webkit-scrollbar-track {
+  background: transparent !important;
 }
-.sidebar-scroll::-webkit-scrollbar-thumb:hover,
-.app-main-content::-webkit-scrollbar-thumb:hover,
-.results-container::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-radius: 10px !important;
+  border: none !important;
+  transition: background 0.2s ease;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28) !important;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent !important;
+}
+*::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
 }
 
 /* Search Tab Custom Stylings */
