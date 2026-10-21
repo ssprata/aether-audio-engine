@@ -22,12 +22,27 @@ window.setAppVisibilityState = function(visible) {
     document.body.classList.add('app-backgrounded');
   } else {
     document.body.classList.remove('app-backgrounded');
-    if (state.isPlaying) {
+    if (typeof state !== 'undefined' && state && state.isPlaying) {
       if (typeof updateTimelineUI === 'function') updateTimelineUI();
       if (typeof runSmoothProgressLoop === 'function') runSmoothProgressLoop();
     }
   }
 };
+
+// Automatic self-healing: ensure UI is restored on window focus, visibility, or user interaction
+window.addEventListener('focus', () => window.setAppVisibilityState(true));
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    window.setAppVisibilityState(true);
+  }
+});
+['pointerdown', 'mousedown', 'keydown', 'touchstart'].forEach(evt => {
+  window.addEventListener(evt, () => {
+    if (!isAppVisible || document.body.classList.contains('app-backgrounded')) {
+      window.setAppVisibilityState(true);
+    }
+  }, { passive: true, capture: true });
+});
 
 // AetherPlayer Frontend Application State
 let state = {
@@ -4882,6 +4897,11 @@ function handleGoBack() {
 }
 
 function switchTab(tabName, options = {}) {
+  // Ensure UI visibility is restored whenever switching views
+  if (!isAppVisible || document.body.classList.contains('app-backgrounded')) {
+    window.setAppVisibilityState(true);
+  }
+
   const previousTab = state.activeTab;
   if (!options.isBack && previousTab && previousTab !== tabName) {
     navHistory.push({
@@ -4905,7 +4925,10 @@ function switchTab(tabName, options = {}) {
   });
 
   if (['home', 'search', 'customizer', 'profile', 'playlists', 'album-detail', 'artist-profile'].includes(tabName)) {
-    document.getElementById(`tab-${tabName}`).classList.add('active');
+    const targetTab = document.getElementById(`tab-${tabName}`);
+    if (targetTab) {
+      targetTab.classList.add('active');
+    }
     if (tabName === 'home') {
       loadHomeDashboard();
     }
@@ -4920,12 +4943,20 @@ function switchTab(tabName, options = {}) {
     }
   } else {
     // Rendering details view for a custom playlist
-    document.getElementById('tab-playlist-detail').classList.add('active');
+    const plDetailTab = document.getElementById('tab-playlist-detail');
+    if (plDetailTab) {
+      plDetailTab.classList.add('active');
+    }
   }
 }
 
 // --- MUSIC SEARCH FUNCTIONALITY ---
 async function performSearch() {
+  // Ensure UI is active and not stuck in backgrounded state
+  if (!isAppVisible || document.body.classList.contains('app-backgrounded')) {
+    window.setAppVisibilityState(true);
+  }
+
   const query = document.getElementById('searchInput').value.trim();
   if (!query) {
     showToast('Enter a search term');
@@ -5003,15 +5034,19 @@ async function performSearch() {
         const results = await response.json();
         loader.style.display = 'none';
 
-        if (results.tracks.length === 0 && results.albums.length === 0 && results.artists.length === 0) {
+        const tracks = (results && Array.isArray(results.tracks)) ? results.tracks : [];
+        const albums = (results && Array.isArray(results.albums)) ? results.albums : [];
+        const artists = (results && Array.isArray(results.artists)) ? results.artists : [];
+
+        if (tracks.length === 0 && albums.length === 0 && artists.length === 0) {
           emptyState.style.display = 'flex';
           emptyState.querySelector('h3').textContent = 'No results found';
           emptyState.querySelector('p').textContent = 'Try adjusting your platform filters or checking your query details.';
         } else {
           // Render all sub-sections
-          renderSearchResults(results.tracks);
-          renderAlbumsSearchResults(results.albums);
-          renderArtistsSearchResults(results.artists);
+          renderSearchResults(tracks);
+          renderAlbumsSearchResults(albums);
+          renderArtistsSearchResults(artists);
           
           resultsTabs.style.display = 'flex';
           const activeTab = state.activeSearchTab || 'tracks';
@@ -5134,6 +5169,17 @@ function renderSearchResults(songs) {
   const grid = document.getElementById('searchResultsGrid');
   grid.innerHTML = '';
   grid.style.display = 'grid';
+
+  if (!songs || songs.length === 0) {
+    grid.innerHTML = `
+      <div class="empty-state" style="grid-column: 1/-1;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"></circle><path d="M8 12h8"></path></svg>
+        <h3>No songs found</h3>
+        <p>Try searching with another query or adjusting your platforms.</p>
+      </div>
+    `;
+    return;
+  }
 
   songs.forEach(song => {
     const card = createSongCard(song, [song]);

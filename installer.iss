@@ -2,7 +2,7 @@
 ; Produces a fast, modern Windows installer for AetherPlayer directory distribution
 
 #define MyAppName "AetherPlayer"
-#define MyAppVersion "2.0.0"
+#define MyAppVersion "2.1.0"
 #define MyAppPublisher "Aether Audio"
 #define MyAppURL "https://github.com/ssprata/Multi-music-tool"
 #define MyAppExeName "AetherPlayer.exe"

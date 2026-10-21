@@ -605,6 +605,8 @@ def launch_desktop():
         try:
             window.events.minimized += lambda: window.evaluate_js("if (typeof window.setAppVisibilityState === 'function') window.setAppVisibilityState(false);")
             window.events.restored += lambda: window.evaluate_js("if (typeof window.setAppVisibilityState === 'function') window.setAppVisibilityState(true);")
+            window.events.maximized += lambda: window.evaluate_js("if (typeof window.setAppVisibilityState === 'function') window.setAppVisibilityState(true);")
+            window.events.shown += lambda: window.evaluate_js("if (typeof window.setAppVisibilityState === 'function') window.setAppVisibilityState(true);")
         except Exception:
             pass
 

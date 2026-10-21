@@ -39,12 +39,18 @@ body {
   -ms-user-select: none;
 }
 
-/* Battery Saver: Suspends all CPU/GPU CSS animations and transitions when screen is off / minimized */
-body.app-backgrounded *,
-body.app-backgrounded *::before,
-body.app-backgrounded *::after {
+/* Battery Saver: Suspends heavy continuous animations when screen is off / minimized */
+body.app-backgrounded .bg-orb,
+body.app-backgrounded .spinner,
+body.app-backgrounded .equalizer-bar,
+body.app-backgrounded .equalizer-bar-dynamic,
+body.app-backgrounded .vibe-pulse,
+body.app-backgrounded .radar-sweep,
+body.app-backgrounded .live-vibe-pill::before,
+body.app-backgrounded .now-playing-disc,
+body.app-backgrounded [class*="animate-spin"],
+body.app-backgrounded [class*="pulse"] {
   animation-play-state: paused !important;
-  transition: none !important;
 }
 
 /* Allow text selection in inputs, textareas and editable areas */
@@ -624,7 +630,8 @@ body.is-resizing * {
 /* Tabs System */
 .tab-content {
   display: none;
-  animation: fadeIn 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+  opacity: 1;
+  transform: none;
   background: var(--glass-bg);
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
@@ -641,10 +648,11 @@ body.is-resizing * {
 
 .tab-content.active {
   display: block;
+  animation: fadeIn 0.25s cubic-bezier(0.25, 1, 0.5, 1) both;
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
