@@ -3430,41 +3430,58 @@ function setupProfileSubtabs() {
 function setupSidebarResizers() {
   const leftResizer = document.getElementById('leftSidebarResizer');
   const rightResizer = document.getElementById('rightSidebarResizer');
+  const appContainer = document.getElementById('appContainer');
+
+  const applyWidths = (left, right) => {
+    if (left !== undefined) {
+      document.documentElement.style.setProperty('--sidebar-width', `${left}px`);
+      if (appContainer) appContainer.style.setProperty('--sidebar-width', `${left}px`);
+    }
+    if (right !== undefined) {
+      document.documentElement.style.setProperty('--right-sidebar-width', `${right}px`);
+      if (appContainer) appContainer.style.setProperty('--right-sidebar-width', `${right}px`);
+    }
+  };
 
   // Restore saved widths from localStorage
   const savedLeftWidth = localStorage.getItem('aether_sidebar_width');
-  if (savedLeftWidth) {
-    document.documentElement.style.setProperty('--sidebar-width', `${parseInt(savedLeftWidth)}px`);
-  }
   const savedRightWidth = localStorage.getItem('aether_right_sidebar_width');
-  if (savedRightWidth) {
-    document.documentElement.style.setProperty('--right-sidebar-width', `${parseInt(savedRightWidth)}px`);
-  }
+  applyWidths(
+    savedLeftWidth ? parseInt(savedLeftWidth) : undefined,
+    savedRightWidth ? parseInt(savedRightWidth) : undefined
+  );
 
   // Left Resizer Dragging
   if (leftResizer) {
     leftResizer.addEventListener('mousedown', (e) => {
       e.preventDefault();
+      e.stopPropagation();
       document.body.classList.add('is-resizing');
       leftResizer.classList.add('dragging');
 
+      const sidebarEl = document.getElementById('tab-playlists');
+      const startX = e.clientX;
+      const startWidth = sidebarEl ? sidebarEl.getBoundingClientRect().width : 240;
+
       const onMouseMove = (moveEvent) => {
-        const newWidth = Math.min(460, Math.max(160, moveEvent.clientX));
-        document.documentElement.style.setProperty('--sidebar-width', `${newWidth}px`);
+        const delta = moveEvent.clientX - startX;
+        const newWidth = Math.min(500, Math.max(160, Math.round(startWidth + delta)));
+        applyWidths(newWidth, undefined);
       };
 
       const onMouseUp = (upEvent) => {
         document.body.classList.remove('is-resizing');
         leftResizer.classList.remove('dragging');
-        window.removeEventListener('mousemove', onMouseMove);
-        window.removeEventListener('mouseup', onMouseUp);
+        window.removeEventListener('mousemove', onMouseMove, true);
+        window.removeEventListener('mouseup', onMouseUp, true);
 
-        const finalWidth = Math.min(460, Math.max(160, upEvent.clientX));
+        const delta = upEvent.clientX - startX;
+        const finalWidth = Math.min(500, Math.max(160, Math.round(startWidth + delta)));
         localStorage.setItem('aether_sidebar_width', finalWidth.toString());
       };
 
-      window.addEventListener('mousemove', onMouseMove);
-      window.addEventListener('mouseup', onMouseUp);
+      window.addEventListener('mousemove', onMouseMove, true);
+      window.addEventListener('mouseup', onMouseUp, true);
     });
   }
 
@@ -3472,26 +3489,33 @@ function setupSidebarResizers() {
   if (rightResizer) {
     rightResizer.addEventListener('mousedown', (e) => {
       e.preventDefault();
+      e.stopPropagation();
       document.body.classList.add('is-resizing');
       rightResizer.classList.add('dragging');
 
+      const rightSidebarEl = document.getElementById('rightSidebar');
+      const startX = e.clientX;
+      const startWidth = rightSidebarEl ? rightSidebarEl.getBoundingClientRect().width : 310;
+
       const onMouseMove = (moveEvent) => {
-        const newWidth = Math.min(520, Math.max(220, window.innerWidth - moveEvent.clientX));
-        document.documentElement.style.setProperty('--right-sidebar-width', `${newWidth}px`);
+        const delta = startX - moveEvent.clientX;
+        const newWidth = Math.min(520, Math.max(220, Math.round(startWidth + delta)));
+        applyWidths(undefined, newWidth);
       };
 
       const onMouseUp = (upEvent) => {
         document.body.classList.remove('is-resizing');
         rightResizer.classList.remove('dragging');
-        window.removeEventListener('mousemove', onMouseMove);
-        window.removeEventListener('mouseup', onMouseUp);
+        window.removeEventListener('mousemove', onMouseMove, true);
+        window.removeEventListener('mouseup', onMouseUp, true);
 
-        const finalWidth = Math.min(520, Math.max(220, window.innerWidth - upEvent.clientX));
+        const delta = startX - upEvent.clientX;
+        const finalWidth = Math.min(520, Math.max(220, Math.round(startWidth + delta)));
         localStorage.setItem('aether_right_sidebar_width', finalWidth.toString());
       };
 
-      window.addEventListener('mousemove', onMouseMove);
-      window.addEventListener('mouseup', onMouseUp);
+      window.addEventListener('mousemove', onMouseMove, true);
+      window.addEventListener('mouseup', onMouseUp, true);
     });
   }
 }

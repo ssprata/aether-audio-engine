@@ -120,7 +120,7 @@ img {
     "header header header"
     "sidebar main right-sidebar"
     "player player player";
-  grid-template-columns: var(--sidebar-width, 240px) 1fr var(--right-sidebar-width, 310px);
+  grid-template-columns: var(--sidebar-width, 240px) minmax(0, 1fr) var(--right-sidebar-width, 310px);
   grid-template-rows: 70px 1fr 95px;
 }
 
@@ -129,7 +129,7 @@ img {
     "header header header"
     "main sidebar right-sidebar"
     "player player player";
-  grid-template-columns: 1fr var(--sidebar-width, 240px) var(--right-sidebar-width, 310px);
+  grid-template-columns: minmax(0, 1fr) var(--sidebar-width, 240px) var(--right-sidebar-width, 310px);
   grid-template-rows: 70px 1fr 95px;
 }
 
@@ -138,7 +138,7 @@ img {
     "header header header"
     "player player player"
     "sidebar main right-sidebar";
-  grid-template-columns: var(--sidebar-width, 240px) 1fr var(--right-sidebar-width, 310px);
+  grid-template-columns: var(--sidebar-width, 240px) minmax(0, 1fr) var(--right-sidebar-width, 310px);
   grid-template-rows: 70px 95px 1fr;
 }
 
@@ -147,7 +147,7 @@ img {
     "header header header"
     "player player player"
     "main sidebar right-sidebar";
-  grid-template-columns: 1fr var(--sidebar-width, 240px) var(--right-sidebar-width, 310px);
+  grid-template-columns: minmax(0, 1fr) var(--sidebar-width, 240px) var(--right-sidebar-width, 310px);
   grid-template-rows: 70px 95px 1fr;
 }
 
@@ -155,11 +155,11 @@ img {
 .sidebar-resizer-handle {
   position: absolute;
   top: 0;
-  right: -3px;
-  width: 6px;
+  right: -5px;
+  width: 10px;
   height: 100%;
   cursor: col-resize;
-  z-index: 100;
+  z-index: 200;
   background: transparent;
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
@@ -167,11 +167,11 @@ img {
 .right-sidebar-resizer-handle {
   position: absolute;
   top: 0;
-  left: -3px;
-  width: 6px;
+  left: -5px;
+  width: 10px;
   height: 100%;
   cursor: col-resize;
-  z-index: 100;
+  z-index: 200;
   background: transparent;
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
@@ -204,12 +204,16 @@ body.is-resizing * {
   overflow: hidden;
   position: relative;
   z-index: 10;
+  min-width: 0 !important;
+  width: 100% !important;
 }
 
 /* Assign Grid Areas */
 .app-sidebar {
   grid-area: sidebar;
   border-right: 1px solid var(--glass-border);
+  min-width: 0 !important;
+  width: 100% !important;
 }
 .app-container.sidebar-right .app-sidebar {
   border-right: none;
@@ -224,6 +228,7 @@ body.is-resizing * {
   padding-bottom: 50px;
   scroll-behavior: smooth;
   box-sizing: border-box;
+  min-width: 0 !important;
 }
 
 .app-player-bar {
@@ -5071,12 +5076,12 @@ input[type="range"]::-webkit-slider-thumb:hover {
 @media (min-width: 1025px) {
   .app-container.right-sidebar-collapsed.sidebar-left.player-bottom,
   .app-container.right-sidebar-collapsed.sidebar-left.player-top {
-    grid-template-columns: 220px 1fr 0px !important;
+    grid-template-columns: var(--sidebar-width, 240px) minmax(0, 1fr) 0px !important;
   }
   
   .app-container.right-sidebar-collapsed.sidebar-right.player-bottom,
   .app-container.right-sidebar-collapsed.sidebar-right.player-top {
-    grid-template-columns: 1fr 220px 0px !important;
+    grid-template-columns: minmax(0, 1fr) var(--sidebar-width, 240px) 0px !important;
   }
   
   .app-container.right-sidebar-collapsed .app-right-sidebar {
@@ -5086,7 +5091,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   /* When expanded on screens between 1025px and 1380px (including 1080p vertical monitors) */
   .app-container:not(.right-sidebar-collapsed).sidebar-left.player-bottom,
   .app-container:not(.right-sidebar-collapsed).sidebar-left.player-top {
-    grid-template-columns: 210px 1fr 280px !important;
+    grid-template-columns: var(--sidebar-width, 240px) minmax(0, 1fr) var(--right-sidebar-width, 310px) !important;
     grid-template-areas: 
       "header header header"
       "sidebar main right-sidebar"
@@ -5094,7 +5099,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   }
   .app-container:not(.right-sidebar-collapsed).sidebar-right.player-bottom,
   .app-container:not(.right-sidebar-collapsed).sidebar-right.player-top {
-    grid-template-columns: 1fr 210px 280px !important;
+    grid-template-columns: minmax(0, 1fr) var(--sidebar-width, 240px) var(--right-sidebar-width, 310px) !important;
     grid-template-areas: 
       "header header header"
       "main sidebar right-sidebar"
@@ -5102,7 +5107,9 @@ input[type="range"]::-webkit-slider-thumb:hover {
   }
   .app-container:not(.right-sidebar-collapsed) .app-right-sidebar {
     display: flex !important;
-    width: 280px !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
   }
 }
 
