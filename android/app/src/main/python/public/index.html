@@ -18,8 +18,7 @@
   <link rel="icon" type="image/x-icon" href="favicon.ico">
   <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
   <link rel="apple-touch-icon" href="icon-512.png">
-  <!-- YouTube IFrame Player API -->
-  <script src="https://www.youtube.com/iframe_api"></script>
+  <!-- YouTube IFrame Player API (Lazy-loaded on demand only if needed) -->
   <!-- Firebase SDK (Compat) -->
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
@@ -129,14 +128,14 @@
               <polyline points="7 10 12 15 17 10"></polyline>
               <line x1="12" y1="15" x2="12" y2="3"></line>
             </svg>
+            <button class="playlist-play-hover-btn" id="btnPlayDownloadedHover" type="button" title="Play Downloaded Music" aria-label="Play Downloaded Music">
+              <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>
+            </button>
           </div>
           <div class="system-playlist-info">
             <span class="system-playlist-name">Downloaded Music</span>
             <span class="system-playlist-badge" id="downloadedSidebarBadge">0 songs</span>
           </div>
-          <button class="playlist-play-hover-btn" id="btnPlayDownloadedHover" type="button" title="Play Downloaded Music" aria-label="Play Downloaded Music">
-            <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>
-          </button>
         </div>
 
         <ul class="playlists-list" id="playlistsList">
@@ -164,6 +163,9 @@
         </button>
         <input type="file" id="importFileInput" accept=".json" style="display: none;">
       </div>
+
+      <!-- Resizer divider for Left Playlists Sidebar -->
+      <div class="sidebar-resizer-handle" id="leftSidebarResizer" title="Drag to resize playlists sidebar"></div>
     </aside>
 
     <!-- MAIN VIEW AREA -->
@@ -1177,6 +1179,8 @@
 
     <!-- RIGHT SIDEBAR: Spotify-Style Queue, Recently Played & Details -->
     <aside class="app-right-sidebar" id="rightSidebar">
+      <!-- Resizer divider for Right Queue/Details Panel -->
+      <div class="right-sidebar-resizer-handle" id="rightSidebarResizer" title="Drag to resize details & queue panel"></div>
       <div class="right-sidebar-header">
         <div class="queue-nav-tabs" id="rightSidebarNavTabs">
           <button class="queue-nav-tab active" id="tabBtnQueue" data-tab="queue">Queue</button>

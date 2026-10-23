@@ -60,6 +60,7 @@ let state = {
   playbackPosition: 0,
   duration: 0,
   shuffle: false,
+  unshuffledQueue: null,
   repeat: 'none', // 'none', 'one', 'all'
   searchPlatforms: ['youtube', 'spotify', 'soundcloud'],
   customThemes: [],
@@ -3011,6 +3012,7 @@ function savePlaybackSession() {
   if (!state.playQueue || state.playQueue.length === 0) return;
   const session = {
     playQueue: state.playQueue,
+    unshuffledQueue: state.unshuffledQueue || null,
     currentQueueIndex: state.currentQueueIndex,
     currentSong: state.currentSong,
     playbackPosition: state.playbackPosition || 0,
@@ -3065,6 +3067,7 @@ async function restorePlaybackSession() {
   }
 
   state.playQueue = session.playQueue;
+  state.unshuffledQueue = Array.isArray(session.unshuffledQueue) ? session.unshuffledQueue : null;
   state.currentQueueIndex = (typeof session.currentQueueIndex === 'number' && session.currentQueueIndex >= 0 && session.currentQueueIndex < session.playQueue.length)
     ? session.currentQueueIndex
     : 0;
@@ -3075,6 +3078,14 @@ async function restorePlaybackSession() {
   state.currentPlaylistId = session.currentPlaylistId || null;
   state.shuffle = !!session.shuffle;
   state.repeat = session.repeat || 'none';
+
+  if (state.shuffle && (!state.unshuffledQueue || state.unshuffledQueue.length === 0)) {
+    state.unshuffledQueue = state.playQueue.map(s => ({ ...s }));
+  }
+
+  if (typeof updateShuffleUI === 'function') {
+    updateShuffleUI();
+  }
 
   if (state.currentSong) {
     // Refresh audio stream URL / clear stale stream tokens so fresh tokens are acquired on resume
@@ -4135,11 +4146,10 @@ function setupEventListeners() {
   document.getElementById('btnNext').addEventListener('click', playNext);
   document.getElementById('btnPrev').addEventListener('click', playPrev);
 
-  document.getElementById('btnShuffle').addEventListener('click', (e) => {
-    state.shuffle = !state.shuffle;
-    e.currentTarget.classList.toggle('active', state.shuffle);
-    showToast(state.shuffle ? 'Shuffle enabled' : 'Shuffle disabled');
+  document.getElementById('btnShuffle').addEventListener('click', () => {
+    toggleShuffle();
   });
+  updateShuffleUI();
 
   document.getElementById('btnRepeat').addEventListener('click', () => {
     if (state.repeat === 'none') {
@@ -4309,10 +4319,7 @@ function setupEventListeners() {
   });
   document.getElementById('btnMobileNpShuffle')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    state.shuffle = !state.shuffle;
-    document.getElementById('btnShuffle')?.classList.toggle('active', state.shuffle);
-    document.getElementById('btnMobileNpShuffle')?.classList.toggle('active', state.shuffle);
-    showToast(state.shuffle ? 'Shuffle enabled' : 'Shuffle disabled');
+    toggleShuffle();
   });
   document.getElementById('btnMobileNpRepeat')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -4567,6 +4574,15 @@ function setupEventListeners() {
     clearQueueBtn.addEventListener('click', () => {
       if (state.playQueue && state.playQueue.length > state.currentQueueIndex + 1) {
         state.playQueue = state.playQueue.slice(0, state.currentQueueIndex + 1);
+        if (state.unshuffledQueue && state.currentSong) {
+          const origIdx = state.unshuffledQueue.findIndex(s =>
+            (state.currentSong._queueUid && s._queueUid === state.currentSong._queueUid) ||
+            (state.currentSong.id && s.id === state.currentSong.id)
+          );
+          if (origIdx !== -1) {
+            state.unshuffledQueue = state.unshuffledQueue.slice(0, origIdx + 1);
+          }
+        }
         renderQueueUI();
         showToast('Upcoming queue cleared');
       } else {
@@ -5078,16 +5094,18 @@ function createSongCard(song, queueContext) {
   const handleCardPlayback = () => {
     state.currentPlaylistId = null; // Clear playlist context when playing from search
     if (queueContext && queueContext.length > 1) {
-      state.playQueue = queueContext.map(s => ({ ...s }));
-      state.stationAnchor = song;
-      state.isRadioSession = false;
       const index = queueContext.findIndex(s => s.id === song.id);
-      playSong(song, index !== -1 ? index : 0);
+      const { song: targetSong, index: targetIdx } = setPlayQueueFromList(queueContext, index !== -1 ? index : 0);
+      state.stationAnchor = targetSong;
+      state.isRadioSession = false;
+      playSong(targetSong, targetIdx);
     } else {
       // Single track search discovery - start endless vibe radio station anchored to this song!
       state.stationAnchor = song;
       state.isRadioSession = true;
-      state.playQueue = [{ ...song }];
+      const single = assignQueueUids([{ ...song }]);
+      state.unshuffledQueue = single.map(s => ({ ...s }));
+      state.playQueue = single;
       state.currentQueueIndex = 0;
       playSong(song, 0);
       fetchStationVibesForSong(song, { isInitial: true });
@@ -5688,7 +5706,15 @@ function renderPlaylistSongRows(pl, songsToDisplay) {
           savePlaylists();
 
           if (!state.isRadioSession && state.playQueue && state.playQueue.length > 0) {
-            state.playQueue = pl.songs.map(s => ({ ...s }));
+            state.unshuffledQueue = pl.songs.map(s => ({ ...s }));
+            if (!state.shuffle) {
+              state.playQueue = pl.songs.map(s => ({ ...s }));
+              if (state.currentSong) {
+                const newIdx = state.playQueue.findIndex(s => s.id === state.currentSong.id);
+                if (newIdx !== -1) state.currentQueueIndex = newIdx;
+              }
+              renderQueueUI();
+            }
           }
 
           showToast(`Track moved to #${targetIdx + 1}`);
@@ -5717,10 +5743,10 @@ function renderPlaylistSongRows(pl, songsToDisplay) {
 
     row.addEventListener('click', () => {
       // PROPER PLAYLIST CONTEXT: Always populate playQueue with the entire playlist array!
-      state.playQueue = pl.songs.map(s => ({ ...s }));
-      state.stationAnchor = pl.songs[pl.songs.length - 1] || song;
+      const { song: targetSong, index: targetIdx } = setPlayQueueFromList(pl.songs, resolvedOriginalIdx);
+      state.stationAnchor = pl.songs[pl.songs.length - 1] || targetSong;
       state.isRadioSession = false;
-      playSong(song, resolvedOriginalIdx);
+      playSong(targetSong, targetIdx);
     });
 
     const isDownloaded = state.downloadedTrackIds && state.downloadedTrackIds.has(song.id);
@@ -5983,13 +6009,166 @@ function animateTrackMetadataUpdate(song, isDjTransition = false) {
   }
 }
 
+// --- SHUFFLE & QUEUE MANAGEMENT ENGINE ---
+let _queueUidCounter = 0;
+function assignQueueUids(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map(item => ({
+    ...item,
+    _queueUid: item._queueUid || `quid_${Date.now()}_${++_queueUidCounter}`
+  }));
+}
+
+function updateShuffleUI() {
+  const desktopBtn = document.getElementById('btnShuffle');
+  const mobileBtn = document.getElementById('btnMobileNpShuffle');
+  if (desktopBtn) {
+    desktopBtn.classList.toggle('active', !!state.shuffle);
+  }
+  if (mobileBtn) {
+    mobileBtn.classList.toggle('active', !!state.shuffle);
+  }
+}
+
+function setShuffleState(enabled, showFeedback = true) {
+  state.shuffle = !!enabled;
+  updateShuffleUI();
+
+  if (state.shuffle) {
+    // ENABLING SHUFFLE:
+    // 1. Keep unshuffledQueue as the pristine reference of playlist/queue before shuffle
+    if (state.playQueue && state.playQueue.length > 0) {
+      if (!state.unshuffledQueue || state.unshuffledQueue.length === 0) {
+        state.unshuffledQueue = state.playQueue.map(s => ({ ...s }));
+      }
+
+      // 2. Past tracks (0 to currentQueueIndex) MUST remain intact so Previous navigation works!
+      // Only future tracks (currentQueueIndex + 1 to end) are shuffled!
+      const currentIndex = (state.currentQueueIndex >= 0 && state.currentQueueIndex < state.playQueue.length)
+        ? state.currentQueueIndex
+        : -1;
+
+      if (currentIndex === -1) {
+        // No track currently active: shuffle entire queue
+        const allTracks = [...state.playQueue];
+        for (let i = allTracks.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [allTracks[i], allTracks[j]] = [allTracks[j], allTracks[i]];
+        }
+        state.playQueue = allTracks;
+      } else {
+        const pastAndCurrent = state.playQueue.slice(0, currentIndex + 1);
+        const futureTracks = state.playQueue.slice(currentIndex + 1);
+
+        if (futureTracks.length > 1) {
+          // Fisher-Yates shuffle on upcoming tracks
+          for (let i = futureTracks.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [futureTracks[i], futureTracks[j]] = [futureTracks[j], futureTracks[i]];
+          }
+        }
+        state.playQueue = [...pastAndCurrent, ...futureTracks];
+      }
+    }
+
+    if (showFeedback) {
+      showToast('Shuffle enabled');
+    }
+  } else {
+    // DISABLING SHUFFLE:
+    // Restore the queue back to how it was before shuffle was turned on!
+    if (state.unshuffledQueue && state.unshuffledQueue.length > 0) {
+      const currentSong = state.currentSong;
+      let targetSong = currentSong;
+      if (!targetSong && state.currentQueueIndex >= 0 && state.playQueue[state.currentQueueIndex]) {
+        targetSong = state.playQueue[state.currentQueueIndex];
+      }
+
+      // Preserve any dynamically added tracks (e.g. autoplay station vibes) not present in unshuffledQueue
+      const knownKeys = new Set(state.unshuffledQueue.map(s => s._queueUid || s.id || `${s.title}___${s.artist}`));
+      const dynamicExtras = state.playQueue.filter(s => !knownKeys.has(s._queueUid || s.id || `${s.title}___${s.artist}`));
+
+      const baseQueue = state.unshuffledQueue.map(s => ({ ...s }));
+      const fullRestored = [...baseQueue, ...dynamicExtras];
+
+      let targetIndex = -1;
+      if (targetSong) {
+        if (targetSong._queueUid) {
+          targetIndex = fullRestored.findIndex(s => s._queueUid === targetSong._queueUid);
+        }
+        if (targetIndex === -1 && targetSong.id) {
+          targetIndex = fullRestored.findIndex(s => s.id === targetSong.id);
+        }
+        if (targetIndex === -1 && targetSong.title) {
+          targetIndex = fullRestored.findIndex(s => s.title === targetSong.title && s.artist === targetSong.artist);
+        }
+      }
+
+      state.playQueue = fullRestored;
+      state.currentQueueIndex = targetIndex !== -1 ? targetIndex : 0;
+      state.unshuffledQueue = [...state.playQueue];
+    }
+
+    if (showFeedback) {
+      showToast('Shuffle disabled');
+    }
+  }
+
+  // Immediately re-render queue UI so upcoming tracks reflect new order
+  renderQueueUI();
+
+  // Refresh preload / Deck B preview if active
+  if (typeof preloadNextTrackInQueue === 'function' && state.currentQueueIndex >= 0) {
+    preloadNextTrackInQueue(state.currentQueueIndex);
+  }
+  if (typeof updateDjZoneUI === 'function') {
+    try { updateDjZoneUI(); } catch (e) {}
+  }
+
+  savePlaybackSession();
+}
+
+function toggleShuffle() {
+  setShuffleState(!state.shuffle, true);
+}
+
+function setPlayQueueFromList(songs, startIndex = 0) {
+  if (!songs || songs.length === 0) {
+    state.playQueue = [];
+    state.unshuffledQueue = [];
+    return { song: null, index: -1 };
+  }
+
+  const rawList = assignQueueUids(songs);
+  state.unshuffledQueue = rawList.map(s => ({ ...s }));
+
+  const validStart = (typeof startIndex === 'number' && startIndex >= 0 && startIndex < rawList.length)
+    ? startIndex
+    : 0;
+  const startSong = rawList[validStart];
+
+  if (state.shuffle && rawList.length > 1) {
+    const otherSongs = rawList.filter((_, idx) => idx !== validStart);
+    // Fisher-Yates shuffle on otherSongs
+    for (let i = otherSongs.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [otherSongs[i], otherSongs[j]] = [otherSongs[j], otherSongs[i]];
+    }
+    state.playQueue = [startSong, ...otherSongs];
+    return { song: startSong, index: 0 };
+  } else {
+    state.playQueue = rawList;
+    return { song: startSong, index: validStart };
+  }
+}
+
 // --- MULTI-SOURCE AUDIO PLAYBACK ENGINE ---
-function playSongList(songs, startIndex) {
-  state.playQueue = songs.map(s => ({ ...s }));
-  if (songs.length > 0 && startIndex < songs.length) {
-    state.stationAnchor = songs[songs.length - 1] || songs[startIndex];
+function playSongList(songs, startIndex = 0) {
+  const { song, index } = setPlayQueueFromList(songs, startIndex);
+  if (state.playQueue.length > 0 && song) {
+    state.stationAnchor = songs[songs.length - 1] || song;
     state.isRadioSession = false;
-    playSong(songs[startIndex], startIndex);
+    playSong(song, index);
   }
 }
 
@@ -6152,10 +6331,11 @@ function playSong(song, index) {
     } catch (e) { }
   }
 
-  // If user is currently looking at playlist details, update the active row highlight only
+  // If user is currently looking at playlist details, update the active row highlight by matching track ID
   if (state.activeTab === 'playlist-detail') {
-    document.querySelectorAll('#playlistSongsContainer .song-row').forEach((row, rIdx) => {
-      row.classList.toggle('active', rIdx === index);
+    document.querySelectorAll('#playlistSongsContainer .song-row').forEach((row) => {
+      const match = song && (row.dataset.songId === song.id || (song.title && row.querySelector('.song-col-title')?.textContent.trim() === song.title));
+      row.classList.toggle('active', !!match);
     });
   }
 
@@ -6524,13 +6704,23 @@ function playNext(forceAdvance = false) {
   }
 
   let nextIndex = state.currentQueueIndex + 1;
-  if (state.shuffle) {
-    nextIndex = Math.floor(Math.random() * state.playQueue.length);
-  } else if (state.repeat === 'one') {
+  if (state.repeat === 'one') {
     nextIndex = state.currentQueueIndex;
   } else if (nextIndex >= state.playQueue.length) {
     if (state.repeat === 'all') {
-      nextIndex = 0;
+      if (state.shuffle && state.unshuffledQueue && state.unshuffledQueue.length > 0) {
+        // Reshuffle the full queue for the next loop
+        const reshuffled = state.unshuffledQueue.map(s => ({ ...s }));
+        for (let i = reshuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [reshuffled[i], reshuffled[j]] = [reshuffled[j], reshuffled[i]];
+        }
+        state.playQueue = reshuffled;
+        nextIndex = 0;
+        renderQueueUI();
+      } else {
+        nextIndex = 0;
+      }
     } else if (state.autoplayEnabled && (state.stationAnchor || state.currentSong)) {
       showToast('Finding more similar vibes...');
       extendStationQueue(true);
@@ -6572,7 +6762,16 @@ function playPrev() {
 
   let prevIndex = state.currentQueueIndex - 1;
   if (prevIndex < 0) {
-    prevIndex = state.playQueue.length - 1;
+    if (state.repeat === 'all') {
+      prevIndex = state.playQueue.length - 1;
+    } else {
+      seekToPercentage(0);
+      state.playbackPosition = 0;
+      if (!state.isPlaying) {
+        togglePlayPause();
+      }
+      return;
+    }
   }
   playSong(state.playQueue[prevIndex], prevIndex);
 }
@@ -7699,11 +7898,15 @@ async function fetchStationVibesForSong(seedSong, options = {}) {
         return notInQueue && notDupeOfSeed;
       });
 
-      filtered.forEach(track => {
+      const tagged = assignQueueUids(filtered);
+      tagged.forEach(track => {
         state.playQueue.push(track);
+        if (state.unshuffledQueue) {
+          state.unshuffledQueue.push({ ...track });
+        }
       });
 
-      state.currentVibeTracks = filtered;
+      state.currentVibeTracks = tagged;
 
       // Keep Search tab recommendations UI updated
       const section = document.getElementById('recommendationsSection');
@@ -7746,9 +7949,13 @@ async function extendStationQueue(playImmediately = false) {
       });
 
       if (filtered.length > 0) {
+        const tagged = assignQueueUids(filtered);
         const insertIndex = state.playQueue.length;
-        filtered.forEach(track => {
+        tagged.forEach(track => {
           state.playQueue.push(track);
+          if (state.unshuffledQueue) {
+            state.unshuffledQueue.push({ ...track });
+          }
         });
         renderQueueUI();
 
@@ -7869,14 +8076,31 @@ function renderQueueUI() {
 
     item.addEventListener('click', (e) => {
       if (e.target.closest('.queue-item-remove-btn')) return;
-      playSong(track, queueIndex);
+      // If clicking an upcoming track deeper in the queue, promote it to immediately follow currentQueueIndex
+      // This preserves all past played tracks in history so "Previous" always returns to the prior track!
+      if (queueIndex > state.currentQueueIndex + 1) {
+        const [selectedTrack] = state.playQueue.splice(queueIndex, 1);
+        state.playQueue.splice(state.currentQueueIndex + 1, 0, selectedTrack);
+        playSong(selectedTrack, state.currentQueueIndex + 1);
+      } else {
+        playSong(track, queueIndex);
+      }
     });
 
     const removeBtn = item.querySelector('.queue-item-remove-btn');
     if (removeBtn) {
       removeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        state.playQueue.splice(queueIndex, 1);
+        const removed = state.playQueue.splice(queueIndex, 1)[0];
+        if (state.unshuffledQueue && removed) {
+          const uIdx = state.unshuffledQueue.findIndex(s =>
+            (removed._queueUid && s._queueUid === removed._queueUid) ||
+            (removed.id && s.id === removed.id)
+          );
+          if (uIdx !== -1) {
+            state.unshuffledQueue.splice(uIdx, 1);
+          }
+        }
         renderQueueUI();
         showToast('Removed from queue');
       });
@@ -7941,7 +8165,9 @@ async function renderRecentUI(forceRefresh = false) {
       item.addEventListener('click', () => {
         state.stationAnchor = track;
         state.isRadioSession = true;
-        state.playQueue = [track];
+        const single = assignQueueUids([{ ...track }]);
+        state.unshuffledQueue = single.map(s => ({ ...s }));
+        state.playQueue = single;
         state.currentQueueIndex = 0;
         playSong(track, 0);
         fetchStationVibesForSong(track, { isInitial: true });
@@ -8323,10 +8549,10 @@ async function openAlbumDetails(albumId, platform) {
         
         row.addEventListener('click', () => {
           state.currentPlaylistId = null;
-          state.playQueue = album.tracks.map(s => ({ ...s }));
-          state.stationAnchor = album.tracks[album.tracks.length - 1] || song;
+          const { song: targetSong, index: targetIdx } = setPlayQueueFromList(album.tracks, idx);
+          state.stationAnchor = album.tracks[album.tracks.length - 1] || targetSong;
           state.isRadioSession = false;
-          playSong(song, idx);
+          playSong(targetSong, targetIdx);
         });
         
         const colNum = document.createElement('div');
@@ -8726,7 +8952,9 @@ async function loadHomeDashboard() {
           state.currentPlaylistId = null;
           state.stationAnchor = song;
           state.isRadioSession = true;
-          state.playQueue = [{ ...song }];
+          const single = assignQueueUids([{ ...song }]);
+          state.unshuffledQueue = single.map(s => ({ ...s }));
+          state.playQueue = single;
           state.currentQueueIndex = 0;
           playSong(song, 0);
           fetchStationVibesForSong(song, { isInitial: true });
@@ -8806,7 +9034,9 @@ async function loadHomeDashboard() {
             state.currentPlaylistId = null;
             state.stationAnchor = song;
             state.isRadioSession = true;
-            state.playQueue = [{ ...song }];
+            const single = assignQueueUids([{ ...song }]);
+            state.unshuffledQueue = single.map(s => ({ ...s }));
+            state.playQueue = single;
             state.currentQueueIndex = 0;
             playSong(song, 0);
             fetchStationVibesForSong(song, { isInitial: true });
@@ -9570,10 +9800,10 @@ function renderDownloadedSongsList(tracks) {
     }
 
     row.addEventListener('click', () => {
-      state.playQueue = tracks.map(s => ({ ...s }));
-      state.stationAnchor = tracks[tracks.length - 1] || song;
+      const { song: targetSong, index: targetIdx } = setPlayQueueFromList(tracks, idx);
+      state.stationAnchor = tracks[tracks.length - 1] || targetSong;
       state.isRadioSession = false;
-      playSong(song, idx);
+      playSong(targetSong, targetIdx);
     });
 
     const colNum = document.createElement('div');

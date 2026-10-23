@@ -12,6 +12,8 @@
   --glass-blur: 16px;
   --brightness: 100%;
   --contrast: 100%;
+  --sidebar-width: 240px;
+  --right-sidebar-width: 310px;
   --app-bg: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #311042 100%);
 }
 
@@ -75,73 +77,24 @@ img {
   left: 0;
   right: 0;
   bottom: 0;
-  background: var(--app-bg);
+  background:
+    radial-gradient(ellipse 700px 550px at 15% 10%, rgba(var(--accent-rgb, 124, 58, 237), 0.3) 0%, transparent 70%),
+    radial-gradient(ellipse 800px 650px at 90% 90%, var(--neon-glow-color, rgba(167, 139, 250, 0.25)) 0%, transparent 70%),
+    radial-gradient(ellipse 500px 500px at 60% 50%, rgba(var(--accent-rgb, 124, 58, 237), 0.15) 0%, transparent 65%),
+    var(--app-bg);
   background-size: cover;
   background-position: center;
   z-index: -2;
   transition: background 0.8s cubic-bezier(0.25, 1, 0.5, 1);
-}
-
-/* Floating background orbs */
-.bg-orbs-container {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: -2;
-  overflow: hidden;
   pointer-events: none;
 }
+
+/* Floating background orbs - replaced by hardware-accelerated static radial gradients in .app-bg-wrapper for 0% GPU load */
+.bg-orbs-container {
+  display: none !important;
+}
 .bg-orb {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(120px);
-  opacity: 0.25;
-  mix-blend-mode: screen;
-  transition: background 0.8s ease;
-  animation-duration: 20s;
-  animation-iteration-count: infinite;
-  animation-direction: alternate;
-  animation-timing-function: ease-in-out;
-}
-.orb-1 {
-  width: 500px;
-  height: 500px;
-  background: var(--accent-color);
-  top: -10%;
-  left: 10%;
-  animation-name: float-orb-1;
-}
-.orb-2 {
-  width: 650px;
-  height: 650px;
-  background: var(--neon-glow-color);
-  bottom: -15%;
-  right: 5%;
-  animation-name: float-orb-2;
-  animation-duration: 25s;
-}
-.orb-3 {
-  width: 400px;
-  height: 400px;
-  background: var(--accent-color);
-  top: 45%;
-  left: 55%;
-  animation-name: float-orb-3;
-  animation-duration: 18s;
-}
-@keyframes float-orb-1 {
-  0% { transform: translate(0, 0) scale(1); }
-  100% { transform: translate(120px, 80px) scale(1.15); }
-}
-@keyframes float-orb-2 {
-  0% { transform: translate(0, 0) scale(1); }
-  100% { transform: translate(-150px, -90px) scale(1.2); }
-}
-@keyframes float-orb-3 {
-  0% { transform: translate(0, 0) scale(1); }
-  100% { transform: translate(-60px, 100px) scale(0.85); }
+  display: none !important;
 }
 
 .app-bg-overlay {
@@ -160,7 +113,10 @@ img {
   display: grid;
   height: 100vh;
   width: 100vw;
-  filter: brightness(var(--brightness)) contrast(var(--contrast));
+}
+
+.app-container.has-custom-filter {
+  filter: brightness(var(--brightness, 100%)) contrast(var(--contrast, 100%));
   transition: filter 0.3s ease;
 }
 
@@ -170,7 +126,7 @@ img {
     "header header header"
     "sidebar main right-sidebar"
     "player player player";
-  grid-template-columns: 240px 1fr 310px;
+  grid-template-columns: var(--sidebar-width, 240px) minmax(0, 1fr) var(--right-sidebar-width, 310px);
   grid-template-rows: 70px 1fr 95px;
 }
 
@@ -179,7 +135,7 @@ img {
     "header header header"
     "main sidebar right-sidebar"
     "player player player";
-  grid-template-columns: 1fr 240px 310px;
+  grid-template-columns: minmax(0, 1fr) var(--sidebar-width, 240px) var(--right-sidebar-width, 310px);
   grid-template-rows: 70px 1fr 95px;
 }
 
@@ -188,7 +144,7 @@ img {
     "header header header"
     "player player player"
     "sidebar main right-sidebar";
-  grid-template-columns: 240px 1fr 310px;
+  grid-template-columns: var(--sidebar-width, 240px) minmax(0, 1fr) var(--right-sidebar-width, 310px);
   grid-template-rows: 70px 95px 1fr;
 }
 
@@ -197,8 +153,50 @@ img {
     "header header header"
     "player player player"
     "main sidebar right-sidebar";
-  grid-template-columns: 1fr 240px 310px;
+  grid-template-columns: minmax(0, 1fr) var(--sidebar-width, 240px) var(--right-sidebar-width, 310px);
   grid-template-rows: 70px 95px 1fr;
+}
+
+/* Sidebar and Right Panel Resizer Dividers */
+.sidebar-resizer-handle {
+  position: absolute;
+  top: 0;
+  right: -5px;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 200;
+  background: transparent;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.right-sidebar-resizer-handle {
+  position: absolute;
+  top: 0;
+  left: -5px;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 200;
+  background: transparent;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sidebar-resizer-handle:hover,
+.sidebar-resizer-handle.dragging,
+.right-sidebar-resizer-handle:hover,
+.right-sidebar-resizer-handle.dragging {
+  background: var(--accent-color, #7c3aed);
+  box-shadow: 0 0 10px var(--accent-color, #7c3aed);
+}
+
+body.is-resizing {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+body.is-resizing iframe,
+body.is-resizing * {
+  pointer-events: none !important;
 }
 
 .app-right-sidebar {
@@ -212,12 +210,16 @@ img {
   overflow: hidden;
   position: relative;
   z-index: 10;
+  min-width: 0 !important;
+  width: 100% !important;
 }
 
 /* Assign Grid Areas */
 .app-sidebar {
   grid-area: sidebar;
   border-right: 1px solid var(--glass-border);
+  min-width: 0 !important;
+  width: 100% !important;
 }
 .app-container.sidebar-right .app-sidebar {
   border-right: none;
@@ -232,6 +234,7 @@ img {
   padding-bottom: 50px;
   scroll-behavior: smooth;
   box-sizing: border-box;
+  min-width: 0 !important;
 }
 
 .app-player-bar {
@@ -504,18 +507,23 @@ img {
   min-width: 0;
 }
 
-/* Quick Hover Play Button for Playlist Items in Sidebar */
-.playlist-play-hover-btn {
-  margin-left: auto;
-  opacity: 0;
-  transform: scale(0.75);
-  pointer-events: none;
-  transition: opacity 0.18s cubic-bezier(0.2, 0.9, 0.4, 1.1), transform 0.18s cubic-bezier(0.2, 0.9, 0.4, 1.1);
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  border-radius: 50%;
-  background: var(--accent-color);
+/* Quick Hover Play Button Overlay over Playlist Thumbnail in Sidebar */
+.playlist-thumb,
+.system-playlist-thumb {
+  position: relative !important;
+  overflow: hidden;
+}
+
+.playlist-thumb .playlist-play-hover-btn,
+.system-playlist-thumb .playlist-play-hover-btn {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(2px);
   color: #fff;
   border: none;
   cursor: pointer;
@@ -523,30 +531,42 @@ img {
   align-items: center;
   justify-content: center;
   padding: 0;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), 0 0 10px rgba(var(--accent-rgb), 0.45);
-  flex-shrink: 0;
-  z-index: 2;
+  margin: 0;
+  opacity: 0;
+  transform: scale(0.9);
+  pointer-events: none;
+  transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), background 0.15s ease;
+  z-index: 5;
+  box-shadow: none;
 }
 
-.playlists-list li:hover .playlist-play-hover-btn,
-.pinned-system-playlist:hover .playlist-play-hover-btn {
+.playlists-list li:hover .playlist-thumb .playlist-play-hover-btn,
+.pinned-system-playlist:hover .system-playlist-thumb .playlist-play-hover-btn {
   opacity: 1;
   transform: scale(1);
   pointer-events: auto;
 }
 
-.playlist-play-hover-btn:hover {
-  transform: scale(1.15) !important;
-  filter: brightness(1.18);
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5), 0 0 14px rgba(var(--accent-rgb), 0.7);
+.playlist-thumb .playlist-play-hover-btn:hover,
+.system-playlist-thumb .playlist-play-hover-btn:hover {
+  background: rgba(0, 0, 0, 0.82);
+  color: var(--accent-color);
+  transform: scale(1.05);
 }
 
-.playlist-play-hover-btn svg {
-  width: 12px;
-  height: 12px;
-  margin: 0;
+.playlist-thumb .playlist-play-hover-btn svg,
+.system-playlist-thumb .playlist-play-hover-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
   margin-left: 1px;
-  display: block;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6));
+}
+
+/* Hide any legacy button placed beside playlist row text */
+.playlists-list li > .playlist-play-hover-btn,
+.pinned-system-playlist > .playlist-play-hover-btn {
+  display: none !important;
 }
 
 /* Playlist Layout Modifiers & Thumbnails */
@@ -636,22 +656,34 @@ img {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Custom Scrollbars */
-.sidebar-scroll::-webkit-scrollbar,
-.app-main-content::-webkit-scrollbar,
-.results-container::-webkit-scrollbar {
+/* Universal Sleek & Clean Custom Scrollbars (No arrow buttons, low opacity) */
+*::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
-.sidebar-scroll::-webkit-scrollbar-thumb,
-.app-main-content::-webkit-scrollbar-thumb,
-.results-container::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
+*::-webkit-scrollbar-track {
+  background: transparent !important;
 }
-.sidebar-scroll::-webkit-scrollbar-thumb:hover,
-.app-main-content::-webkit-scrollbar-thumb:hover,
-.results-container::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-radius: 10px !important;
+  border: none !important;
+  transition: background 0.2s ease;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28) !important;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent !important;
+}
+*::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
 }
 
 /* Search Tab Custom Stylings */
@@ -2109,16 +2141,18 @@ input[type="range"]::-webkit-slider-thumb:hover {
   pointer-events: none;
   z-index: 3;
   opacity: 0;
+  display: none;
   width: 0%;
   transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), width 0.3s ease;
   background: linear-gradient(90deg, rgba(var(--accent-rgb, 124, 58, 237), 0.2) 0%, rgba(var(--accent-rgb, 124, 58, 237), 0.75) 100%);
   border-left: 2px solid var(--accent-color);
-  box-shadow: 0 0 10px var(--accent-color), inset 0 0 8px var(--accent-color);
-  animation: djZoneGlowPulse 2.2s ease-in-out infinite alternate;
 }
 
 .dj-transition-zone.active {
+  display: block;
   opacity: 1;
+  box-shadow: 0 0 10px var(--accent-color), inset 0 0 8px var(--accent-color);
+  animation: djZoneGlowPulse 2.2s ease-in-out infinite alternate;
 }
 
 @keyframes djZoneGlowPulse {
@@ -2339,7 +2373,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   z-index: 2500 !important; /* Higher than full screen sheets (1000) and lyrics (1050) */
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: center;
   opacity: 0;
@@ -2350,6 +2384,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 .modal-overlay.active {
+  display: flex;
   opacity: 1;
   pointer-events: auto;
 }
@@ -5049,12 +5084,12 @@ input[type="range"]::-webkit-slider-thumb:hover {
 @media (min-width: 1025px) {
   .app-container.right-sidebar-collapsed.sidebar-left.player-bottom,
   .app-container.right-sidebar-collapsed.sidebar-left.player-top {
-    grid-template-columns: 220px 1fr 0px !important;
+    grid-template-columns: var(--sidebar-width, 240px) minmax(0, 1fr) 0px !important;
   }
   
   .app-container.right-sidebar-collapsed.sidebar-right.player-bottom,
   .app-container.right-sidebar-collapsed.sidebar-right.player-top {
-    grid-template-columns: 1fr 220px 0px !important;
+    grid-template-columns: minmax(0, 1fr) var(--sidebar-width, 240px) 0px !important;
   }
   
   .app-container.right-sidebar-collapsed .app-right-sidebar {
@@ -5064,7 +5099,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   /* When expanded on screens between 1025px and 1380px (including 1080p vertical monitors) */
   .app-container:not(.right-sidebar-collapsed).sidebar-left.player-bottom,
   .app-container:not(.right-sidebar-collapsed).sidebar-left.player-top {
-    grid-template-columns: 210px 1fr 280px !important;
+    grid-template-columns: var(--sidebar-width, 240px) minmax(0, 1fr) var(--right-sidebar-width, 310px) !important;
     grid-template-areas: 
       "header header header"
       "sidebar main right-sidebar"
@@ -5072,7 +5107,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   }
   .app-container:not(.right-sidebar-collapsed).sidebar-right.player-bottom,
   .app-container:not(.right-sidebar-collapsed).sidebar-right.player-top {
-    grid-template-columns: 1fr 210px 280px !important;
+    grid-template-columns: minmax(0, 1fr) var(--sidebar-width, 240px) var(--right-sidebar-width, 310px) !important;
     grid-template-areas: 
       "header header header"
       "main sidebar right-sidebar"
@@ -5080,7 +5115,9 @@ input[type="range"]::-webkit-slider-thumb:hover {
   }
   .app-container:not(.right-sidebar-collapsed) .app-right-sidebar {
     display: flex !important;
-    width: 280px !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
   }
 }
 
