@@ -1680,6 +1680,17 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                 with open(filepath, 'rb') as f:
                     self.wfile.write(f.read())
             else:
+                if filename.startswith('avatar-'):
+                    default_icon = os.path.join(PUBLIC_DIR, 'icon-512.png')
+                    if os.path.exists(default_icon):
+                        self.send_response(200)
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.send_header('Content-Type', 'image/png')
+                        self.send_header('Content-Length', os.path.getsize(default_icon))
+                        self.end_headers()
+                        with open(default_icon, 'rb') as f:
+                            self.wfile.write(f.read())
+                        return
                 self.send_error(404, "File not found")
             return
 
@@ -2383,6 +2394,7 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             # Get Spotify token if credentials exist
             config = read_config()
             client_id = config.get('spotifyClientId')
+            client_secret = config.get('spotifyClientSecret')
             token = get_spotify_access_token(client_id, client_secret)
             
             # Extract recently played tracks/artists

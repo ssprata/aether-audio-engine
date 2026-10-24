@@ -2912,6 +2912,38 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Setup YouTube Player Iframe API
+function ensureYouTubeIframeApiLoaded() {
+  return new Promise((resolve) => {
+    if (window.YT && window.YT.Player && ytPlayerReady && ytPlayer) {
+      return resolve(ytPlayer);
+    }
+    let scriptTag = document.querySelector('script[src*="youtube.com/iframe_api"]');
+    if (!scriptTag) {
+      scriptTag = document.createElement('script');
+      scriptTag.src = 'https://www.youtube.com/iframe_api';
+      scriptTag.async = true;
+      document.head.appendChild(scriptTag);
+    }
+    let tries = 0;
+    const checkInterval = setInterval(() => {
+      tries++;
+      if (window.YT && window.YT.Player) {
+        if (!ytPlayer && typeof window.onYouTubeIframeAPIReady === 'function') {
+          try { window.onYouTubeIframeAPIReady(); } catch (e) {}
+        }
+        if (ytPlayerReady && ytPlayer) {
+          clearInterval(checkInterval);
+          return resolve(ytPlayer);
+        }
+      }
+      if (tries > 50) {
+        clearInterval(checkInterval);
+        resolve(ytPlayer || null);
+      }
+    }, 150);
+  });
+}
+
 window.onYouTubeIframeAPIReady = function () {
   try {
     ytPlayer = new YT.Player('ytPlayerContainer', {
@@ -2930,7 +2962,7 @@ window.onYouTubeIframeAPIReady = function () {
           if (pendingVideoToPlay) {
             const vid = pendingVideoToPlay;
             pendingVideoToPlay = null;
-            playYouTubeTrack(vid);
+            playYouTubeIFrameFallback(vid);
           }
         },
         'onStateChange': onPlayerStateChange,
@@ -6396,7 +6428,7 @@ async function playYouTubeTrack(videoId, startTime = 0) {
 
       audio.onerror = async (e) => {
         // Only retry if this audio element is currently active and legitimately failed
-        if (!audio.src || audio !== activeAudio || !state.isPlaying) return;
+        if (!audio.src || audio !== activeAudio) return;
         console.warn('[AudioEngine] Direct stream proxy failed, attempting fresh direct stream URL...');
         try {
           const res = await fetch(`/api/stream-url?id=${encodeURIComponent(videoId)}&refresh=1`);
@@ -6409,10 +6441,13 @@ async function playYouTubeTrack(videoId, startTime = 0) {
             }
           }
         } catch (err) {}
-        console.warn('[AudioEngine] Pure audio playback failed');
-        showToast('Playback error: Unable to stream audio');
-        state.isPlaying = false;
-        updatePlayButtonUI(false);
+        console.warn('[AudioEngine] Pure audio playback failed, falling back seamlessly to YouTube IFrame player...');
+        try {
+          audio.pause();
+          audio.removeAttribute('src');
+          audio.load();
+        } catch (cleanErr) {}
+        playYouTubeIFrameFallback(videoId, startTime);
       };
 
       try {
@@ -6420,7 +6455,18 @@ async function playYouTubeTrack(videoId, startTime = 0) {
       } catch (playErr) {
         console.warn('[AudioEngine] audio.play() was prevented, attempting resume:', playErr);
         if (AetherAudioEngine.resumeContext) await AetherAudioEngine.resumeContext();
-        await audio.play();
+        try {
+          await audio.play();
+        } catch (playErr2) {
+          console.warn('[AudioEngine] Direct audio play failed, falling back to YouTube IFrame:', playErr2);
+          try {
+            audio.pause();
+            audio.removeAttribute('src');
+            audio.load();
+          } catch (cErr) {}
+          playYouTubeIFrameFallback(videoId, startTime);
+          return;
+        }
       }
 
       state.isPlaying = true;
@@ -6437,12 +6483,24 @@ async function playYouTubeTrack(videoId, startTime = 0) {
   playYouTubeIFrameFallback(videoId, startTime);
 }
 
-function playYouTubeIFrameFallback(videoId, startTime = 0) {
+async function playYouTubeIFrameFallback(videoId, startTime = 0) {
   state.currentPlaybackType = 'youtube';
+
+  // Ensure HTML5 / WebAudio element is completely silenced/paused
+  if (activeAudio) {
+    try {
+      activeAudio.pause();
+      activeAudio.removeAttribute('src');
+      activeAudio.load();
+    } catch (e) {}
+  }
+
   if (ytPlayer && ytPlayerReady && typeof ytPlayer.loadVideoById === 'function') {
     try {
       ytPlayer.loadVideoById(videoId, startTime);
       ytPlayer.playVideo();
+      state.isPlaying = true;
+      updatePlayButtonUI(true);
       applyVolume();
       startProgressTimer('youtube');
     } catch (e) {
@@ -6451,8 +6509,18 @@ function playYouTubeIFrameFallback(videoId, startTime = 0) {
   } else {
     // Queue it so as soon as YouTube is ready, it starts automatically on the FIRST click!
     pendingVideoToPlay = videoId;
-    if (window.YT && window.YT.Player && !ytPlayer) {
-      window.onYouTubeIframeAPIReady();
+    await ensureYouTubeIframeApiLoaded();
+    if (ytPlayer && ytPlayerReady && typeof ytPlayer.loadVideoById === 'function') {
+      try {
+        ytPlayer.loadVideoById(videoId, startTime);
+        ytPlayer.playVideo();
+        state.isPlaying = true;
+        updatePlayButtonUI(true);
+        applyVolume();
+        startProgressTimer('youtube');
+      } catch (e) {
+        console.warn("Could not play video after loading iframe api:", e);
+      }
     }
   }
 }
