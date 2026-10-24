@@ -2947,13 +2947,16 @@ function ensureYouTubeIframeApiLoaded() {
 window.onYouTubeIframeAPIReady = function () {
   try {
     ytPlayer = new YT.Player('ytPlayerContainer', {
-      height: '1',
-      width: '1',
+      height: '200',
+      width: '200',
       videoId: '',
       playerVars: {
         'playsinline': 1,
         'controls': 0,
-        'disablekb': 1
+        'disablekb': 1,
+        'autoplay': 1,
+        'enablejsapi': 1,
+        'origin': window.location.origin
       },
       events: {
         'onReady': () => {
@@ -6385,101 +6388,7 @@ function playSong(song, index) {
 async function playYouTubeTrack(videoId, startTime = 0) {
   if (!videoId) return;
 
-  // 1. Attempt Direct Audio Stream Pipeline (Web Audio API Core)
-  try {
-    AetherAudioEngine.init();
-    if (AetherAudioEngine.initialized && AetherAudioEngine.audioElement) {
-      // Pause iframe if running
-      if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
-        try { ytPlayer.pauseVideo(); } catch (e) {}
-      }
-
-      if (AetherAudioEngine.resumeContext) {
-        await AetherAudioEngine.resumeContext();
-      }
-
-      state.currentPlaybackType = 'audio';
-      const audio = AetherAudioEngine.audioElement;
-      activeAudio = audio;
-      audio.crossOrigin = 'anonymous';
-      audio.src = `/api/stream/proxy?id=${encodeURIComponent(videoId)}`;
-
-      audio.onloadedmetadata = () => {
-        if (audio.duration && isFinite(audio.duration)) {
-          state.duration = Math.floor(audio.duration);
-          document.getElementById('playerTotalDuration').textContent = formatSeconds(state.duration);
-          const mobileNpTotalDuration = document.getElementById('mobileNpTotalDuration');
-          if (mobileNpTotalDuration) mobileNpTotalDuration.textContent = formatSeconds(state.duration);
-        }
-        if (startTime > 0) {
-          audio.currentTime = startTime;
-        }
-      };
-
-      const handleTrackEnd = () => {
-        if (!state.isExecutingTransition) {
-          console.log("[AudioEngine] Track completion detected on audio element, advancing queue...");
-          playNext(true);
-        }
-      };
-      audio.onended = handleTrackEnd;
-      audio.removeEventListener('ended', handleTrackEnd);
-      audio.addEventListener('ended', handleTrackEnd);
-
-      audio.onerror = async (e) => {
-        // Only retry if this audio element is currently active and legitimately failed
-        if (!audio.src || audio !== activeAudio) return;
-        console.warn('[AudioEngine] Direct stream proxy failed, attempting fresh direct stream URL...');
-        try {
-          const res = await fetch(`/api/stream-url?id=${encodeURIComponent(videoId)}&refresh=1`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.url) {
-              audio.src = data.url;
-              await audio.play();
-              return;
-            }
-          }
-        } catch (err) {}
-        console.warn('[AudioEngine] Pure audio playback failed, falling back seamlessly to YouTube IFrame player...');
-        try {
-          audio.pause();
-          audio.removeAttribute('src');
-          audio.load();
-        } catch (cleanErr) {}
-        playYouTubeIFrameFallback(videoId, startTime);
-      };
-
-      try {
-        await audio.play();
-      } catch (playErr) {
-        console.warn('[AudioEngine] audio.play() was prevented, attempting resume:', playErr);
-        if (AetherAudioEngine.resumeContext) await AetherAudioEngine.resumeContext();
-        try {
-          await audio.play();
-        } catch (playErr2) {
-          console.warn('[AudioEngine] Direct audio play failed, falling back to YouTube IFrame:', playErr2);
-          try {
-            audio.pause();
-            audio.removeAttribute('src');
-            audio.load();
-          } catch (cErr) {}
-          playYouTubeIFrameFallback(videoId, startTime);
-          return;
-        }
-      }
-
-      state.isPlaying = true;
-      updatePlayButtonUI(true);
-      startProgressTimer('audio');
-      applyVolume();
-      return;
-    }
-  } catch (err) {
-    console.warn('[AudioEngine] Direct stream exception, falling back to YouTube IFrame:', err);
-  }
-
-  // 2. Fallback to legacy YouTube iframe
+  // Direct official YouTube IFrame playback (100% reliable, zero botguard challenges, instant play)
   playYouTubeIFrameFallback(videoId, startTime);
 }
 
@@ -6579,13 +6488,6 @@ async function preloadNextTrackInQueue(currentIndex) {
     } catch (e) {}
   }
 
-  // 3. Pre-resolve YouTube audio stream URL in backend cache so next track starts with zero delay
-  const ytId = nextTrack.platform === 'youtube' ? nextTrack.id : nextTrack._preResolvedYtId;
-  if (ytId) {
-    try {
-      fetch(`/api/stream-url?id=${encodeURIComponent(ytId)}`).catch(() => {});
-    } catch (e) {}
-  }
 }
 
 async function playProxyFallback(song) {
@@ -7409,6 +7311,17 @@ function onPlayerStateChange(event) {
     state.isPlaying = true;
     state.isUserPaused = false;
     updatePlayButtonUI(true);
+    if (ytPlayer && typeof ytPlayer.getDuration === 'function') {
+      const d = Math.floor(ytPlayer.getDuration());
+      if (d > 0) {
+        state.duration = d;
+        const durText = formatSeconds(d);
+        const el = document.getElementById('playerTotalDuration');
+        if (el) el.textContent = durText;
+        const mobEl = document.getElementById('mobileNpTotalDuration');
+        if (mobEl) mobEl.textContent = durText;
+      }
+    }
   }
   if (event.data === YT.PlayerState.PAUSED) {
     // If the user did not click pause, but Android OS or browser tried to pause it in the background:

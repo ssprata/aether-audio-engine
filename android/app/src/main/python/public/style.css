@@ -2354,12 +2354,15 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 .hidden-players-container {
-  position: absolute;
-  top: -9999px;
-  left: -9999px;
-  width: 320px;
-  height: 180px;
+  position: fixed;
+  bottom: 0;
+  right: 0;
+  width: 200px;
+  height: 200px;
+  opacity: 0.001;
   pointer-events: none;
+  z-index: -10;
+  overflow: hidden;
 }
 
 /* Modal Styling */

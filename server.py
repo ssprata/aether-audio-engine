@@ -1078,6 +1078,10 @@ def get_youtube_audio_url(video_id, force_refresh=False):
             'noplaylist': True,
             'extract_flat': False
         }
+        cookie_file = os.path.join(DATA_DIR, 'cookies.txt')
+        if os.path.exists(cookie_file):
+            ydl_opts['cookiefile'] = cookie_file
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
             if info and 'url' in info:
@@ -1085,7 +1089,7 @@ def get_youtube_audio_url(video_id, force_refresh=False):
                 YOUTUBE_AUDIO_CACHE[video_id] = (url, now + 3600)
                 return url
     except Exception as e:
-        print(f"[get_youtube_audio_url yt_dlp error] {e}")
+        print(f"[get_youtube_audio_url yt-dlp note] {e}")
 
     # Fallback: Android client player payload
     try:
