@@ -7268,21 +7268,23 @@ function startProgressTimer(platform) {
     }
 
     // Robust track-end detector (active whether DJ transition is ON or OFF):
-    const isActuallyEnded = Boolean(
-      !state.isExecutingTransition && state.duration > 0 && (
-        // 1. Native HTML5 audio element flagged as ended
-        (activeAudio && activeAudio.ended) ||
-        // 2. Playhead is within 1.2s of duration estimate
-        (currentSec >= state.duration - 1.2) ||
-        // 3. Audio element duration is finite and reached
-        (activeAudio && activeAudio.duration && isFinite(activeAudio.duration) && currentSec >= activeAudio.duration - 1.0) ||
-        // 4. Audio naturally paused near the end of the stream without user pause
-        (activeAudio && activeAudio.paused && !state.isUserPaused && currentSec > 3 && (
+    const isAudioType = (platform === 'audio' || platform === 'offline' || platform === 'preview');
+    let isActuallyEnded = false;
+
+    if (isAudioType && activeAudio && !state.isExecutingTransition && state.duration > 0) {
+      isActuallyEnded = Boolean(
+        activeAudio.ended ||
+        (currentSec > 5 && currentSec >= state.duration - 1.2) ||
+        (activeAudio.duration && isFinite(activeAudio.duration) && currentSec >= activeAudio.duration - 1.0) ||
+        (activeAudio.paused && !state.isUserPaused && currentSec > 3 && (
           currentSec >= state.duration - 3.0 ||
           (activeAudio.duration && isFinite(activeAudio.duration) && currentSec >= activeAudio.duration - 2.0)
         ))
-      )
-    );
+      );
+    } else if (platform === 'youtube' && !state.isExecutingTransition && state.duration > 15) {
+      // YouTube has its own onStateChange === YT.PlayerState.ENDED; only fallback if near the absolute end
+      isActuallyEnded = (currentSec > 10 && currentSec >= state.duration - 1.0);
+    }
 
     if (isActuallyEnded) {
       const now = Date.now();

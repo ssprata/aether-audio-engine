@@ -1933,12 +1933,10 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
 
                 self.wfile.write(b'{"error": "No lyrics found for this song."}')
             except Exception as err:
-                print("Lyrics search error:", err)
-                if "429" in str(err):
+                # LrcLib external service temporary cooldown or unavailable
+                if "429" in str(err) or "503" in str(err):
                     LYRICS_RATE_LIMIT_COOLDOWN = time.time() + 45
-                    self.wfile.write(b'{"error": "Lyrics service is busy right now. Will retry shortly...", "isRateLimited": true}')
-                else:
-                    self.wfile.write(b'{"error": "Could not retrieve lyrics."}')
+                self.wfile.write(b'{"error": "Lyrics unavailable right now."}')
             return
 
 
@@ -2009,8 +2007,8 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                                         })
                                         if len(recommendations) >= limit_val:
                                             break
-                    except Exception as e:
-                        print("Spotify recommendations failed:", e)
+                    except Exception:
+                        pass
                     
             # Fallback for Spotify failures, or default for YouTube/SoundCloud
             if not recommendations:
@@ -2430,8 +2428,8 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                             'albumId': t['album']['id'],
                             'albumName': t['album']['name']
                         })
-                except Exception as e:
-                    print("Spotify recommendations failed, falling back:", e)
+                except Exception:
+                    pass
             
             if not tracks and recent_yt_tracks:
                 print("Running YouTube Music recommendations for:", recent_yt_tracks[0]['id'])
