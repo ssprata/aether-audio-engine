@@ -6305,11 +6305,7 @@ function playSong(song, index) {
       cacheStreamTrack(song);
     }
   } else if (song.platform === 'spotify') {
-    if (song.previewUrl) {
-      playPreviewTrack(song.previewUrl);
-    } else {
-      playProxyFallback(song);
-    }
+    playProxyFallback(song);
     if (state.smartCacheEnabled && navigator.onLine) {
       cacheStreamTrack(song);
     }
@@ -6545,17 +6541,33 @@ async function playProxyFallback(song) {
           const mobileCover = document.getElementById('mobileNpCoverImg');
           if (mobileCover) mobileCover.src = song.thumbnail;
         }
+        // Cache resolved YouTube ID on the song object so next plays/resumes are instant
+        song._preResolvedYtId = results[0].id;
         // play the best YouTube match but keep Spotify/SoundCloud UI metadata
         playYouTubeTrack(results[0].id);
+      } else if (song.previewUrl) {
+        console.warn('[AudioEngine] YouTube fallback not found, falling back to preview audio');
+        playPreviewTrack(song.previewUrl);
       } else {
         showToast('Playback file not found');
         state.isPlaying = false;
         updatePlayButtonUI(false);
       }
+    } else if (song.previewUrl) {
+      console.warn('[AudioEngine] Search API failed, falling back to preview audio');
+      playPreviewTrack(song.previewUrl);
+    } else {
+      showToast('Playback file not found');
+      state.isPlaying = false;
+      updatePlayButtonUI(false);
     }
   } catch (e) {
     console.error('Proxy play lookup failed:', e);
-    showToast('Failed to load proxy playback');
+    if (song.previewUrl) {
+      playPreviewTrack(song.previewUrl);
+    } else {
+      showToast('Failed to load proxy playback');
+    }
   }
 }
 

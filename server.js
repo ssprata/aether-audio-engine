@@ -126,11 +126,24 @@ app.get('/api/settings', (req, res) => {
   });
 });
 
-// Spotify Auth Helper
+const DEFAULT_SPOTIFY_CLIENT_ID = "3510f89188314655988ffca613fab25f";
+const DEFAULT_SPOTIFY_CLIENT_SECRET = "ce7cb9306aba4790a71f9e8bd1c25969";
+let spotifyTokenCache = { token: null, expiresAt: 0, key: null };
+
+// Spotify Auth Helper with caching and default credentials
 async function getSpotifyAccessToken(clientId, clientSecret) {
-  if (!clientId || !clientSecret) return null;
+  const cid = (clientId || '').trim() || DEFAULT_SPOTIFY_CLIENT_ID;
+  const sec = (clientSecret || '').trim() || DEFAULT_SPOTIFY_CLIENT_SECRET;
+  if (!cid || !sec) return null;
+
+  const cacheKey = `${cid}:${sec}`;
+  const now = Date.now();
+  if (spotifyTokenCache.token && spotifyTokenCache.key === cacheKey && now < spotifyTokenCache.expiresAt - 60000) {
+    return spotifyTokenCache.token;
+  }
+
   try {
-    const authString = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+    const authString = Buffer.from(`${cid}:${sec}`).toString('base64');
     const response = await fetch('https://accounts.spotify.com/api/token', {
       method: 'POST',
       headers: {
@@ -145,6 +158,13 @@ async function getSpotifyAccessToken(clientId, clientSecret) {
       return null;
     }
     const data = await response.json();
+    if (data.access_token) {
+      spotifyTokenCache = {
+        token: data.access_token,
+        expiresAt: now + (data.expires_in || 3600) * 1000,
+        key: cacheKey
+      };
+    }
     return data.access_token;
   } catch (err) {
     console.error('Spotify auth error:', err);

@@ -365,12 +365,33 @@ def format_duration_ms(ms):
     seconds = total_secs % 60
     return f"{minutes}:{seconds:02d}"
 
-# Spotify Auth helper
-def get_spotify_access_token(client_id, client_secret):
-    if not client_id or not client_secret:
+# Default Spotify client credentials so search & metadata work out-of-the-box without manual setup
+DEFAULT_SPOTIFY_CLIENT_ID = "3510f89188314655988ffca613fab25f"
+DEFAULT_SPOTIFY_CLIENT_SECRET = "ce7cb9306aba4790a71f9e8bd1c25969"
+
+_spotify_token_cache = {
+    'token': None,
+    'expires_at': 0,
+    'key': None
+}
+
+# Spotify Auth helper with in-memory caching and fallback credentials
+def get_spotify_access_token(client_id=None, client_secret=None):
+    cid = (client_id or '').strip() if client_id else ''
+    sec = (client_secret or '').strip() if client_secret else ''
+    if not cid or not sec:
+        cid = DEFAULT_SPOTIFY_CLIENT_ID
+        sec = DEFAULT_SPOTIFY_CLIENT_SECRET
+    if not cid or not sec:
         return None
+
+    cache_key = f"{cid}:{sec}"
+    now = time.time()
+    if _spotify_token_cache['token'] and _spotify_token_cache['key'] == cache_key and now < _spotify_token_cache['expires_at'] - 60:
+        return _spotify_token_cache['token']
+
     try:
-        auth_bytes = f"{client_id}:{client_secret}".encode('utf-8')
+        auth_bytes = f"{cid}:{sec}".encode('utf-8')
         auth_string = base64.b64encode(auth_bytes).decode('utf-8')
         url = 'https://accounts.spotify.com/api/token'
         headers = {
@@ -379,9 +400,15 @@ def get_spotify_access_token(client_id, client_secret):
         }
         data = urllib.parse.urlencode({'grant_type': 'client_credentials'}).encode('utf-8')
         req = urllib.request.Request(url, data=data, headers=headers)
-        with urllib.request.urlopen(req) as res:
+        with urllib.request.urlopen(req, timeout=10) as res:
             response_data = json.loads(res.read().decode('utf-8'))
-            return response_data.get('access_token')
+            token = response_data.get('access_token')
+            expires_in = response_data.get('expires_in', 3600)
+            if token:
+                _spotify_token_cache['token'] = token
+                _spotify_token_cache['expires_at'] = now + expires_in
+                _spotify_token_cache['key'] = cache_key
+            return token
     except Exception as err:
         print("Spotify auth error:", err)
         return None
@@ -2356,8 +2383,7 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             # Get Spotify token if credentials exist
             config = read_config()
             client_id = config.get('spotifyClientId')
-            client_secret = config.get('spotifyClientSecret')
-            token = get_spotify_access_token(client_id, client_secret) if (client_id and client_secret) else None
+            token = get_spotify_access_token(client_id, client_secret)
             
             # Extract recently played tracks/artists
             recent_spotify_tracks = [t for t in history if t.get('platform') == 'spotify'][:3]
