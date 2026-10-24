@@ -28,6 +28,7 @@ const AetherJam = {
   _heartbeatTimer: null,
   _driftCheckTimer: null,
   _lastBroadcastTime: 0,
+  _lastAppliedTimestamp: 0,
   _lastToastMessage: '',
   _lastToastTime: 0,
   _myParticipantId: null,
@@ -118,7 +119,9 @@ const AetherJam = {
         }
       ],
       createdAt: Date.now(),
-      lastUpdated: Date.now()
+      lastUpdated: Date.now(),
+      lastUpdatedBy: this._myParticipantId,
+      lastAction: 'create'
     };
 
     try {
@@ -131,10 +134,12 @@ const AetherJam = {
       this.isPlaying = isPlaying;
       this.trackOffset = playbackPos;
       this.serverTimestamp = sessionData.serverTimestamp;
+      this._lastAppliedTimestamp = sessionData.serverTimestamp;
 
       this.startRealtimeListener(code);
       this.startHeartbeat(code);
-      this.startDriftCorrection();
+      // NOTE: Host is the authoritative playback clock and must never run drift correction on itself!
+      this.stopDriftCorrection();
       this.updatePillUI();
       this.renderJamModal();
 
@@ -200,13 +205,18 @@ const AetherJam = {
 
       await docRef.update({
         participants: participants,
-        lastUpdated: Date.now()
+        lastUpdated: Date.now(),
+        lastUpdatedBy: this._myParticipantId
       });
 
       this.participants = participants;
       this.startRealtimeListener(code);
       this.startHeartbeat(code);
-      this.startDriftCorrection();
+      if (!this.isHost) {
+        this.startDriftCorrection();
+      } else {
+        this.stopDriftCorrection();
+      }
       this.updatePillUI();
       this.renderJamModal();
 
@@ -246,7 +256,8 @@ const AetherJam = {
           const updated = (data.participants || []).filter(p => p.id !== this._myParticipantId);
           await docRef.update({
             participants: updated,
-            lastUpdated: Date.now()
+            lastUpdated: Date.now(),
+            lastUpdatedBy: this._myParticipantId
           });
         }
       }
@@ -274,7 +285,9 @@ const AetherJam = {
         await fbDb.collection('jam_sessions').doc(code).update({
           status: 'ended',
           isPlaying: false,
-          lastUpdated: Date.now()
+          lastUpdated: Date.now(),
+          lastUpdatedBy: this._myParticipantId,
+          lastAction: 'end'
         });
       }
     } catch (err) {
@@ -332,6 +345,34 @@ const AetherJam = {
         return;
       }
 
+      // Check if playback anchor, track, or play state actually changed
+      // This prevents participant joins/heartbeats from restarting or disrupting playback!
+      const remoteTimestamp = data.serverTimestamp || 0;
+      const remoteSongId = data.currentSong ? data.currentSong.id : null;
+      const currentSongId = (typeof state !== 'undefined' && state.currentSong) ? state.currentSong.id : (this.currentSong ? this.currentSong.id : null);
+      const isRemotePlaying = !!data.isPlaying;
+      const isLocalPlaying = (typeof state !== 'undefined') ? !!state.isPlaying : !!this.isPlaying;
+
+      const songChanged = (remoteSongId !== currentSongId);
+      const playStateChanged = (isRemotePlaying !== isLocalPlaying);
+      const timestampChanged = (remoteTimestamp !== this._lastAppliedTimestamp);
+
+      // If neither song, play state, nor anchor timestamp changed, do not disrupt audio playback!
+      if (!songChanged && !playStateChanged && !timestampChanged && !data.lastAction) {
+        // Just a participant ping or queue change; sync queue if changed
+        if (Array.isArray(data.playQueue) && typeof state !== 'undefined') {
+          const currentQueueIds = (state.playQueue || []).map(s => s.id).join(',');
+          const remoteQueueIds = data.playQueue.map(s => s.id).join(',');
+          if (currentQueueIds !== remoteQueueIds) {
+            state.playQueue = data.playQueue;
+            if (state.unshuffledQueue) state.unshuffledQueue = [...data.playQueue];
+            if (typeof renderQueueUI === 'function') renderQueueUI();
+          }
+        }
+        return;
+      }
+
+      this._lastAppliedTimestamp = remoteTimestamp;
       this.applyRemoteUpdate(data, false);
     }, (err) => {
       console.warn('[AetherJam] Realtime listener error:', err);
@@ -370,7 +411,6 @@ const AetherJam = {
 
       // 1. Shared Queue Sync
       if (Array.isArray(data.playQueue) && typeof state !== 'undefined') {
-        // Compare queue length or IDs to avoid re-rendering if unchanged
         const currentQueueIds = (state.playQueue || []).map(s => s.id).join(',');
         const remoteQueueIds = data.playQueue.map(s => s.id).join(',');
         if (currentQueueIds !== remoteQueueIds) {
@@ -380,7 +420,55 @@ const AetherJam = {
         }
       }
 
-      // 2. Track Change Sync
+      // 2. HOST PROTECTION:
+      // The Host is the authoritative playback clock. The Host NEVER adjusts its playhead for clock drift!
+      if (this.isHost && !isInitial) {
+        // In host-only mode, guests cannot modify playback
+        if (this.controlMode !== 'everyone') {
+          return;
+        }
+
+        // In 'everyone' mode, only process deliberate guest-commanded actions:
+        const remoteSong = data.currentSong;
+        const localSong = (typeof state !== 'undefined') ? state.currentSong : null;
+        const isDifferentSong = remoteSong && (!localSong || localSong.id !== remoteSong.id);
+
+        if (isDifferentSong) {
+          console.log('[AetherJam] Guest changed track to:', remoteSong.title);
+          this.currentSong = remoteSong;
+          if (typeof playSong === 'function') {
+            const qIndex = (typeof data.currentQueueIndex === 'number') ? data.currentQueueIndex : 0;
+            playSong(remoteSong, qIndex);
+          }
+          this._showSyncToast(`Guest played: ${remoteSong.title}`);
+          return;
+        }
+
+        if (data.lastAction === 'pause' && state.isPlaying) {
+          console.log('[AetherJam] Guest paused playback');
+          this.forcePause();
+          this._showSyncToast('Guest paused playback');
+          return;
+        }
+
+        if (data.lastAction === 'play' && !state.isPlaying) {
+          console.log('[AetherJam] Guest resumed playback');
+          this.forcePlay();
+          this._showSyncToast('Guest resumed playback');
+          return;
+        }
+
+        if (data.lastAction === 'seek') {
+          console.log('[AetherJam] Guest seeked to:', expectedSeconds);
+          this.forceSeekTo(expectedSeconds);
+          return;
+        }
+
+        // Host NEVER seeks for drift!
+        return;
+      }
+
+      // 3. Track Change Sync (for Guests or Initial Join)
       const remoteSong = data.currentSong;
       const localSong = (typeof state !== 'undefined') ? state.currentSong : null;
       const isDifferentSong = remoteSong && (!localSong || localSong.id !== remoteSong.id);
@@ -404,7 +492,7 @@ const AetherJam = {
         return;
       }
 
-      // 3. Play / Pause State Sync
+      // 4. Play / Pause State Sync (for Guests)
       if (typeof state !== 'undefined' && localSong) {
         if (isRemotePlaying && !state.isPlaying) {
           console.log('[AetherJam] Remote resumed playback at', expectedSeconds);
@@ -417,10 +505,11 @@ const AetherJam = {
           this.forcePause();
           this._showSyncToast('Playback paused');
         } else if (isRemotePlaying && state.isPlaying) {
-          // Both playing: check for clock drift
+          // Both playing: check for clock drift on GUEST
+          if (this.isHost) return;
           const currentLocalSec = state.playbackPosition || 0;
           const drift = Math.abs(currentLocalSec - expectedSeconds);
-          if (drift > 0.45) {
+          if (drift > 2.0) {
             console.log(`[AetherJam] Correcting drift (${drift.toFixed(2)}s) -> seeking to ${expectedSeconds.toFixed(2)}s`);
             this.forceSeekTo(expectedSeconds);
           }
@@ -443,8 +532,17 @@ const AetherJam = {
     const boundedSec = Math.max(0, Math.min(state.duration, seconds));
     const pct = boundedSec / state.duration;
 
-    if (typeof seekToPercentage === 'function') {
-      seekToPercentage(pct);
+    // Suppress outbound broadcast while applying internal forced seek
+    const prevApplying = this._isApplyingRemote;
+    this._isApplyingRemote = true;
+    try {
+      if (typeof seekToPercentage === 'function') {
+        seekToPercentage(pct);
+      }
+    } finally {
+      setTimeout(() => {
+        this._isApplyingRemote = prevApplying;
+      }, 500);
     }
   },
 
@@ -497,6 +595,11 @@ const AetherJam = {
     if (!this.isActive || !this.canControl() || this._isApplyingRemote) return;
     const now = Date.now();
     this._lastBroadcastTime = now;
+    this._lastAppliedTimestamp = now;
+    this.isPlaying = true;
+    this.currentSong = song;
+    this.trackOffset = position || 0;
+    this.serverTimestamp = now;
 
     try {
       const docRef = fbDb.collection('jam_sessions').doc(this.jamCode);
@@ -507,7 +610,8 @@ const AetherJam = {
         trackOffset: position || 0,
         serverTimestamp: now,
         lastUpdated: now,
-        lastUpdatedBy: this._myParticipantId
+        lastUpdatedBy: this._myParticipantId,
+        lastAction: 'play'
       });
       console.log('[AetherJam] Broadcast PLAY event:', song.title, 'at', position);
     } catch (err) {
@@ -519,6 +623,10 @@ const AetherJam = {
     if (!this.isActive || !this.canControl() || this._isApplyingRemote) return;
     const now = Date.now();
     this._lastBroadcastTime = now;
+    this._lastAppliedTimestamp = now;
+    this.isPlaying = false;
+    this.trackOffset = position || 0;
+    this.serverTimestamp = now;
 
     try {
       const docRef = fbDb.collection('jam_sessions').doc(this.jamCode);
@@ -527,7 +635,8 @@ const AetherJam = {
         trackOffset: position || 0,
         serverTimestamp: now,
         lastUpdated: now,
-        lastUpdatedBy: this._myParticipantId
+        lastUpdatedBy: this._myParticipantId,
+        lastAction: 'pause'
       });
       console.log('[AetherJam] Broadcast PAUSE event at', position);
     } catch (err) {
@@ -539,6 +648,9 @@ const AetherJam = {
     if (!this.isActive || !this.canControl() || this._isApplyingRemote) return;
     const now = Date.now();
     this._lastBroadcastTime = now;
+    this._lastAppliedTimestamp = now;
+    this.trackOffset = position || 0;
+    this.serverTimestamp = now;
 
     try {
       const docRef = fbDb.collection('jam_sessions').doc(this.jamCode);
@@ -546,7 +658,8 @@ const AetherJam = {
         trackOffset: position || 0,
         serverTimestamp: now,
         lastUpdated: now,
-        lastUpdatedBy: this._myParticipantId
+        lastUpdatedBy: this._myParticipantId,
+        lastAction: 'seek'
       });
       console.log('[AetherJam] Broadcast SEEK event to', position);
     } catch (err) {
@@ -563,7 +676,8 @@ const AetherJam = {
       await docRef.update({
         playQueue: queue || [],
         lastUpdated: now,
-        lastUpdatedBy: this._myParticipantId
+        lastUpdatedBy: this._myParticipantId,
+        lastAction: 'queue'
       });
       console.log('[AetherJam] Broadcast QUEUE update');
     } catch (err) {
@@ -578,7 +692,9 @@ const AetherJam = {
       const docRef = fbDb.collection('jam_sessions').doc(this.jamCode);
       await docRef.update({
         controlMode: mode,
-        lastUpdated: Date.now()
+        lastUpdated: Date.now(),
+        lastUpdatedBy: this._myParticipantId,
+        lastAction: 'mode'
       });
       showToast(mode === 'everyone' ? 'All guests can now control playback' : 'Only host can control playback');
     } catch (err) {
@@ -590,9 +706,10 @@ const AetherJam = {
 
   startDriftCorrection() {
     this.stopDriftCorrection();
-    // Steady, gentle 4-second drift alignment check (0 network calls, purely local calculation)
+    // Steady, gentle drift alignment check for guests (0 network calls, purely local calculation)
     this._driftCheckTimer = setInterval(() => {
       if (!this.isActive || this._isApplyingRemote) return;
+      if (this.isHost) return; // HOST is the reference clock authority; never drift-correct!
       if (typeof state === 'undefined' || !state.isPlaying || !this.isPlaying) return;
 
       const now = Date.now();
@@ -601,8 +718,8 @@ const AetherJam = {
       const current = state.playbackPosition || 0;
       const drift = Math.abs(current - expected);
 
-      // If drift is significant (>0.55s), smoothly realign
-      if (drift > 0.55 && state.duration && expected < state.duration - 2) {
+      // Only realign if drift is significant (>2.0s) to avoid unnecessary seeks on minor network jitter
+      if (drift > 2.0 && state.duration && expected < state.duration - 2) {
         console.log(`[AetherJam Drift Check] Aligning playhead drift: ${drift.toFixed(2)}s`);
         this.forceSeekTo(expected);
       }
@@ -632,7 +749,10 @@ const AetherJam = {
           const idx = participants.findIndex(p => p.id === this._myParticipantId);
           if (idx !== -1) {
             participants[idx].lastPing = Date.now();
-            await docRef.update({ participants: participants });
+            await docRef.update({
+              participants: participants,
+              lastUpdatedBy: this._myParticipantId
+            });
           }
         }
       } catch (e) {}
