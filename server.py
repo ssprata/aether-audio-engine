@@ -6,6 +6,8 @@ import base64
 import time
 import urllib.request
 import urllib.parse
+import subprocess
+import shutil
 try:
     from http.server import ThreadingHTTPServer as BaseHTTPServer, SimpleHTTPRequestHandler
 except ImportError:
@@ -30,7 +32,7 @@ def _migrate_legacy_data(legacy_dir, new_data_dir):
     try:
         os.makedirs(new_data_dir, exist_ok=True)
         # Migrate files
-        for fname in ['config.json', 'playlists_backup.json', 'history.json']:
+        for fname in ['config.json', 'playlists_backup.json', 'history.json', 'cookies.txt']:
             old_p = os.path.join(legacy_dir, fname)
             new_p = os.path.join(new_data_dir, fname)
             if os.path.exists(old_p):
@@ -1067,7 +1069,39 @@ def get_youtube_audio_url(video_id, force_refresh=False):
         if now < exp:
             return cached_url
 
-    # Primary: yt-dlp fast stream extraction
+    # Candidate cookie paths for Portable, PyInstaller Frozen, UserData, and Repo roots
+    cookie_candidates = [
+        os.path.join(DATA_DIR, 'cookies.txt'),
+        os.path.join(BUNDLE_DIR, 'cookies.txt'),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt'),
+        os.path.join(os.environ.get('APPDATA', ''), 'AetherPlayer', 'cookies.txt'),
+        os.path.join(os.path.expanduser('~'), '.aetherplayer', 'cookies.txt')
+    ]
+    cookie_file = None
+    for cand in cookie_candidates:
+        if cand and os.path.exists(cand) and os.path.getsize(cand) > 100:
+            cookie_file = cand
+            break
+
+    # If no cookies file exists yet, try automatic one-time extraction from installed browsers
+    if not cookie_file:
+        try:
+            import yt_dlp
+            for b in ('firefox', 'edge', 'chrome', 'brave', 'opera'):
+                try:
+                    save_path = os.path.join(DATA_DIR, 'cookies.txt')
+                    with yt_dlp.YoutubeDL({'cookiesfrombrowser': (b,), 'cookiefile': save_path, 'quiet': True}) as ydl:
+                        ydl.cookiejar.save(save_path, ignore_discard=True, ignore_expires=True)
+                        if os.path.exists(save_path) and os.path.getsize(save_path) > 100:
+                            cookie_file = save_path
+                            print(f"[AetherPlayer] Auto-harvested YouTube authentication cookies from {b}!")
+                            break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    # Primary: yt-dlp fast stream extraction with JS challenge solver
     try:
         import yt_dlp
         ydl_opts = {
@@ -1076,10 +1110,10 @@ def get_youtube_audio_url(video_id, force_refresh=False):
             'no_warnings': True,
             'skip_download': True,
             'noplaylist': True,
-            'extract_flat': False
+            'extract_flat': False,
+            'remote_components': ['ejs:github']
         }
-        cookie_file = os.path.join(DATA_DIR, 'cookies.txt')
-        if os.path.exists(cookie_file):
+        if cookie_file:
             ydl_opts['cookiefile'] = cookie_file
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -1486,18 +1520,29 @@ def download_track_offline(song_data, is_cache=False):
     safe_id = re.sub(r'[^a-zA-Z0-9_-]', '_', str(song_id))
     outtmpl = os.path.join(DOWNLOADS_DIR, f"{safe_id}.%(ext)s")
 
+    cookie_candidates = [
+        os.path.join(DATA_DIR, 'cookies.txt'),
+        os.path.join(BUNDLE_DIR, 'cookies.txt'),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt'),
+        os.path.join(os.environ.get('APPDATA', ''), 'AetherPlayer', 'cookies.txt'),
+        os.path.join(os.path.expanduser('~'), '.aetherplayer', 'cookies.txt')
+    ]
+    cookie_file = None
+    for cand in cookie_candidates:
+        if cand and os.path.exists(cand) and os.path.getsize(cand) > 100:
+            cookie_file = cand
+            break
+
     ydl_opts = {
         'format': 'ba/b',
         'outtmpl': outtmpl,
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['ios', 'android', 'web']
-            }
-        }
+        'remote_components': ['ejs:github']
     }
+    if cookie_file:
+        ydl_opts['cookiefile'] = cookie_file
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -3018,72 +3063,106 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                 self.send_error(400, "Video ID required")
                 return
 
-            audio_url = get_youtube_audio_url(video_id)
-            if not audio_url:
-                self.send_error(404, "Audio stream not found")
-                return
+            # 1. Check local download / smart cache on disk
+            local_matches = [
+                os.path.join(DOWNLOADS_DIR, f"{video_id}.mp4"),
+                os.path.join(DOWNLOADS_DIR, f"{video_id}.m4a"),
+                os.path.join(DOWNLOADS_DIR, f"{video_id}.webm")
+            ]
+            for lf in local_matches:
+                if os.path.exists(lf) and os.path.getsize(lf) > 1000:
+                    ctype = 'audio/mp4' if lf.endswith(('.mp4', '.m4a')) else 'audio/webm'
+                    self._serve_static_range_file(lf, ctype)
+                    return
 
-            req_headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
-            range_header = self.headers.get('Range')
-            if range_header:
-                req_headers["Range"] = range_header
+            # 2. Candidate cookies lookup
+            cookie_candidates = [
+                os.path.join(DATA_DIR, 'cookies.txt'),
+                os.path.join(BUNDLE_DIR, 'cookies.txt'),
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt'),
+                os.path.join(os.environ.get('APPDATA', ''), 'AetherPlayer', 'cookies.txt'),
+                os.path.join(os.path.expanduser('~'), '.aetherplayer', 'cookies.txt')
+            ]
+            cookie_file = None
+            for cand in cookie_candidates:
+                if cand and os.path.exists(cand) and os.path.getsize(cand) > 100:
+                    cookie_file = cand
+                    break
 
-            # Two-attempt loop: if upstream returns 403 / 410 (URL expired), re-resolve stream URL automatically
-            for attempt in range(2):
+            if not cookie_file:
                 try:
-                    upstream_req = urllib.request.Request(audio_url, headers=req_headers)
-                    with urllib.request.urlopen(upstream_req, timeout=12) as upstream_resp:
-                        status_code = upstream_resp.status
-                        self.send_response(status_code)
-                        for header_name in ['Content-Type', 'Content-Range', 'Content-Length', 'Accept-Ranges']:
-                            val = upstream_resp.headers.get(header_name)
-                            if val:
-                                self.send_header(header_name, val)
-                        self.send_header('Access-Control-Allow-Origin', '*')
-                        self.send_header('Access-Control-Allow-Headers', 'Range, Content-Type')
-                        self.send_header('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges')
-                        self.end_headers()
-
-                        chunk_size = 65536
-                        while True:
-                            try:
-                                chunk = upstream_resp.read(chunk_size)
-                                if not chunk:
+                    import yt_dlp
+                    for b in ('firefox', 'edge', 'chrome', 'brave', 'opera'):
+                        try:
+                            save_path = os.path.join(DATA_DIR, 'cookies.txt')
+                            with yt_dlp.YoutubeDL({'cookiesfrombrowser': (b,), 'cookiefile': save_path, 'quiet': True}) as ydl:
+                                ydl.cookiejar.save(save_path, ignore_discard=True, ignore_expires=True)
+                                if os.path.exists(save_path) and os.path.getsize(save_path) > 100:
+                                    cookie_file = save_path
                                     break
-                                self.wfile.write(chunk)
-                            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
-                                # Client closed connection or sought elsewhere
-                                return
-                    return
-                except urllib.error.HTTPError as he:
-                    if he.code in (403, 404, 410) and attempt == 0:
-                        print(f"[Stream Proxy] Upstream returned {he.code} for {video_id}, re-resolving fresh stream URL...")
-                        YOUTUBE_AUDIO_CACHE.pop(video_id, None)
-                        audio_url = get_youtube_audio_url(video_id, force_refresh=True)
-                        if audio_url:
+                        except Exception:
                             continue
-                    print(f"[Stream Proxy HTTPError] {he.code}: {he}")
-                    break
-                except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
-                    # Client closed connection during request initialization
-                    return
-                except Exception as e:
-                    print(f"[Stream Proxy Error] {e}")
-                    if attempt == 0:
-                        YOUTUBE_AUDIO_CACHE.pop(video_id, None)
-                        audio_url = get_youtube_audio_url(video_id, force_refresh=True)
-                        if audio_url:
-                            continue
-                    break
-
-            if not self.wfile.closed:
-                try:
-                    self.send_error(502, "Proxy stream error")
                 except Exception:
                     pass
-            return
+
+            # 3. High-performance direct audio stream pipeline (piped via embedded yt-dlp)
+            if getattr(sys, 'frozen', False):
+                cmd = [sys.executable, '--yt-dlp']
+            else:
+                desktop_script = os.path.join(BUNDLE_DIR, 'desktop.py')
+                if os.path.exists(desktop_script):
+                    cmd = [sys.executable, desktop_script, '--yt-dlp']
+                else:
+                    cmd = [sys.executable, '-m', 'yt_dlp']
+
+            cmd.extend([
+                '--format', 'bestaudio[ext=m4a]/bestaudio/best',
+                '--remote-components', 'ejs:github',
+                '-o', '-',
+                '--quiet',
+                '--no-warnings'
+            ])
+            if cookie_file:
+                cmd.extend(['--cookies', cookie_file])
+            cmd.append(f'https://www.youtube.com/watch?v={video_id}')
+
+            try:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                # Read initial buffer chunk to ensure stream started successfully
+                first_chunk = proc.stdout.read(65536)
+                if not first_chunk:
+                    proc.terminate()
+                    self.send_error(502, "Stream negotiation failed")
+                    return
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'audio/mp4')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Access-Control-Allow-Headers', 'Range, Content-Type')
+                self.send_header('Accept-Ranges', 'none')
+                self.end_headers()
+
+                self.wfile.write(first_chunk)
+                while True:
+                    chunk = proc.stdout.read(65536)
+                    if not chunk:
+                        break
+                    try:
+                        self.wfile.write(chunk)
+                    except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                        proc.terminate()
+                        return
+                proc.wait()
+                return
+            except Exception as e:
+                import traceback
+                self.log_error(f"[Piped Stream Proxy Error] {e}\n{traceback.format_exc()}")
+                if not self.wfile.closed:
+                    try:
+                        self.send_error(502, f"Proxy stream error: {e}")
+                    except Exception:
+                        pass
+                return
 
         elif path == '/api/stream-url' or path == '/api/stream':
             video_id = query_params.get('id', [''])[0].strip()

@@ -2359,9 +2359,9 @@ input[type="range"]::-webkit-slider-thumb:hover {
   right: 0;
   width: 200px;
   height: 200px;
-  opacity: 0.001;
+  opacity: 0.02;
   pointer-events: none;
-  z-index: -10;
+  z-index: 1;
   overflow: hidden;
 }
 

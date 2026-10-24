@@ -1,6 +1,12 @@
 import os
 import sys
 
+# Support embedded yt-dlp subcommand for high-performance direct audio streaming
+if len(sys.argv) > 1 and sys.argv[1] == '--yt-dlp':
+    import yt_dlp
+    sys.argv = ['yt-dlp'] + sys.argv[2:]
+    sys.exit(yt_dlp.main())
+
 # Safeguard stdout/stderr for PyInstaller --noconsole mode
 if sys.stdout is None:
     sys.stdout = open(os.devnull, 'w')

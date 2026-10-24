@@ -1067,6 +1067,18 @@ def get_youtube_audio_url(video_id, force_refresh=False):
         if now < exp:
             return cached_url
 
+    # Candidate cookie paths
+    cookie_candidates = [
+        os.path.join(DATA_DIR, 'cookies.txt'),
+        os.path.join(BUNDLE_DIR, 'cookies.txt'),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt')
+    ]
+    cookie_file = None
+    for cand in cookie_candidates:
+        if cand and os.path.exists(cand) and os.path.getsize(cand) > 100:
+            cookie_file = cand
+            break
+
     # Primary: yt-dlp fast stream extraction
     try:
         import yt_dlp
@@ -1076,8 +1088,12 @@ def get_youtube_audio_url(video_id, force_refresh=False):
             'no_warnings': True,
             'skip_download': True,
             'noplaylist': True,
-            'extract_flat': False
+            'extract_flat': False,
+            'remote_components': ['ejs:github']
         }
+        if cookie_file:
+            ydl_opts['cookiefile'] = cookie_file
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
             if info and 'url' in info:
@@ -1482,18 +1498,27 @@ def download_track_offline(song_data, is_cache=False):
     safe_id = re.sub(r'[^a-zA-Z0-9_-]', '_', str(song_id))
     outtmpl = os.path.join(DOWNLOADS_DIR, f"{safe_id}.%(ext)s")
 
+    cookie_candidates = [
+        os.path.join(DATA_DIR, 'cookies.txt'),
+        os.path.join(BUNDLE_DIR, 'cookies.txt'),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt')
+    ]
+    cookie_file = None
+    for cand in cookie_candidates:
+        if cand and os.path.exists(cand) and os.path.getsize(cand) > 100:
+            cookie_file = cand
+            break
+
     ydl_opts = {
         'format': 'ba/b',
         'outtmpl': outtmpl,
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['ios', 'android', 'web']
-            }
-        }
+        'remote_components': ['ejs:github']
     }
+    if cookie_file:
+        ydl_opts['cookiefile'] = cookie_file
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

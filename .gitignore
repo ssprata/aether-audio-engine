@@ -5,10 +5,12 @@ playlists_backup.json
 weekly_plays.json
 weekly_ranking_cache.json
 queue_session.json
+cookies.txt
 downloads/
 android/app/src/main/python/weekly_plays.json
 android/app/src/main/python/weekly_ranking_cache.json
 android/app/src/main/python/queue_session.json
+android/app/src/main/python/cookies.txt
 android/app/src/main/python/downloads/
 
 # User uploads (custom avatars & wallpapers)
