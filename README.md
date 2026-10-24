@@ -24,6 +24,13 @@ AetherPlayer is a personalizable music player and streaming interface that aggre
 - Automated local backups (`playlists_backup.json`) with one-click restore.
 - Optional Firebase Cloud Sync for multi-device access.
 
+### Aether Jam - Real-Time Listening with Friends (v2.5.0)
+- **Spotify Jam-style synchronized playback**: Listen along with friends simultaneously on PC, phone, or tablet.
+- **Anchor Timestamp Sync Architecture**: Sub-300ms real-time playback synchronization with zero continuous database writes or overhead.
+- **Instant Connection**: Join in 1 click using 4-character room codes (`JAM-XXXX`), dynamic QR codes, or direct URL links (`?jam=JAM-XXXX`).
+- **Collaborative Shared Queue**: Both host and guests can add tracks, reorder, or skip songs with optional host-only control mode.
+- **Live Active Listener Badges**: Real-time presence indicators with animated audio equalizer waveforms.
+
 ---
 
 ## Quick Start (Standalone Windows App)

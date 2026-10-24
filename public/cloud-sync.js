@@ -921,6 +921,18 @@ const CloudSync = {
 
   _handleDetectedPasskey(rawText) {
     if (!rawText) return;
+
+    if (typeof window._jamQrScanHook === 'function') {
+      const hook = window._jamQrScanHook;
+      window._jamQrScanHook = null;
+      if (navigator.vibrate) {
+        try { navigator.vibrate([100, 50, 100]); } catch (e) {}
+      }
+      this.stopQrScanner();
+      hook(rawText);
+      return;
+    }
+
     let clean = rawText.trim().toUpperCase();
 
     // Extract AETH-XXXX-XXXX-XXXX if present

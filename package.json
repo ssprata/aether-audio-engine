@@ -1,6 +1,6 @@
 {
   "name": "multi-music-tool",
-  "version": "2.2.1",
+  "version": "2.5.0",
   "description": "Multi-Source Music Player with Customization and Backup",
   "main": "server.js",
   "scripts": {

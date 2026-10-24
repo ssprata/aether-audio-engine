@@ -4584,6 +4584,9 @@ function setupEventListeners() {
           }
         }
         renderQueueUI();
+        if (typeof AetherJam !== 'undefined' && AetherJam.isActive && !AetherJam._isApplyingRemote && AetherJam.canControl()) {
+          AetherJam.broadcastQueue(state.playQueue);
+        }
         showToast('Upcoming queue cleared');
       } else {
         showToast('Queue is already empty');
@@ -6340,6 +6343,11 @@ function playSong(song, index) {
 
   // Preload / pre-resolve the upcoming track in the queue to minimize startup latency
   preloadNextTrackInQueue(index);
+
+  // Sync Collaborative Aether Jam Playback & Shared Queue
+  if (typeof AetherJam !== 'undefined' && AetherJam.isActive && !AetherJam._isApplyingRemote && AetherJam.canControl()) {
+    AetherJam.broadcastPlay(song, index, 0);
+  }
 }
 
 async function playYouTubeTrack(videoId, startTime = 0) {
@@ -6633,6 +6641,9 @@ function togglePlayPause() {
       try { window.AndroidAudio.pauseTrack(); } catch (e) {}
     }
     updatePlayButtonUI(false);
+    if (typeof AetherJam !== 'undefined' && AetherJam.isActive && !AetherJam._isApplyingRemote && AetherJam.canControl()) {
+      AetherJam.broadcastPause(state.playbackPosition || 0);
+    }
   } else {
     // If resuming from a restored saved session where the player hasn't loaded the stream yet:
     const isPlaybackActive = (activeAudio && activeAudio.src) || (ytPlayer && typeof ytPlayer.getPlayerState === 'function' && ytPlayer.getPlayerState() !== -1);
@@ -6660,6 +6671,9 @@ function togglePlayPause() {
       try { window.AndroidAudio.resumeTrack(); } catch (e) {}
     }
     updatePlayButtonUI(true);
+    if (typeof AetherJam !== 'undefined' && AetherJam.isActive && !AetherJam._isApplyingRemote && AetherJam.canControl()) {
+      AetherJam.broadcastPlay(state.currentSong, state.currentQueueIndex >= 0 ? state.currentQueueIndex : 0, state.playbackPosition || 0);
+    }
   }
 }
 
@@ -6890,6 +6904,11 @@ function seekToPercentage(pct) {
       try { ytPlayer.seekTo(seekSeconds, true); } catch (e) {}
     } else if (activeAudio) {
       try { activeAudio.currentTime = seekSeconds; } catch (e) {}
+    }
+
+    // Sync Collaborative Aether Jam Playhead
+    if (typeof AetherJam !== 'undefined' && AetherJam.isActive && !AetherJam._isApplyingRemote && AetherJam.canControl()) {
+      AetherJam.broadcastSeek(seekSeconds);
     }
     // Allow small cooldown before resume timer takes back timeline slider control
     setTimeout(() => {
@@ -8114,6 +8133,9 @@ function renderQueueUI() {
           }
         }
         renderQueueUI();
+        if (typeof AetherJam !== 'undefined' && AetherJam.isActive && !AetherJam._isApplyingRemote && AetherJam.canControl()) {
+          AetherJam.broadcastQueue(state.playQueue);
+        }
         showToast('Removed from queue');
       });
     }

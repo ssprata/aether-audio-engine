@@ -27,6 +27,7 @@
   <script src="qrcode.min.js"></script>
   <script src="jsQR.min.js"></script>
   <script src="cloud-sync.js"></script>
+  <script src="jam-session.js"></script>
   <!-- Application Core -->
   <script src="app.js" defer></script>
   <script>
@@ -82,6 +83,16 @@
       </div>
 
       <div class="header-right">
+        <button class="btn btn-sm btn-jam-pill" id="btnHeaderJam" title="Aether Jam - Listen with friends">
+          <span class="jam-pulse-dot"></span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="jam-btn-icon">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+          <span id="txtHeaderJam">Jam</span>
+        </button>
         <button class="icon-btn header-nav-btn" id="btnHeaderTheme" title="Theme Creator" data-tab="customizer">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
@@ -1453,6 +1464,7 @@
       <div class="player-right">
         <!-- Platform badge indicator -->
         <span class="player-platform-badge" id="playerPlatformBadge" style="display: none;">youtube</span>
+        <span class="player-jam-indicator" id="playerJamIndicator" style="display: none;">Jam • 1 in sync</span>
 
         <button class="control-btn" id="btnToggleQueue" title="Queue">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
@@ -2337,6 +2349,131 @@
           </svg>
           <span>Save DJ Transition</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AETHER JAM COLLABORATIVE SESSION MODAL (Spotify Jam look-alike v2.5.0) -->
+  <div class="modal-overlay" id="modalJamSession" style="display: none;">
+    <div class="modal-card modal-premium-card jam-modal-card">
+      <div class="modal-header jam-modal-header">
+        <div class="jam-header-left">
+          <div class="jam-logo-glow">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+          </div>
+          <div>
+            <h3 class="jam-modal-title">Aether Jam</h3>
+            <p class="jam-modal-subtitle">Listen together with friends in real-time</p>
+          </div>
+        </div>
+        <button class="btn btn-sm btn-icon-only btn-close-jam" id="btnCloseJamModal" aria-label="Close modal">&times;</button>
+      </div>
+
+      <!-- IDLE VIEW: START OR JOIN -->
+      <div class="modal-body jam-modal-body" id="jamViewIdle">
+        <div class="jam-hero-banner">
+          <div class="jam-hero-sparkle">✨</div>
+          <h4>Start a synchronized listening party</h4>
+          <p>Share a code or QR with friends on phone, tablet, or PC. Everyone hears the same song at the exact same second with a shared queue.</p>
+          <button class="btn btn-primary jam-btn-glow" id="btnStartJamSession">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            <span>Start a Jam Session</span>
+          </button>
+        </div>
+
+        <div class="jam-divider">
+          <span>OR JOIN A ROOM</span>
+        </div>
+
+        <div class="jam-join-card">
+          <div class="jam-join-input-group">
+            <input type="text" id="inputJamCode" placeholder="Enter code (e.g. JAM-8921)" maxlength="10" autocomplete="off">
+            <button class="btn btn-outline" id="btnJoinJamSession">Join</button>
+          </div>
+          <button class="btn btn-outline btn-scan-qr-jam" id="btnScanJamQr">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"></rect>
+              <rect x="14" y="3" width="7" height="7"></rect>
+              <rect x="14" y="14" width="7" height="7"></rect>
+              <rect x="3" y="14" width="7" height="7"></rect>
+            </svg>
+            <span>Scan QR Code with Camera</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- ACTIVE VIEW: CONNECTED JAM ROOM -->
+      <div class="modal-body jam-modal-body" id="jamViewActive" style="display: none;">
+        <div class="jam-active-status-bar">
+          <div class="jam-live-indicator">
+            <span class="live-dot-pulse"></span>
+            <strong>LIVE JAM</strong>
+          </div>
+          <span class="jam-badge" id="jamListenerCountBadge">1 Listener</span>
+        </div>
+
+        <!-- Room Code & Sharing Card -->
+        <div class="jam-code-card">
+          <span class="jam-code-label">Room Passcode</span>
+          <div class="jam-code-display-wrap">
+            <span class="jam-code-text" id="jamActiveCodeDisplay">JAM-XXXX</span>
+            <button class="btn btn-sm btn-outline" id="btnCopyJamCode" title="Copy Room Code">Copy</button>
+          </div>
+          <button class="btn btn-sm btn-outline jam-invite-btn" id="btnCopyJamLink">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+            </svg>
+            <span>Copy 1-Click Invite Link</span>
+          </button>
+        </div>
+
+        <!-- QR Code Card for Mobile Scan -->
+        <div class="jam-qr-card">
+          <div class="jam-qr-box" id="jamQrContainer">
+            <!-- QR code rendered dynamically -->
+          </div>
+          <span class="jam-qr-hint">Scan with your smartphone camera to tune in instantly</span>
+        </div>
+
+        <!-- Permissions Switch -->
+        <div class="jam-settings-strip">
+          <div class="jam-setting-info">
+            <span class="jam-setting-title">Host Controls Only</span>
+            <span class="jam-setting-desc">Prevent guests from pausing, seeking, or skipping</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggleJamHostOnly">
+            <span class="slider round"></span>
+          </label>
+        </div>
+
+        <!-- Active Listeners List -->
+        <div class="jam-listeners-section">
+          <h5>Listening Friends</h5>
+          <div class="jam-participants-list" id="jamParticipantsList">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Footer Actions -->
+        <div class="jam-active-footer">
+          <button class="btn btn-danger btn-sm" id="btnLeaveJamSession">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+            <span>Leave / End Jam</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>
