@@ -518,13 +518,25 @@ window.AetherJam = {
         this.controlMode = data.controlMode;
       }
 
+      // If this device triggered this update, ignore to prevent feedback loops
+      if (data.lastUpdatedBy === this._myParticipantId) {
+        return;
+      }
+
+      const remoteSong = data.currentSong;
+      const localSong = (typeof state !== 'undefined') ? state.currentSong : null;
+      const isDifferentSong = remoteSong && (!localSong || localSong.id !== remoteSong.id);
+
+      // Always apply remote update first so Host switches track when Guest picks a song!
+      this.applyRemoteUpdate(data, false);
+
       // HOST HANDSHAKE ARBITER:
-      // If room is buffering and Host sees all active participants are ready (or timeout reached), transition to playing!
-      if (this.isHost && data.status === 'buffering') {
+      // If room is buffering and Host sees all active participants are ready (and Host has loaded the track), transition to playing!
+      if (this.isHost && data.status === 'buffering' && !isDifferentSong) {
         const parts = Array.isArray(data.participants) ? data.participants : [];
         const allReady = parts.length > 0 && parts.every(p => p.ready);
         if (allReady) {
-          console.log('[AetherJam] Host detected all participants ready! Triggering playback');
+          console.log('[AetherJam] Host detected all participants ready! Triggering synchronized playback');
           const startAnchor = Date.now() + 200;
           docRef.update({
             status: 'playing',
@@ -536,16 +548,8 @@ window.AetherJam = {
             lastUpdatedBy: this._myParticipantId
           }).catch(() => {});
           this.schedulePlaybackStart(startAnchor);
-          return;
         }
       }
-
-      // If this device triggered this update, ignore to prevent feedback loops
-      if (data.lastUpdatedBy === this._myParticipantId) {
-        return;
-      }
-
-      this.applyRemoteUpdate(data, false);
     }, (err) => {
       console.warn('[AetherJam] Realtime listener error:', err);
     });
@@ -974,7 +978,7 @@ window.AetherJam = {
 
   setupUIEventListeners() {
     // Intercept track clicks and playback controls in capture phase when listening-only guest tries to change music
-    const trackSelector = '.song-row, .search-result-item, .search-track-item, .track-item, .song-card, .queue-item, .queue-row, .vibe-card, .vibe-track-card, .artist-top-track-row, .top-track-item, .history-item, .rec-track-item, .recommendation-card, .album-track-row, [data-song-id]';
+    const trackSelector = '.song-row, .search-result-item, .search-track-item, .track-item, .song-card, .queue-item, .queue-row, .vibe-card, .vibe-track-card, .quick-recent-card, .quick-mix-card, .playlist-card, .artist-top-track-row, .top-track-item, .history-item, .rec-track-item, .recommendation-card, .album-track-row, [data-song-id]';
     const controlSelector = '#playerPlayPause, #btnPlayPause, #playPauseBtn, #btnNext, #btnPrev, #mobileNpPlayPause, #mobileNpNext, #mobileNpPrev, #playerTimeline, #mobileNpTimeline, #btnShuffle, #btnRepeat';
 
     document.addEventListener('click', (e) => {

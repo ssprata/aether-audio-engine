@@ -10031,26 +10031,53 @@ window.AetherPlayer = {
     }
   },
   loadPausedTrack: function(song, index = 0, startTime = 0) {
-    if (typeof playSong === 'function') {
-      playSong(song, index);
-      setTimeout(() => {
-        if (typeof activeAudio !== 'undefined' && activeAudio) {
-          try { activeAudio.pause(); } catch (e) {}
-        }
-        if (typeof ytPlayer !== 'undefined' && ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
-          try { ytPlayer.pauseVideo(); } catch (e) {}
-        }
-        if (typeof state !== 'undefined') {
-          state.isPlaying = false;
-          state.isUserPaused = true;
-          if (startTime > 0 && state.duration && typeof seekToPercentage === 'function') {
-            seekToPercentage(startTime / state.duration);
-          }
-        }
-        if (typeof updatePlayButtonUI === 'function') {
-          updatePlayButtonUI(false);
-        }
-      }, 50);
+    if (!song) return;
+    if (typeof stopActivePlayback === 'function') {
+      stopActivePlayback();
+    }
+    if (typeof activeAudio !== 'undefined' && activeAudio) {
+      try { activeAudio.pause(); } catch (e) {}
+    }
+    if (typeof ytPlayer !== 'undefined' && ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+      try { ytPlayer.pauseVideo(); } catch (e) {}
+    }
+    if (typeof state !== 'undefined') {
+      state.currentSong = song;
+      state.currentQueueIndex = index >= 0 ? index : 0;
+      state.isPlaying = false;
+      state.isUserPaused = true;
+      state.playbackPosition = startTime || 0;
+
+      const durationParts = (song.duration || '3:00').split(':');
+      if (durationParts.length === 2) {
+        state.duration = parseInt(durationParts[0]) * 60 + parseInt(durationParts[1]);
+      } else {
+        state.duration = 180;
+      }
+
+      if (typeof animateTrackMetadataUpdate === 'function') {
+        animateTrackMetadataUpdate(song, false);
+      }
+      if (typeof updateRightSidebar === 'function') {
+        updateRightSidebar(song);
+      }
+      if (typeof updateFavoriteUI === 'function') {
+        updateFavoriteUI(song);
+      }
+      if (typeof updatePlayButtonUI === 'function') {
+        updatePlayButtonUI(false);
+      }
+
+      const elCurrentTime = document.getElementById('playerCurrentTime');
+      const elTotal = document.getElementById('playerTotalDuration');
+      const elTimeline = document.getElementById('playerTimeline');
+      if (elCurrentTime && typeof formatSeconds === 'function') {
+        elCurrentTime.textContent = formatSeconds(startTime || 0);
+      }
+      if (elTotal) elTotal.textContent = song.duration || '3:00';
+      if (elTimeline && state.duration) {
+        elTimeline.value = ((startTime || 0) / state.duration) * 100;
+      }
     }
   },
   stop: function() {
