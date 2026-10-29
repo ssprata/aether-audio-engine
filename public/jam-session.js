@@ -41,6 +41,7 @@ window.AetherJam = {
   _clockOffset: 0,
   _isNaturalTrackEnd: false,
   _lastUserClickTime: 0,
+  _playbackStartTime: 0,
 
   // --- INITIALIZATION ---
 
@@ -91,13 +92,17 @@ window.AetherJam = {
       return;
     }
     const now = Date.now();
-    const estimatedTransit = 100; // estimated one-way latency in ms
-    const sampleOffset = now - (hostTimestamp + estimatedTransit);
+    const rawDiff = now - hostTimestamp;
+    // If the difference is under 1200ms, clocks are local or well-synchronized: no artificial offset needed
+    if (Math.abs(rawDiff) < 1200) {
+      this._clockOffset = 0;
+      return;
+    }
+    // Only compensate if there is a genuine multi-second system clock skew
     if (this._clockOffset === null || this._clockOffset === undefined || this._clockOffset === 0) {
-      this._clockOffset = sampleOffset;
+      this._clockOffset = rawDiff;
     } else {
-      // 80% previous, 20% sample smoothing
-      this._clockOffset = Math.round(this._clockOffset * 0.8 + sampleOffset * 0.2);
+      this._clockOffset = Math.round(this._clockOffset * 0.8 + rawDiff * 0.2);
     }
   },
 
@@ -333,7 +338,13 @@ window.AetherJam = {
   schedulePlaybackStart(scheduledTime) {
     this._roomStatus = 'playing';
     this._isBufferingHandshake = false;
+    this._playbackStartTime = scheduledTime || Date.now();
     clearTimeout(this._startScheduleTimer);
+
+    const audio = window.AetherAudioEngine && window.AetherAudioEngine.audioElement;
+    if (audio && audio.playbackRate !== 1.0) {
+      audio.playbackRate = 1.0;
+    }
 
     const delay = Math.max(0, scheduledTime - Date.now());
     console.log(`[AetherJam] Scheduling synchronized playback start in ${delay}ms`);
@@ -531,6 +542,8 @@ window.AetherJam = {
     this._roomStatus = 'idle';
     this._isBufferingHandshake = false;
     this._clockOffset = 0;
+    const audio = window.AetherAudioEngine && window.AetherAudioEngine.audioElement;
+    if (audio && audio.playbackRate !== 1.0) audio.playbackRate = 1.0;
 
     if (this.isHost) {
       await this.endJam();
@@ -591,6 +604,7 @@ window.AetherJam = {
     this._roomStatus = 'idle';
     this._isBufferingHandshake = false;
     this._clockOffset = 0;
+    if (audio && audio.playbackRate !== 1.0) audio.playbackRate = 1.0;
     this.isActive = false;
     this.isHost = false;
     this.jamCode = null;
@@ -791,19 +805,23 @@ window.AetherJam = {
         console.log('[AetherJam] Remote resumed playback at', expectedSeconds);
         this.executeSeek(expectedSeconds);
         this.executePlaybackResume();
+        this._playbackStartTime = Date.now();
         this._showSyncToast('Playback resumed');
       } else if (!isRemotePlaying && isLocalPlaying) {
         console.log('[AetherJam] Remote paused playback at', expectedSeconds);
         this.executeSeek(expectedSeconds);
         this.executePlaybackPause();
+        const audio = window.AetherAudioEngine && window.AetherAudioEngine.audioElement;
+        if (audio && audio.playbackRate !== 1.0) audio.playbackRate = 1.0;
         this._showSyncToast('Playback paused');
       } else if (isRemotePlaying && isLocalPlaying && !this.isHost && data.status === 'playing') {
-        // Guest clock drift check
+        // Guest clock drift check: only hard-seek if severe desync (> 2.0s), otherwise drift timer micro-syncs smoothly
         const currentLocalSec = typeof state !== 'undefined' ? (state.playbackPosition || 0) : 0;
         const drift = Math.abs(currentLocalSec - expectedSeconds);
-        if (drift > 0.6 && typeof state !== 'undefined' && state.duration && expectedSeconds < state.duration - 1) {
-          console.log(`[AetherJam] Correcting drift (${drift.toFixed(2)}s) -> seeking to ${expectedSeconds.toFixed(2)}s`);
+        if (drift > 2.0 && typeof state !== 'undefined' && state.duration && expectedSeconds < state.duration - 1) {
+          console.log(`[AetherJam] Severe drift recovery (${drift.toFixed(2)}s) -> seeking to ${expectedSeconds.toFixed(2)}s`);
           this.executeSeek(expectedSeconds);
+          this._playbackStartTime = Date.now();
         }
       }
     } catch (err) {
@@ -889,9 +907,15 @@ window.AetherJam = {
   async broadcastPlay(song, position) {
     if (!this.isActive || !this.canControl() || this._isApplyingRemote) return;
     const now = Date.now();
+    const startAnchor = now + 250;
     this.isPlaying = true;
     this.trackOffset = position || 0;
-    this.serverTimestamp = now;
+    this.serverTimestamp = startAnchor;
+    this._playbackStartTime = startAnchor;
+
+    // Pause briefly locally so initiator waits 250ms for the synchronized anchor with listeners
+    this.executePlaybackPause();
+    this.schedulePlaybackStart(startAnchor);
 
     try {
       const docRef = fbDb.collection('jam_sessions').doc(this.jamCode);
@@ -899,13 +923,13 @@ window.AetherJam = {
         status: 'playing',
         isPlaying: true,
         trackOffset: position || 0,
-        serverTimestamp: now,
-        scheduledStartTime: now,
+        serverTimestamp: startAnchor,
+        scheduledStartTime: startAnchor,
         lastUpdated: now,
         lastUpdatedBy: this._myParticipantId,
         lastAction: 'play'
       });
-      console.log('[AetherJam] Broadcast PLAY event at', position);
+      console.log('[AetherJam] Broadcast PLAY event at', position, 'scheduled for anchor in 250ms');
     } catch (err) {
       console.warn('[AetherJam] Broadcast play error:', err);
     }
@@ -917,6 +941,10 @@ window.AetherJam = {
     this.isPlaying = false;
     this.trackOffset = position || 0;
     this.serverTimestamp = now;
+    clearTimeout(this._startScheduleTimer);
+
+    const audio = window.AetherAudioEngine && window.AetherAudioEngine.audioElement;
+    if (audio && audio.playbackRate !== 1.0) audio.playbackRate = 1.0;
 
     try {
       const docRef = fbDb.collection('jam_sessions').doc(this.jamCode);
@@ -925,6 +953,7 @@ window.AetherJam = {
         isPlaying: false,
         trackOffset: position || 0,
         serverTimestamp: now,
+        scheduledStartTime: null,
         lastUpdated: now,
         lastUpdatedBy: this._myParticipantId,
         lastAction: 'pause'
@@ -1103,16 +1132,50 @@ window.AetherJam = {
       if (!this.isActive || this.isHost || !this.isPlaying || this._roomStatus === 'buffering' || this._isBufferingHandshake) return;
       if (typeof state === 'undefined' || !state.isPlaying) return;
 
+      // 4-second stabilization grace window after track start or resume:
+      // allows the audio element to ramp up currentTime without premature seeking/restarts
+      if (Date.now() - (this._playbackStartTime || 0) < 4000) {
+        return;
+      }
+
       const now = Date.now();
       const hostNow = now - (this._clockOffset || 0);
       const elapsed = Math.max(0, (hostNow - this.serverTimestamp) / 1000);
       const expected = this.trackOffset + elapsed;
       const current = state.playbackPosition || 0;
-      const drift = Math.abs(current - expected);
+      const drift = current - expected; // positive: Guest ahead, negative: Guest behind
+      const absDrift = Math.abs(drift);
 
-      if (drift > 0.6 && state.duration && expected < state.duration - 1) {
-        console.log(`[AetherJam] Drift timer check (${drift.toFixed(2)}s drift) -> seeking to ${expected.toFixed(2)}s`);
+      const audio = window.AetherAudioEngine && window.AetherAudioEngine.audioElement;
+
+      if (absDrift <= 0.25) {
+        // In tight sync: maintain normal 1.0x playback rate
+        if (audio && audio.playbackRate !== 1.0) {
+          audio.playbackRate = 1.0;
+        }
+      } else if (absDrift > 0.25 && absDrift <= 1.8 && state.duration && expected < state.duration - 2) {
+        // Mild drift: gently adjust playbackRate by ±4% to seamlessly catch up or wait WITHOUT seeking or restarting audio
+        if (audio) {
+          if (drift < -0.25) {
+            // Guest is slightly behind: speed up slightly by 4% to close the gap
+            if (audio.playbackRate !== 1.04) {
+              console.log(`[AetherJam] Smooth micro-sync: Guest is ${absDrift.toFixed(2)}s behind -> speed 1.04x`);
+              audio.playbackRate = 1.04;
+            }
+          } else if (drift > 0.25) {
+            // Guest is slightly ahead: slow down slightly by 4% to let Host catch up
+            if (audio.playbackRate !== 0.96) {
+              console.log(`[AetherJam] Smooth micro-sync: Guest is ${absDrift.toFixed(2)}s ahead -> speed 0.96x`);
+              audio.playbackRate = 0.96;
+            }
+          }
+        }
+      } else if (absDrift > 1.8 && state.duration && expected < state.duration - 2) {
+        // Severe desync (e.g. manual scrub or prolonged buffer freeze): hard seek to expected
+        console.log(`[AetherJam] Hard drift recovery (${absDrift.toFixed(2)}s drift) -> seeking to ${expected.toFixed(2)}s`);
+        if (audio && audio.playbackRate !== 1.0) audio.playbackRate = 1.0;
         this.executeSeek(expected);
+        this._playbackStartTime = Date.now(); // Reset stabilization window
       }
     }, 1500);
   },
