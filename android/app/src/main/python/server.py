@@ -2383,6 +2383,7 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             # Get Spotify token if credentials exist
             config = read_config()
             client_id = config.get('spotifyClientId')
+            client_secret = config.get('spotifyClientSecret')
             token = get_spotify_access_token(client_id, client_secret)
             
             # Extract recently played tracks/artists
