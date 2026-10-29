@@ -6340,6 +6340,12 @@ function playSong(song, index) {
 
   // Preload / pre-resolve the upcoming track in the queue to minimize startup latency
   preloadNextTrackInQueue(index);
+
+  try {
+    window.dispatchEvent(new CustomEvent('aether:trackchange', {
+      detail: { song, index }
+    }));
+  } catch (e) { }
 }
 
 async function playYouTubeTrack(videoId, startTime = 0) {
@@ -6374,6 +6380,11 @@ async function playYouTubeTrack(videoId, startTime = 0) {
         if (startTime > 0) {
           audio.currentTime = startTime;
         }
+        try {
+          window.dispatchEvent(new CustomEvent('aether:trackready', {
+            detail: { duration: state.duration, position: audio.currentTime }
+          }));
+        } catch (e) { }
       };
 
       const handleTrackEnd = () => {
@@ -6891,6 +6902,11 @@ function seekToPercentage(pct) {
     } else if (activeAudio) {
       try { activeAudio.currentTime = seekSeconds; } catch (e) {}
     }
+    try {
+      window.dispatchEvent(new CustomEvent('aether:seek', {
+        detail: { position: seekSeconds, duration: state.duration }
+      }));
+    } catch (e) { }
     // Allow small cooldown before resume timer takes back timeline slider control
     setTimeout(() => {
       isUserSeeking = false;
@@ -7322,6 +7338,11 @@ function onPlayerStateChange(event) {
     state.isPlaying = true;
     state.isUserPaused = false;
     updatePlayButtonUI(true);
+    try {
+      window.dispatchEvent(new CustomEvent('aether:trackready', {
+        detail: { duration: state.duration, position: ytPlayer && typeof ytPlayer.getCurrentTime === 'function' ? ytPlayer.getCurrentTime() : 0 }
+      }));
+    } catch (e) { }
   }
   if (event.data === YT.PlayerState.PAUSED) {
     // If the user did not click pause, but Android OS or browser tried to pause it in the background:
@@ -7397,6 +7418,12 @@ function updatePlayButtonUI(isPlaying) {
       window.AndroidAudio.updatePlaybackState(isPlaying);
     } catch (e) { }
   }
+
+  try {
+    window.dispatchEvent(new CustomEvent('aether:playbackstate', {
+      detail: { isPlaying: !!isPlaying, position: state.playbackPosition || 0, song: state.currentSong || null }
+    }));
+  } catch (e) { }
 }
 
 function updateRepeatUI() {
