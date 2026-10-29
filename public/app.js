@@ -10030,6 +10030,29 @@ window.AetherPlayer = {
       }
     }
   },
+  loadPausedTrack: function(song, index = 0, startTime = 0) {
+    if (typeof playSong === 'function') {
+      playSong(song, index);
+      setTimeout(() => {
+        if (typeof activeAudio !== 'undefined' && activeAudio) {
+          try { activeAudio.pause(); } catch (e) {}
+        }
+        if (typeof ytPlayer !== 'undefined' && ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+          try { ytPlayer.pauseVideo(); } catch (e) {}
+        }
+        if (typeof state !== 'undefined') {
+          state.isPlaying = false;
+          state.isUserPaused = true;
+          if (startTime > 0 && state.duration && typeof seekToPercentage === 'function') {
+            seekToPercentage(startTime / state.duration);
+          }
+        }
+        if (typeof updatePlayButtonUI === 'function') {
+          updatePlayButtonUI(false);
+        }
+      }, 50);
+    }
+  },
   stop: function() {
     if (typeof stopActivePlayback === 'function') {
       stopActivePlayback();

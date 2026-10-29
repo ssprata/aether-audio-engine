@@ -210,8 +210,8 @@ window.AetherJam = {
         updatePayload.currentSong = this.sanitizeTrack(state.currentSong);
       }
 
-      // Host checks if all participants are ready to start playing together
-      if (this.isHost && (allReady || participants.length <= 1)) {
+      // Host checks if all participants are ready to start playing together ONLY if room is actively buffering
+      if (this.isHost && data.status === 'buffering' && (allReady || participants.length <= 1)) {
         console.log('[AetherJam] All participants ready! Triggering synchronized playback');
         const startAnchor = Date.now() + 250;
         updatePayload.status = 'playing';
@@ -599,11 +599,23 @@ window.AetherJam = {
 
       // 2. Track Change Execution (Universal for Host & all Guests)
       if (isDifferentSong || (isInitial && remoteSong)) {
-        console.log('[AetherJam] Remote track change to:', remoteSong.title, 'at', expectedSeconds);
+        console.log('[AetherJam] Remote track change to:', remoteSong.title, 'at', expectedSeconds, 'isRemotePlaying:', isRemotePlaying);
         this.currentSong = remoteSong;
         this._isAudioReadyForCurrentTrack = false;
 
         const qIndex = (typeof data.currentQueueIndex === 'number') ? data.currentQueueIndex : 0;
+        if (!isRemotePlaying) {
+          // Host is paused: load track in paused state and do NOT start playing
+          if (window.AetherPlayer && typeof window.AetherPlayer.loadPausedTrack === 'function') {
+            window.AetherPlayer.loadPausedTrack(remoteSong, qIndex, expectedSeconds);
+          } else if (window.AetherPlayer && typeof window.AetherPlayer.playTrack === 'function') {
+            window.AetherPlayer.playTrack(remoteSong, qIndex, expectedSeconds);
+            setTimeout(() => { this.executePlaybackPause(); }, 50);
+          }
+          this._showSyncToast(`Paused: ${remoteSong.title}`);
+          return;
+        }
+
         if (window.AetherPlayer && typeof window.AetherPlayer.playTrack === 'function') {
           window.AetherPlayer.playTrack(remoteSong, qIndex, expectedSeconds);
         } else if (typeof playSong === 'function') {
@@ -614,9 +626,6 @@ window.AetherJam = {
           this._showSyncToast(`Syncing: ${remoteSong.title}`);
         } else {
           this._showSyncToast(`Now playing: ${remoteSong.title}`);
-          if (!isRemotePlaying) {
-            setTimeout(() => { this.executePlaybackPause(); }, 250);
-          }
         }
 
         // Check if browser blocked autoplay on this tab
