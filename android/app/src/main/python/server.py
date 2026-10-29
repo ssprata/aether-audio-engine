@@ -4,6 +4,7 @@ import re
 import json
 import base64
 import time
+import threading
 import urllib.request
 import urllib.parse
 try:
@@ -1057,6 +1058,8 @@ def resolve_spotify_track(track_id):
         return None
 
 YOUTUBE_AUDIO_CACHE = {}
+_YOUTUBE_RESOLVE_LOCKS = {}
+_YOUTUBE_LOCKS_GUARD = threading.Lock()
 
 def get_youtube_audio_url(video_id, force_refresh=False):
     if not video_id:
@@ -1067,61 +1070,52 @@ def get_youtube_audio_url(video_id, force_refresh=False):
         if now < exp:
             return cached_url
 
-    # Primary: yt-dlp fast stream extraction
-    try:
-        import yt_dlp
-        ydl_opts = {
-            'format': 'bestaudio[ext=m4a]/bestaudio/best',
-            'quiet': True,
-            'no_warnings': True,
-            'skip_download': True,
-            'noplaylist': True,
-            'extract_flat': False
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
-            if info and 'url' in info:
-                url = info['url']
-                YOUTUBE_AUDIO_CACHE[video_id] = (url, now + 3600)
-                return url
-    except Exception as e:
-        print(f"[get_youtube_audio_url yt_dlp error] {e}")
+    # Single-flight coalescing: if another request is already extracting this video_id, wait on its event
+    with _YOUTUBE_LOCKS_GUARD:
+        if video_id in _YOUTUBE_RESOLVE_LOCKS:
+            leader_event = _YOUTUBE_RESOLVE_LOCKS[video_id]
+            is_leader = False
+        else:
+            leader_event = threading.Event()
+            _YOUTUBE_RESOLVE_LOCKS[video_id] = leader_event
+            is_leader = True
 
-    # Fallback: Android client player payload
-    try:
-        url = "https://www.youtube.com/youtubei/v1/player"
-        headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "com.google.android.youtube/19.09.37 (Linux; U; Android 14) gzip"
-        }
-        payload = {
-            "context": {
-                "client": {
-                    "clientName": "ANDROID",
-                    "clientVersion": "19.09.37",
-                    "androidSdkVersion": 34,
-                    "hl": "en",
-                    "gl": "US"
-                }
-            },
-            "videoId": video_id
-        }
-        req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers)
-        with urllib.request.urlopen(req, timeout=6) as res:
-            data = json.loads(res.read().decode('utf-8'))
-        formats = data.get('streamingData', {}).get('adaptiveFormats', [])
-        audio_formats = [f for f in formats if f.get('mimeType', '').startswith('audio/')]
-        if audio_formats:
-            audio_formats.sort(key=lambda x: x.get('bitrate', 0), reverse=True)
-            for af in audio_formats:
-                if 'url' in af:
-                    u = af['url']
-                    YOUTUBE_AUDIO_CACHE[video_id] = (u, now + 3600)
-                    return u
-    except Exception as e:
-        print(f"[get_youtube_audio_url fallback error] {e}")
+    if not is_leader:
+        # Wait up to 14 seconds for the leader extraction to finish
+        leader_event.wait(timeout=14)
+        if video_id in YOUTUBE_AUDIO_CACHE:
+            cached_url, exp = YOUTUBE_AUDIO_CACHE[video_id]
+            if time.time() < exp:
+                return cached_url
+        return None
 
-    return None
+    try:
+        # Primary: yt-dlp fast stream extraction
+        try:
+            import yt_dlp
+            ydl_opts = {
+                'format': 'bestaudio[ext=m4a]/bestaudio/best',
+                'quiet': True,
+                'no_warnings': True,
+                'skip_download': True,
+                'noplaylist': True,
+                'extract_flat': False
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
+                if info and 'url' in info:
+                    url = info['url']
+                    YOUTUBE_AUDIO_CACHE[video_id] = (url, time.time() + 3600)
+                    return url
+        except Exception as e:
+            print(f"[get_youtube_audio_url yt_dlp note] {e}")
+
+        return None
+    finally:
+        with _YOUTUBE_LOCKS_GUARD:
+            if video_id in _YOUTUBE_RESOLVE_LOCKS:
+                leader_event.set()
+                del _YOUTUBE_RESOLVE_LOCKS[video_id]
 
 def scrape_spotify_embed_playlist(playlist_id, limit=100):
     try:

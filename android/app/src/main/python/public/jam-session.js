@@ -162,28 +162,31 @@ window.AetherJam = {
         }
       });
 
+      const updatePayload = {
+        participants: participants,
+        lastUpdated: Date.now(),
+        lastUpdatedBy: this._myParticipantId
+      };
+
+      if (this.isHost && typeof state !== 'undefined' && state.currentSong && state.currentSong._preResolvedYtId) {
+        if (this.currentSong) this.currentSong._preResolvedYtId = state.currentSong._preResolvedYtId;
+        updatePayload.currentSong = this.sanitizeTrack(state.currentSong);
+      }
+
       // Host checks if all participants are ready to start playing together
       if (this.isHost && (allReady || participants.length <= 1)) {
         console.log('[AetherJam] All participants ready! Triggering synchronized playback');
         const startAnchor = Date.now() + 250;
-        await docRef.update({
-          participants: participants,
-          status: 'playing',
-          isPlaying: true,
-          trackOffset: 0,
-          serverTimestamp: startAnchor,
-          scheduledStartTime: startAnchor,
-          lastAction: 'play',
-          lastUpdated: Date.now(),
-          lastUpdatedBy: this._myParticipantId
-        });
+        updatePayload.status = 'playing';
+        updatePayload.isPlaying = true;
+        updatePayload.trackOffset = 0;
+        updatePayload.serverTimestamp = startAnchor;
+        updatePayload.scheduledStartTime = startAnchor;
+        updatePayload.lastAction = 'play';
+        await docRef.update(updatePayload);
         this.schedulePlaybackStart(startAnchor);
       } else {
-        await docRef.update({
-          participants: participants,
-          lastUpdated: Date.now(),
-          lastUpdatedBy: this._myParticipantId
-        });
+        await docRef.update(updatePayload);
       }
     } catch (err) {
       console.warn('[AetherJam] Error updating readiness:', err);

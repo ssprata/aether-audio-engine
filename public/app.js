@@ -6402,20 +6402,34 @@ async function playYouTubeTrack(videoId, startTime = 0) {
         if (!audio.src || audio !== activeAudio || !state.isPlaying) return;
         console.warn('[AudioEngine] Direct stream proxy failed, attempting fresh direct stream URL...');
         try {
-          const res = await fetch(`/api/stream-url?id=${encodeURIComponent(videoId)}&refresh=1`);
+          const res = await fetch(`/api/stream-url?id=${encodeURIComponent(videoId)}`);
           if (res.ok) {
             const data = await res.json();
-            if (data.url) {
+            if (data.url && audio === activeAudio) {
               audio.src = data.url;
               await audio.play();
               return;
             }
           }
         } catch (err) {}
-        console.warn('[AudioEngine] Pure audio playback failed');
-        showToast('Playback error: Unable to stream audio');
-        state.isPlaying = false;
-        updatePlayButtonUI(false);
+
+        // Wait 800ms for background single-flight extraction to finish, then retry stream proxy
+        await new Promise(r => setTimeout(r, 800));
+        try {
+          if (audio === activeAudio && state.isPlaying) {
+            audio.load();
+            await audio.play();
+            return;
+          }
+        } catch (retryErr) {}
+
+        console.warn('[AudioEngine] Pure audio playback failed, falling back seamlessly to YouTube IFrame player...');
+        try {
+          audio.pause();
+          audio.removeAttribute('src');
+          audio.load();
+        } catch (cleanErr) {}
+        playYouTubeIFrameFallback(videoId, startTime);
       };
 
       try {
@@ -6539,6 +6553,10 @@ async function playProxyFallback(song) {
 
   // Queries server search API for a YouTube equivalent of Spotify/SoundCloud items
   try {
+    if (song && song._preResolvedYtId) {
+      playYouTubeTrack(song._preResolvedYtId);
+      return;
+    }
     const query = `${song.title} ${song.artist}`;
     const response = await fetch(`/api/search?q=${encodeURIComponent(query)}&platform=youtube`);
     if (response.ok) {
