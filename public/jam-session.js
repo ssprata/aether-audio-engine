@@ -5,8 +5,9 @@
  * - Real-time synchronized music listening with friends
  * - Pre-roll Readiness Handshake (ensures both players buffer before playing)
  * - Universal Play / Pause synchronization across all participants
- * - Multi-user track selection (Host or any guest can change tracks)
- * - Event-driven modular architecture (zero monkey-patching of core playback)
+ * - Multi-user track selection & shared queue
+ * - Autoplay blocker detection with 1-tap sync banner
+ * - Event-driven modular architecture using window.AetherPlayer
  * - Powered by Firebase Firestore realtime listeners (onSnapshot)
  */
 
@@ -21,12 +22,12 @@ window.AetherJam = {
   trackOffset: 0,
   serverTimestamp: 0,
 
-  // Internal flags & timers
+  // Internal control flags & timers
   _unsubscribe: null,
   _isApplyingRemote: false,
   _heartbeatTimer: null,
   _driftCheckTimer: null,
-  _handshakeTimeoutTimer: null,
+  _handshakeTimer: null,
   _lastBroadcastTime: 0,
   _lastAppliedTimestamp: 0,
   _lastToastMessage: '',
@@ -72,6 +73,24 @@ window.AetherJam = {
     if (!this.isActive) return false;
     if (this.isHost) return true;
     return (this.controlMode === 'everyone');
+  },
+
+  // --- SANITIZE FOR FIRESTORE (NO UNDEFINED VALUES) ---
+
+  sanitizeTrack(song) {
+    if (!song || typeof song !== 'object') return null;
+    return {
+      id: String(song.id || ''),
+      title: String(song.title || 'Unknown Track'),
+      artist: String(song.artist || 'Unknown Artist'),
+      album: String(song.album || song.albumName || ''),
+      thumbnail: String(song.thumbnail || ''),
+      duration: String(song.duration || '3:00'),
+      platform: String(song.platform || 'youtube'),
+      url: String(song.url || ''),
+      previewUrl: song.previewUrl ? String(song.previewUrl) : null,
+      _preResolvedYtId: song._preResolvedYtId ? String(song._preResolvedYtId) : null
+    };
   },
 
   // --- EVENT-DRIVEN HOOKS (LISTENS TO AETHER CUSTOM EVENTS) ---
@@ -146,7 +165,7 @@ window.AetherJam = {
       // Host checks if all participants are ready to start playing together
       if (this.isHost && (allReady || participants.length <= 1)) {
         console.log('[AetherJam] All participants ready! Triggering synchronized playback');
-        const startAnchor = Date.now() + 250; // 250ms scheduled start
+        const startAnchor = Date.now() + 250;
         await docRef.update({
           participants: participants,
           status: 'playing',
@@ -175,7 +194,7 @@ window.AetherJam = {
     const delay = Math.max(0, scheduledTime - Date.now());
     setTimeout(() => {
       if (this.isActive) {
-        this.forcePlay();
+        this.executePlaybackResume();
       }
     }, delay);
   },
@@ -206,8 +225,9 @@ window.AetherJam = {
     this.controlMode = 'everyone';
     this.isActive = true;
 
-    const currentTrack = (typeof state !== 'undefined' && state.currentSong) ? state.currentSong : null;
-    const currentQueue = (typeof state !== 'undefined' && Array.isArray(state.playQueue)) ? state.playQueue : [];
+    const currentTrack = (typeof state !== 'undefined' && state.currentSong) ? this.sanitizeTrack(state.currentSong) : null;
+    const rawQueue = (typeof state !== 'undefined' && Array.isArray(state.playQueue)) ? state.playQueue : [];
+    const sanitizedQueue = rawQueue.slice(0, 50).map(t => this.sanitizeTrack(t)).filter(Boolean);
     const queueIdx = (typeof state !== 'undefined' && typeof state.currentQueueIndex === 'number') ? state.currentQueueIndex : 0;
     const isPlaying = (typeof state !== 'undefined' && state.isPlaying);
     const playbackPos = (typeof state !== 'undefined' && state.playbackPosition) ? state.playbackPosition : 0;
@@ -230,7 +250,7 @@ window.AetherJam = {
       controlMode: 'everyone',
       currentSong: currentTrack,
       currentQueueIndex: queueIdx,
-      playQueue: currentQueue.slice(0, 50),
+      playQueue: sanitizedQueue,
       isPlaying: !!isPlaying,
       trackOffset: playbackPos,
       serverTimestamp: Date.now(),
@@ -351,6 +371,7 @@ window.AetherJam = {
     this.stopRealtimeListener();
     this.stopHeartbeat();
     this.stopDriftCorrection();
+    this.hideAutoplayBanner();
 
     if (this.isHost) {
       await this.endJam();
@@ -405,6 +426,7 @@ window.AetherJam = {
     this.stopRealtimeListener();
     this.stopHeartbeat();
     this.stopDriftCorrection();
+    this.hideAutoplayBanner();
     this.isActive = false;
     this.isHost = false;
     this.jamCode = null;
@@ -447,6 +469,28 @@ window.AetherJam = {
         this.controlMode = data.controlMode;
       }
 
+      // HOST HANDSHAKE ARBITER:
+      // If room is buffering and Host sees all active participants are ready (or timeout reached), transition to playing!
+      if (this.isHost && data.status === 'buffering') {
+        const parts = Array.isArray(data.participants) ? data.participants : [];
+        const allReady = parts.length > 0 && parts.every(p => p.ready);
+        if (allReady) {
+          console.log('[AetherJam] Host detected all participants ready! Triggering playback');
+          const startAnchor = Date.now() + 200;
+          docRef.update({
+            status: 'playing',
+            isPlaying: true,
+            serverTimestamp: startAnchor,
+            scheduledStartTime: startAnchor,
+            lastAction: 'play',
+            lastUpdated: Date.now(),
+            lastUpdatedBy: this._myParticipantId
+          }).catch(() => {});
+          this.schedulePlaybackStart(startAnchor);
+          return;
+        }
+      }
+
       // If this device triggered this update, ignore to prevent feedback loops
       if (data.lastUpdatedBy === this._myParticipantId) {
         return;
@@ -487,14 +531,16 @@ window.AetherJam = {
       this.trackOffset = baseOffset;
       this.serverTimestamp = serverTime;
 
-      // 1. Shared Queue Sync
-      if (Array.isArray(data.playQueue) && typeof state !== 'undefined') {
-        const currentQueueIds = (state.playQueue || []).map(s => s.id).join(',');
-        const remoteQueueIds = data.playQueue.map(s => s.id).join(',');
-        if (currentQueueIds !== remoteQueueIds) {
-          state.playQueue = data.playQueue;
-          if (state.unshuffledQueue) state.unshuffledQueue = [...data.playQueue];
-          if (typeof renderQueueUI === 'function') renderQueueUI();
+      // 1. Synchronize Shared Queue
+      if (Array.isArray(data.playQueue) && data.playQueue.length > 0) {
+        if (window.AetherPlayer && typeof window.AetherPlayer.setQueue === 'function') {
+          const currentQueue = (typeof state !== 'undefined' && Array.isArray(state.playQueue)) ? state.playQueue : [];
+          const currentIds = currentQueue.map(s => s.id).join(',');
+          const remoteIds = data.playQueue.map(s => s.id).join(',');
+          if (currentIds !== remoteIds || isInitial) {
+            console.log('[AetherJam] Synchronizing shared queue from host:', data.playQueue.length, 'tracks');
+            window.AetherPlayer.setQueue(data.playQueue);
+          }
         }
       }
 
@@ -508,54 +554,60 @@ window.AetherJam = {
         this.currentSong = remoteSong;
         this._isAudioReadyForCurrentTrack = false;
 
-        if (typeof playSong === 'function') {
-          const qIndex = (typeof data.currentQueueIndex === 'number') ? data.currentQueueIndex : 0;
+        const qIndex = (typeof data.currentQueueIndex === 'number') ? data.currentQueueIndex : 0;
+        if (window.AetherPlayer && typeof window.AetherPlayer.playTrack === 'function') {
+          window.AetherPlayer.playTrack(remoteSong, qIndex, expectedSeconds);
+        } else if (typeof playSong === 'function') {
           playSong(remoteSong, qIndex);
+        }
 
-          if (data.status === 'buffering') {
-            this._showSyncToast(`Syncing: ${remoteSong.title}`);
-          } else {
-            this._showSyncToast(`Now playing: ${remoteSong.title}`);
-            if (!isRemotePlaying) {
-              setTimeout(() => { this.forcePause(); }, 300);
-            }
+        if (data.status === 'buffering') {
+          this._showSyncToast(`Syncing: ${remoteSong.title}`);
+        } else {
+          this._showSyncToast(`Now playing: ${remoteSong.title}`);
+          if (!isRemotePlaying) {
+            setTimeout(() => { this.executePlaybackPause(); }, 250);
           }
         }
+
+        // Check if browser blocked autoplay on this tab
+        this.verifyAutoplay();
         return;
       }
 
       // 3. Play / Pause Synchronization
-      if (typeof state !== 'undefined' && localSong) {
-        if (isRemotePlaying && !state.isPlaying) {
-          console.log('[AetherJam] Remote resumed playback at', expectedSeconds);
-          if (data.scheduledStartTime && data.scheduledStartTime > now) {
-            this.schedulePlaybackStart(data.scheduledStartTime);
-          } else {
-            this.forceSeekTo(expectedSeconds);
-            this.forcePlay();
-          }
-          this._showSyncToast('Playback resumed');
-        } else if (!isRemotePlaying && state.isPlaying) {
-          console.log('[AetherJam] Remote paused playback at', expectedSeconds);
-          this.forceSeekTo(expectedSeconds);
-          this.forcePause();
-          this._showSyncToast('Playback paused');
-        } else if (isRemotePlaying && state.isPlaying && !this.isHost) {
-          // Guest clock drift check
-          const currentLocalSec = state.playbackPosition || 0;
-          const drift = Math.abs(currentLocalSec - expectedSeconds);
-          if (drift > 2.0) {
-            console.log(`[AetherJam] Correcting drift (${drift.toFixed(2)}s) -> seeking to ${expectedSeconds.toFixed(2)}s`);
-            this.forceSeekTo(expectedSeconds);
-          }
+      const isLocalPlaying = typeof state !== 'undefined' ? !!state.isPlaying : false;
+
+      if (isRemotePlaying && !isLocalPlaying) {
+        console.log('[AetherJam] Remote resumed playback at', expectedSeconds);
+        if (data.scheduledStartTime && data.scheduledStartTime > now) {
+          this.schedulePlaybackStart(data.scheduledStartTime);
+        } else {
+          this.executeSeek(expectedSeconds);
+          this.executePlaybackResume();
+        }
+        this._showSyncToast('Playback resumed');
+      } else if (!isRemotePlaying && isLocalPlaying) {
+        console.log('[AetherJam] Remote paused playback at', expectedSeconds);
+        this.executeSeek(expectedSeconds);
+        this.executePlaybackPause();
+        this._showSyncToast('Playback paused');
+      } else if (isRemotePlaying && isLocalPlaying && !this.isHost) {
+        // Guest clock drift check
+        const currentLocalSec = typeof state !== 'undefined' ? (state.playbackPosition || 0) : 0;
+        const drift = Math.abs(currentLocalSec - expectedSeconds);
+        if (drift > 2.0 && typeof state !== 'undefined' && state.duration && expectedSeconds < state.duration - 2) {
+          console.log(`[AetherJam] Correcting drift (${drift.toFixed(2)}s) -> seeking to ${expectedSeconds.toFixed(2)}s`);
+          this.executeSeek(expectedSeconds);
         }
       }
     } catch (err) {
       console.warn('[AetherJam] Error applying remote update:', err);
     } finally {
+      // Cooldown before unlocking outbound broadcasts
       setTimeout(() => {
         this._isApplyingRemote = false;
-      }, 350);
+      }, 500);
     }
   },
 
@@ -564,7 +616,8 @@ window.AetherJam = {
   async broadcastTrackChange(song, queueIndex) {
     if (!this.isActive || !this.canControl() || this._isApplyingRemote) return;
     const now = Date.now();
-    this.currentSong = song;
+    const sanitizedSong = this.sanitizeTrack(song);
+    this.currentSong = sanitizedSong;
     this.trackOffset = 0;
     this.serverTimestamp = now;
 
@@ -574,11 +627,15 @@ window.AetherJam = {
       ready: (p.id === this._myParticipantId)
     }));
 
+    const rawQueue = (typeof state !== 'undefined' && Array.isArray(state.playQueue)) ? state.playQueue : [];
+    const sanitizedQueue = rawQueue.slice(0, 50).map(t => this.sanitizeTrack(t)).filter(Boolean);
+
     try {
       const docRef = fbDb.collection('jam_sessions').doc(this.jamCode);
       await docRef.update({
-        currentSong: song,
+        currentSong: sanitizedSong,
         currentQueueIndex: queueIndex || 0,
+        playQueue: sanitizedQueue,
         status: 'buffering',
         isPlaying: true,
         trackOffset: 0,
@@ -589,7 +646,33 @@ window.AetherJam = {
         lastUpdatedBy: this._myParticipantId,
         lastAction: 'track_change'
       });
-      console.log('[AetherJam] Broadcast track change:', song.title);
+      console.log('[AetherJam] Broadcast track change:', sanitizedSong.title);
+
+      // Host safety timeout: force playback after 2.5s if a slow guest hasn't responded
+      if (this.isHost) {
+        clearTimeout(this._handshakeTimer);
+        this._handshakeTimer = setTimeout(async () => {
+          if (this.isActive && this.jamCode) {
+            try {
+              const snap = await docRef.get();
+              if (snap.exists && snap.data().status === 'buffering') {
+                console.log('[AetherJam] Handshake safety timer fired: starting playback');
+                const startAnchor = Date.now() + 150;
+                await docRef.update({
+                  status: 'playing',
+                  isPlaying: true,
+                  serverTimestamp: startAnchor,
+                  scheduledStartTime: startAnchor,
+                  lastAction: 'play',
+                  lastUpdated: Date.now(),
+                  lastUpdatedBy: this._myParticipantId
+                });
+                this.schedulePlaybackStart(startAnchor);
+              }
+            } catch (e) {}
+          }
+        }, 2500);
+      }
     } catch (err) {
       console.warn('[AetherJam] Broadcast track change error:', err);
     }
@@ -665,18 +748,16 @@ window.AetherJam = {
     }
   },
 
-  // --- LOCAL FORCED PLAYBACK HELPERS (PREVENTS RE-BROADCAST) ---
+  // --- LOCAL EXECUTION HELPERS (USES WINDOW.AETHERPLAYER) ---
 
-  forceSeekTo(seconds) {
-    if (typeof state === 'undefined' || !state.duration) return;
-    const boundedSec = Math.max(0, Math.min(state.duration, seconds));
-    const pct = boundedSec / state.duration;
-
+  executeSeek(seconds) {
     const prevApplying = this._isApplyingRemote;
     this._isApplyingRemote = true;
     try {
-      if (typeof seekToPercentage === 'function') {
-        seekToPercentage(pct);
+      if (window.AetherPlayer && typeof window.AetherPlayer.seek === 'function') {
+        window.AetherPlayer.seek(seconds);
+      } else if (typeof state !== 'undefined' && state.duration && typeof seekToPercentage === 'function') {
+        seekToPercentage(seconds / state.duration);
       }
     } finally {
       setTimeout(() => {
@@ -685,24 +766,14 @@ window.AetherJam = {
     }
   },
 
-  forcePlay() {
-    if (typeof state === 'undefined') return;
+  executePlaybackResume() {
     const prevApplying = this._isApplyingRemote;
     this._isApplyingRemote = true;
     try {
-      state.isPlaying = true;
-      state.isUserPaused = false;
-
-      if (window.AetherAudioEngine && AetherAudioEngine.ctx && AetherAudioEngine.ctx.state === 'suspended') {
-        AetherAudioEngine.ctx.resume().catch(() => {});
-      }
-      if (typeof activeAudio !== 'undefined' && activeAudio) {
-        activeAudio.play().catch(() => {});
-      } else if (typeof ytPlayer !== 'undefined' && ytPlayer && typeof ytPlayer.playVideo === 'function') {
-        try { ytPlayer.playVideo(); } catch (e) {}
-      }
-      if (typeof updatePlayButtonUI === 'function') {
-        updatePlayButtonUI(true);
+      if (window.AetherPlayer && typeof window.AetherPlayer.resume === 'function') {
+        window.AetherPlayer.resume();
+      } else if (typeof togglePlayPause === 'function') {
+        togglePlayPause();
       }
     } finally {
       setTimeout(() => {
@@ -711,28 +782,65 @@ window.AetherJam = {
     }
   },
 
-  forcePause() {
-    if (typeof state === 'undefined') return;
+  executePlaybackPause() {
     const prevApplying = this._isApplyingRemote;
     this._isApplyingRemote = true;
     try {
-      state.isPlaying = false;
-      state.isUserPaused = true;
-
-      if (typeof activeAudio !== 'undefined' && activeAudio) {
-        try { activeAudio.pause(); } catch (e) {}
-      }
-      if (typeof ytPlayer !== 'undefined' && ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
-        try { ytPlayer.pauseVideo(); } catch (e) {}
-      }
-      if (typeof updatePlayButtonUI === 'function') {
-        updatePlayButtonUI(false);
+      if (window.AetherPlayer && typeof window.AetherPlayer.pause === 'function') {
+        window.AetherPlayer.pause();
+      } else if (typeof togglePlayPause === 'function') {
+        togglePlayPause();
       }
     } finally {
       setTimeout(() => {
         this._isApplyingRemote = prevApplying;
       }, 400);
     }
+  },
+
+  // --- AUTOPLAY DETECTION & BANNER ---
+
+  verifyAutoplay() {
+    setTimeout(() => {
+      // If audio context is suspended or audio failed to play, show tap-to-sync banner
+      const isSuspended = window.AetherAudioEngine && AetherAudioEngine.ctx && AetherAudioEngine.ctx.state === 'suspended';
+      const isNotPlaying = typeof state !== 'undefined' && !state.isPlaying && this.isPlaying;
+      if (isSuspended || isNotPlaying) {
+        this.showAutoplayBanner();
+      } else {
+        this.hideAutoplayBanner();
+      }
+    }, 1200);
+  },
+
+  showAutoplayBanner() {
+    let banner = document.getElementById('jamAutoplayBanner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'jamAutoplayBanner';
+      banner.className = 'jam-autoplay-banner';
+      banner.innerHTML = `
+        <div class="jam-autoplay-content">
+          <span class="jam-autoplay-icon">🔊</span>
+          <span>Tap to sync audio with Jam session</span>
+          <button class="btn btn-sm btn-primary" id="btnJamTapToSync">Tune In</button>
+        </div>
+      `;
+      document.body.appendChild(banner);
+      banner.querySelector('#btnJamTapToSync').addEventListener('click', () => {
+        if (window.AetherAudioEngine && AetherAudioEngine.ctx && AetherAudioEngine.ctx.state === 'suspended') {
+          AetherAudioEngine.ctx.resume().catch(() => {});
+        }
+        this.executePlaybackResume();
+        this.hideAutoplayBanner();
+      });
+    }
+    banner.style.display = 'flex';
+  },
+
+  hideAutoplayBanner() {
+    const banner = document.getElementById('jamAutoplayBanner');
+    if (banner) banner.style.display = 'none';
   },
 
   // --- BACKGROUND MAINTENANCE (HEARTBEAT & DRIFT) ---
@@ -776,7 +884,7 @@ window.AetherJam = {
       const drift = Math.abs(current - expected);
       if (drift > 2.0 && state.duration && expected < state.duration - 2) {
         console.log(`[AetherJam] Drift timer check (${drift.toFixed(2)}s) -> seeking to ${expected.toFixed(2)}s`);
-        this.forceSeekTo(expected);
+        this.executeSeek(expected);
       }
     }, 4000);
   },
@@ -936,10 +1044,10 @@ window.AetherJam = {
       try {
         new QRCode(qrContainer, {
           text: url,
-          width: 130,
-          height: 130,
-          colorDark: '#ffffff',
-          colorLight: 'transparent',
+          width: 140,
+          height: 140,
+          colorDark: '#0f0c1c',   // Dark QR squares
+          colorLight: '#ffffff',  // Crisp white background
           correctLevel: QRCode.CorrectLevel.M
         });
       } catch (e) {

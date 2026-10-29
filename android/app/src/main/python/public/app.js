@@ -9996,3 +9996,38 @@ document.addEventListener('mouseup', (e) => {
     btn.blur();
   }
 });
+
+// Expose clean AetherPlayer controller interface for modular features (e.g. AetherJam)
+window.AetherPlayer = {
+  playTrack: function(song, index = 0, startTime = 0) {
+    if (typeof playSong === 'function') {
+      playSong(song, index, startTime);
+    }
+  },
+  pause: function() {
+    if (typeof state !== 'undefined' && state.isPlaying && typeof togglePlayPause === 'function') {
+      togglePlayPause();
+    }
+  },
+  resume: function() {
+    if (typeof state !== 'undefined' && !state.isPlaying && typeof togglePlayPause === 'function') {
+      togglePlayPause();
+    }
+  },
+  seek: function(seconds) {
+    if (typeof state !== 'undefined' && state.duration && typeof seekToPercentage === 'function') {
+      seekToPercentage(seconds / state.duration);
+    }
+  },
+  setQueue: function(queue) {
+    if (typeof state !== 'undefined' && Array.isArray(queue)) {
+      state.playQueue = queue;
+      if (state.unshuffledQueue) state.unshuffledQueue = [...queue];
+      if (typeof renderQueueUI === 'function') renderQueueUI();
+    }
+  },
+  getState: function() {
+    return typeof state !== 'undefined' ? state : {};
+  }
+};
+
