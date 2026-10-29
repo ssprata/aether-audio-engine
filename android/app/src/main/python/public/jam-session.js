@@ -973,6 +973,62 @@ window.AetherJam = {
   // --- UI EVENT LISTENERS & RENDERING ---
 
   setupUIEventListeners() {
+    // Intercept track clicks and playback controls in capture phase when listening-only guest tries to change music
+    const trackSelector = '.song-row, .search-result-item, .search-track-item, .track-item, .song-card, .queue-item, .queue-row, .vibe-card, .vibe-track-card, .artist-top-track-row, .top-track-item, .history-item, .rec-track-item, .recommendation-card, .album-track-row, [data-song-id]';
+    const controlSelector = '#playerPlayPause, #btnPlayPause, #playPauseBtn, #btnNext, #btnPrev, #mobileNpPlayPause, #mobileNpNext, #mobileNpPrev, #playerTimeline, #mobileNpTimeline, #btnShuffle, #btnRepeat';
+
+    document.addEventListener('click', (e) => {
+      if (!this.isActive || this.canControl()) return;
+
+      const trackEl = e.target.closest(trackSelector);
+      if (trackEl) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        if (typeof showToast === 'function') {
+          showToast('Controls locked: Only the Host can change music');
+        }
+        return;
+      }
+
+      const controlEl = e.target.closest(controlSelector);
+      if (controlEl) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        if (typeof showToast === 'function') {
+          showToast('Controls locked: Only the Host can manage playback');
+        }
+        return;
+      }
+    }, true); // Capture phase intercepts BEFORE child listeners run
+
+    // Intercept timeline scrubbing in capture phase
+    document.addEventListener('input', (e) => {
+      if (!this.isActive || this.canControl()) return;
+      if (e.target && (e.target.id === 'playerTimeline' || e.target.id === 'mobileNpTimeline')) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        if (typeof state !== 'undefined' && state.duration) {
+          e.target.value = ((this.trackOffset || 0) / state.duration) * 100;
+        }
+      }
+    }, true);
+
+    // Intercept spacebar hotkey for play/pause toggle
+    document.addEventListener('keydown', (e) => {
+      if (!this.isActive || this.canControl()) return;
+      if (e.code === 'Space' && (e.target === document.body || e.target.id === 'app')) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        if (typeof showToast === 'function') {
+          showToast('Controls locked: Only the Host can manage playback');
+        }
+      }
+    }, true);
+
     // Top bar header Jam button
     const btnHeaderJam = document.getElementById('btnHeaderJam');
     if (btnHeaderJam) {
