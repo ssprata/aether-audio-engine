@@ -10019,7 +10019,33 @@ document.addEventListener('mouseup', (e) => {
 window.AetherPlayer = {
   playTrack: function(song, index = 0, startTime = 0) {
     if (typeof playSong === 'function') {
-      playSong(song, index, startTime);
+      playSong(song, index);
+      if (startTime > 0) {
+        const onReady = () => {
+          if (typeof seekToPercentage === 'function' && typeof state !== 'undefined' && state.duration) {
+            seekToPercentage(startTime / state.duration);
+          }
+        };
+        window.addEventListener('aether:trackready', onReady, { once: true });
+      }
+    }
+  },
+  stop: function() {
+    if (typeof stopActivePlayback === 'function') {
+      stopActivePlayback();
+    }
+    if (typeof activeAudio !== 'undefined' && activeAudio) {
+      try { activeAudio.pause(); activeAudio.currentTime = 0; } catch (e) {}
+    }
+    if (typeof ytPlayer !== 'undefined' && ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+      try { ytPlayer.pauseVideo(); } catch (e) {}
+    }
+    if (typeof state !== 'undefined') {
+      state.isPlaying = false;
+      state.playbackPosition = 0;
+    }
+    if (typeof updatePlayButtonUI === 'function') {
+      updatePlayButtonUI(false);
     }
   },
   pause: function() {

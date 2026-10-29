@@ -98,7 +98,22 @@ window.AetherJam = {
   setupPlayerEventListeners() {
     // 1. Playback State Change (Play / Pause from click, spacebar, taskbar, SMTC, etc.)
     window.addEventListener('aether:playbackstate', (e) => {
-      if (!this.isActive || this._isApplyingRemote || !this.canControl()) return;
+      if (!this.isActive || this._isApplyingRemote) return;
+      if (!this.canControl()) {
+        // Listening-only mode: revert local player state and inform guest
+        const incomingPlaying = !!(e.detail && e.detail.isPlaying);
+        if (this.isPlaying !== incomingPlaying) {
+          if (this.isPlaying) {
+            this.executePlaybackResume();
+          } else {
+            this.executePlaybackPause();
+          }
+          if (typeof showToast === 'function') {
+            showToast('Controls locked: Only the Host can change playback');
+          }
+        }
+        return;
+      }
       const { isPlaying, position } = e.detail || {};
       const pos = typeof position === 'number' ? position : (typeof state !== 'undefined' ? state.playbackPosition || 0 : 0);
 
@@ -111,7 +126,22 @@ window.AetherJam = {
 
     // 2. Track Change (Song clicked in playlist, search, queue, etc.)
     window.addEventListener('aether:trackchange', (e) => {
-      if (!this.isActive || this._isApplyingRemote || !this.canControl()) return;
+      if (!this.isActive || this._isApplyingRemote) return;
+      if (!this.canControl()) {
+        // Listening-only mode: guest cannot change tracks
+        const changedSong = e.detail && e.detail.song;
+        if (this.currentSong && changedSong && changedSong.id !== this.currentSong.id) {
+          if (typeof showToast === 'function') {
+            showToast('Controls locked: Only the Host can change music');
+          }
+          this._isApplyingRemote = true;
+          if (window.AetherPlayer && typeof window.AetherPlayer.playTrack === 'function') {
+            window.AetherPlayer.playTrack(this.currentSong, 0, this.trackOffset || 0);
+          }
+          setTimeout(() => { this._isApplyingRemote = false; }, 800);
+        }
+        return;
+      }
       const { song, index } = e.detail || {};
       if (song) {
         this.broadcastTrackChange(song, index || 0);
@@ -120,7 +150,14 @@ window.AetherJam = {
 
     // 3. User Seek (Timeline scrubber drag/click)
     window.addEventListener('aether:seek', (e) => {
-      if (!this.isActive || this._isApplyingRemote || !this.canControl()) return;
+      if (!this.isActive || this._isApplyingRemote) return;
+      if (!this.canControl()) {
+        // Revert seek if guest has no control
+        if (typeof state !== 'undefined' && state.duration) {
+          this.executeSeek(this.trackOffset || 0);
+        }
+        return;
+      }
       const { position } = e.detail || {};
       if (typeof position === 'number') {
         this.broadcastSeek(position);
@@ -168,7 +205,7 @@ window.AetherJam = {
         lastUpdatedBy: this._myParticipantId
       };
 
-      if (this.isHost && typeof state !== 'undefined' && state.currentSong && state.currentSong._preResolvedYtId) {
+      if (typeof state !== 'undefined' && state.currentSong && state.currentSong._preResolvedYtId) {
         if (this.currentSong) this.currentSong._preResolvedYtId = state.currentSong._preResolvedYtId;
         updatePayload.currentSong = this.sanitizeTrack(state.currentSong);
       }
@@ -322,6 +359,15 @@ window.AetherJam = {
       this.isHost = (data.hostId === this._myParticipantId);
       this.controlMode = data.controlMode || 'everyone';
       this.isActive = true;
+      this._isApplyingRemote = true;
+
+      // Stop and clear any local playback and queue from before joining
+      if (window.AetherPlayer && typeof window.AetherPlayer.stop === 'function') {
+        window.AetherPlayer.stop();
+      }
+      if (window.AetherPlayer && typeof window.AetherPlayer.setQueue === 'function') {
+        window.AetherPlayer.setQueue(data.playQueue || []);
+      }
 
       const participants = Array.isArray(data.participants) ? [...data.participants] : [];
       const existingIdx = participants.findIndex(p => p.id === this._myParticipantId);
@@ -805,10 +851,15 @@ window.AetherJam = {
 
   verifyAutoplay() {
     setTimeout(() => {
-      // If audio context is suspended or audio failed to play, show tap-to-sync banner
+      // If audio context is suspended, or audio element is paused while room is playing, show tap-to-sync banner
       const isSuspended = window.AetherAudioEngine && AetherAudioEngine.ctx && AetherAudioEngine.ctx.state === 'suspended';
-      const isNotPlaying = typeof state !== 'undefined' && !state.isPlaying && this.isPlaying;
-      if (isSuspended || isNotPlaying) {
+      const audioEl = window.AetherAudioEngine && AetherAudioEngine.audioElement;
+      const isAudioBlocked = this.isPlaying && (
+        (audioEl && audioEl.paused) ||
+        (typeof state !== 'undefined' && !state.isPlaying)
+      );
+
+      if (isSuspended || isAudioBlocked) {
         this.showAutoplayBanner();
       } else {
         this.hideAutoplayBanner();
@@ -830,11 +881,22 @@ window.AetherJam = {
         </div>
       `;
       document.body.appendChild(banner);
-      banner.querySelector('#btnJamTapToSync').addEventListener('click', () => {
+      banner.querySelector('#btnJamTapToSync').addEventListener('click', async () => {
         if (window.AetherAudioEngine && AetherAudioEngine.ctx && AetherAudioEngine.ctx.state === 'suspended') {
-          AetherAudioEngine.ctx.resume().catch(() => {});
+          await AetherAudioEngine.ctx.resume().catch(() => {});
+        }
+        if (window.AetherAudioEngine && AetherAudioEngine.audioElement) {
+          try {
+            await AetherAudioEngine.audioElement.play();
+          } catch (e) {}
         }
         this.executePlaybackResume();
+        if (this.currentSong && this.isPlaying) {
+          const now = Date.now();
+          const elapsed = (now - this.serverTimestamp) / 1000;
+          const target = this.trackOffset + Math.max(0, elapsed);
+          this.executeSeek(target);
+        }
         this.hideAutoplayBanner();
       });
     }

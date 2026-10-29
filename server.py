@@ -1061,14 +1061,14 @@ YOUTUBE_AUDIO_CACHE = {}
 _YOUTUBE_RESOLVE_LOCKS = {}
 _YOUTUBE_LOCKS_GUARD = threading.Lock()
 
-def get_youtube_audio_url(video_id, force_refresh=False):
+def get_youtube_audio_url(video_id, force_refresh=False, return_headers=False):
     if not video_id:
-        return None
+        return (None, {}) if return_headers else None
     now = time.time()
     if not force_refresh and video_id in YOUTUBE_AUDIO_CACHE:
-        cached_url, exp = YOUTUBE_AUDIO_CACHE[video_id]
+        cached_url, cached_headers, exp = YOUTUBE_AUDIO_CACHE[video_id]
         if now < exp:
-            return cached_url
+            return (cached_url, cached_headers) if return_headers else cached_url
 
     # Single-flight coalescing: if another request is already extracting this video_id, wait on its event
     with _YOUTUBE_LOCKS_GUARD:
@@ -1084,17 +1084,17 @@ def get_youtube_audio_url(video_id, force_refresh=False):
         # Wait up to 14 seconds for the leader extraction to finish
         leader_event.wait(timeout=14)
         if video_id in YOUTUBE_AUDIO_CACHE:
-            cached_url, exp = YOUTUBE_AUDIO_CACHE[video_id]
+            cached_url, cached_headers, exp = YOUTUBE_AUDIO_CACHE[video_id]
             if time.time() < exp:
-                return cached_url
-        return None
+                return (cached_url, cached_headers) if return_headers else cached_url
+        return (None, {}) if return_headers else None
 
     try:
         # Primary: yt-dlp fast stream extraction
         try:
             import yt_dlp
             ydl_opts = {
-                'format': 'bestaudio[ext=m4a]/bestaudio/best',
+                'format': '139/140/bestaudio[ext=m4a]/bestaudio/best',
                 'quiet': True,
                 'no_warnings': True,
                 'skip_download': True,
@@ -1105,12 +1105,13 @@ def get_youtube_audio_url(video_id, force_refresh=False):
                 info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
                 if info and 'url' in info:
                     url = info['url']
-                    YOUTUBE_AUDIO_CACHE[video_id] = (url, time.time() + 3600)
-                    return url
+                    headers = info.get('http_headers', {})
+                    YOUTUBE_AUDIO_CACHE[video_id] = (url, headers, time.time() + 3600)
+                    return (url, headers) if return_headers else url
         except Exception as e:
             print(f"[get_youtube_audio_url yt_dlp note] {e}")
 
-        return None
+        return (None, {}) if return_headers else None
     finally:
         with _YOUTUBE_LOCKS_GUARD:
             if video_id in _YOUTUBE_RESOLVE_LOCKS:
@@ -2999,7 +3000,7 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                 self.send_error(400, "Video ID required")
                 return
 
-            audio_url = get_youtube_audio_url(video_id)
+            audio_url, upstream_headers = get_youtube_audio_url(video_id, return_headers=True)
             if not audio_url:
                 self.send_error(404, "Audio stream not found")
                 return
@@ -3007,6 +3008,8 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
             req_headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
+            if upstream_headers:
+                req_headers.update(upstream_headers)
             range_header = self.headers.get('Range')
             if range_header:
                 req_headers["Range"] = range_header
@@ -3042,7 +3045,9 @@ class AetherPlayerHandler(SimpleHTTPRequestHandler):
                     if he.code in (403, 404, 410) and attempt == 0:
                         print(f"[Stream Proxy] Upstream returned {he.code} for {video_id}, re-resolving fresh stream URL...")
                         YOUTUBE_AUDIO_CACHE.pop(video_id, None)
-                        audio_url = get_youtube_audio_url(video_id, force_refresh=True)
+                        audio_url, upstream_headers = get_youtube_audio_url(video_id, force_refresh=True, return_headers=True)
+                        if upstream_headers:
+                            req_headers.update(upstream_headers)
                         if audio_url:
                             continue
                     print(f"[Stream Proxy HTTPError] {he.code}: {he}")
