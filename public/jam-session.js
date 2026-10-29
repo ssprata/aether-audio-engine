@@ -890,6 +890,7 @@ window.AetherJam = {
   openJamModal() {
     const modal = document.getElementById('modalJamSession');
     if (modal) {
+      modal.classList.add('active');
       modal.style.display = 'flex';
       this.renderJamModal();
     }
@@ -898,6 +899,7 @@ window.AetherJam = {
   closeJamModal() {
     const modal = document.getElementById('modalJamSession');
     if (modal) {
+      modal.classList.remove('active');
       modal.style.display = 'none';
     }
   },
