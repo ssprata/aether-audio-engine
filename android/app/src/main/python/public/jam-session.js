@@ -28,18 +28,26 @@ window.AetherJam = {
   _heartbeatTimer: null,
   _driftCheckTimer: null,
   _handshakeTimer: null,
+  _startScheduleTimer: null,
   _lastBroadcastTime: 0,
   _lastAppliedTimestamp: 0,
   _lastToastMessage: '',
   _lastToastTime: 0,
   _myParticipantId: null,
   _isAudioReadyForCurrentTrack: false,
+  _roomStatus: 'idle', // 'idle' | 'buffering' | 'playing' | 'paused'
+  _isBufferingHandshake: false,
+  _myAudioReady: false,
+  _clockOffset: 0,
+  _isNaturalTrackEnd: false,
+  _lastUserClickTime: 0,
 
   // --- INITIALIZATION ---
 
   init() {
     this._myParticipantId = this.getParticipantId();
     this.setupPlayerEventListeners();
+    this.setupAudioEngineHooks();
     this.setupUIEventListeners();
     this.checkUrlForJamInvite();
     this.updatePillUI();
@@ -75,6 +83,74 @@ window.AetherJam = {
     return (this.controlMode === 'everyone');
   },
 
+  // --- CLOCK OFFSET CALIBRATION (SYSTEM CLOCK DRIFT NEUTRALIZATION) ---
+
+  updateClockOffset(hostTimestamp) {
+    if (!hostTimestamp || this.isHost) {
+      this._clockOffset = 0;
+      return;
+    }
+    const now = Date.now();
+    const estimatedTransit = 100; // estimated one-way latency in ms
+    const sampleOffset = now - (hostTimestamp + estimatedTransit);
+    if (this._clockOffset === null || this._clockOffset === undefined || this._clockOffset === 0) {
+      this._clockOffset = sampleOffset;
+    } else {
+      // 80% previous, 20% sample smoothing
+      this._clockOffset = Math.round(this._clockOffset * 0.8 + sampleOffset * 0.2);
+    }
+  },
+
+  toLocalTime(hostTimestamp) {
+    if (!hostTimestamp) return Date.now();
+    if (this.isHost) return hostTimestamp;
+    return hostTimestamp + (this._clockOffset || 0);
+  },
+
+  // --- AUDIO ENGINE HOOKS (PRE-ROLL HOLD AT 0:00 & NATURAL END DETECTION) ---
+
+  setupAudioEngineHooks() {
+    const hook = () => {
+      const audio = window.AetherAudioEngine && window.AetherAudioEngine.audioElement;
+      if (audio && !audio._jamHooked) {
+        audio._jamHooked = true;
+
+        // Intercept play/playing event during buffering handshake
+        const handlePlaying = () => {
+          if (this.isActive && (this._roomStatus === 'buffering' || this._isBufferingHandshake)) {
+            console.log('[AetherJam] Audio fired playing during buffering handshake: holding paused at 0:00');
+            audio.pause();
+            audio.currentTime = 0;
+            if (typeof state !== 'undefined') {
+              state.isPlaying = false;
+              state.isUserPaused = true;
+            }
+            if (typeof updatePlayButtonUI === 'function') {
+              updatePlayButtonUI(false);
+            }
+            this._myAudioReady = true;
+          }
+        };
+
+        audio.addEventListener('playing', handlePlaying);
+
+        // Track natural completion of track
+        audio.addEventListener('ended', () => {
+          if (this.isActive) {
+            console.log('[AetherJam] Audio element ended naturally');
+            this._isNaturalTrackEnd = true;
+            setTimeout(() => {
+              this._isNaturalTrackEnd = false;
+            }, 3000);
+          }
+        });
+      }
+    };
+
+    hook();
+    setInterval(hook, 2000);
+  },
+
   // --- SANITIZE FOR FIRESTORE (NO UNDEFINED VALUES) ---
 
   sanitizeTrack(song) {
@@ -98,7 +174,7 @@ window.AetherJam = {
   setupPlayerEventListeners() {
     // 1. Playback State Change (Play / Pause from click, spacebar, taskbar, SMTC, etc.)
     window.addEventListener('aether:playbackstate', (e) => {
-      if (!this.isActive || this._isApplyingRemote) return;
+      if (!this.isActive || this._isApplyingRemote || this._roomStatus === 'buffering' || this._isBufferingHandshake) return;
       if (!this.canControl()) {
         // Listening-only mode: revert local player state and inform guest
         const incomingPlaying = !!(e.detail && e.detail.isPlaying);
@@ -124,8 +200,8 @@ window.AetherJam = {
       }
     });
 
-    // 2. Track Change (Song clicked in playlist, search, queue, etc.)
-    window.addEventListener('aether:trackchange', (e) => {
+    // 2. Track Change (Song clicked in playlist, search, queue, etc. or natural track end)
+    window.addEventListener('aether:trackchange', async (e) => {
       if (!this.isActive || this._isApplyingRemote) return;
       if (!this.canControl()) {
         // Listening-only mode: guest cannot change tracks
@@ -142,6 +218,23 @@ window.AetherJam = {
         }
         return;
       }
+
+      const isNatural = this._isNaturalTrackEnd || (e.detail && e.detail.isNaturalEnd);
+      this._isNaturalTrackEnd = false;
+
+      // Natural End: If guest audio ends, Guest must NOT advance the room. Wait for Host!
+      if (!this.isHost && isNatural) {
+        console.log('[AetherJam] Guest natural track end detected: waiting for Host to advance queue...');
+        this.executePlaybackPause();
+        return;
+      }
+
+      // Natural End: If Host audio ends, provide a 600ms grace period for listeners before broadcasting next song
+      if (this.isHost && isNatural) {
+        console.log('[AetherJam] Host natural track end detected: waiting 600ms grace for listeners...');
+        await new Promise(r => setTimeout(r, 600));
+      }
+
       const { song, index } = e.detail || {};
       if (song) {
         this.broadcastTrackChange(song, index || 0);
@@ -150,7 +243,7 @@ window.AetherJam = {
 
     // 3. User Seek (Timeline scrubber drag/click)
     window.addEventListener('aether:seek', (e) => {
-      if (!this.isActive || this._isApplyingRemote) return;
+      if (!this.isActive || this._isApplyingRemote || this._roomStatus === 'buffering' || this._isBufferingHandshake) return;
       if (!this.canControl()) {
         // Revert seek if guest has no control
         if (typeof state !== 'undefined' && state.duration) {
@@ -174,10 +267,17 @@ window.AetherJam = {
   // --- READINESS HANDSHAKE (PRE-ROLL SYNC) ---
 
   async onTrackReady(detail) {
+    this._myAudioReady = true;
     this._isAudioReadyForCurrentTrack = true;
     if (!this.isActive || !this.jamCode) return;
 
-    console.log('[AetherJam] Local player buffered and ready for track');
+    console.log('[AetherJam] Local player buffered and ready for track. Status:', this._roomStatus);
+
+    // If currently in buffering handshake, keep audio held at 0:00
+    if (this._roomStatus === 'buffering' || this._isBufferingHandshake) {
+      this.executePlaybackPause();
+      this.executeSeek(0);
+    }
 
     // Update readiness in Firestore participants list
     try {
@@ -213,7 +313,7 @@ window.AetherJam = {
       // Host checks if all participants are ready to start playing together ONLY if room is actively buffering
       if (this.isHost && data.status === 'buffering' && (allReady || participants.length <= 1)) {
         console.log('[AetherJam] All participants ready! Triggering synchronized playback');
-        const startAnchor = Date.now() + 250;
+        const startAnchor = Date.now() + 350;
         updatePayload.status = 'playing';
         updatePayload.isPlaying = true;
         updatePayload.trackOffset = 0;
@@ -231,8 +331,13 @@ window.AetherJam = {
   },
 
   schedulePlaybackStart(scheduledTime) {
+    this._roomStatus = 'playing';
+    this._isBufferingHandshake = false;
+    clearTimeout(this._startScheduleTimer);
+
     const delay = Math.max(0, scheduledTime - Date.now());
-    setTimeout(() => {
+    console.log(`[AetherJam] Scheduling synchronized playback start in ${delay}ms`);
+    this._startScheduleTimer = setTimeout(() => {
       if (this.isActive) {
         this.executePlaybackResume();
       }
@@ -421,6 +526,11 @@ window.AetherJam = {
     this.stopHeartbeat();
     this.stopDriftCorrection();
     this.hideAutoplayBanner();
+    clearTimeout(this._handshakeTimer);
+    clearTimeout(this._startScheduleTimer);
+    this._roomStatus = 'idle';
+    this._isBufferingHandshake = false;
+    this._clockOffset = 0;
 
     if (this.isHost) {
       await this.endJam();
@@ -476,6 +586,11 @@ window.AetherJam = {
     this.stopHeartbeat();
     this.stopDriftCorrection();
     this.hideAutoplayBanner();
+    clearTimeout(this._handshakeTimer);
+    clearTimeout(this._startScheduleTimer);
+    this._roomStatus = 'idle';
+    this._isBufferingHandshake = false;
+    this._clockOffset = 0;
     this.isActive = false;
     this.isHost = false;
     this.jamCode = null;
@@ -535,12 +650,13 @@ window.AetherJam = {
       if (this.isHost && data.status === 'buffering' && !isDifferentSong) {
         const parts = Array.isArray(data.participants) ? data.participants : [];
         const allReady = parts.length > 0 && parts.every(p => p.ready);
-        if (allReady) {
+        if (allReady && this._myAudioReady) {
           console.log('[AetherJam] Host detected all participants ready! Triggering synchronized playback');
-          const startAnchor = Date.now() + 200;
+          const startAnchor = Date.now() + 350;
           docRef.update({
             status: 'playing',
             isPlaying: true,
+            trackOffset: 0,
             serverTimestamp: startAnchor,
             scheduledStartTime: startAnchor,
             lastAction: 'play',
@@ -569,18 +685,32 @@ window.AetherJam = {
     this._isApplyingRemote = true;
 
     try {
+      this.updateClockOffset(data.lastUpdated || data.serverTimestamp);
+
       const now = Date.now();
-      const serverTime = data.serverTimestamp || now;
+      const hostNow = now - (this._clockOffset || 0);
+      const serverTime = data.serverTimestamp || hostNow;
       const baseOffset = (typeof data.trackOffset === 'number') ? data.trackOffset : 0;
       const isRemotePlaying = !!data.isPlaying;
 
+      if (data.status === 'buffering') {
+        this._roomStatus = 'buffering';
+        this._isBufferingHandshake = true;
+      } else if (data.status === 'playing') {
+        this._roomStatus = 'playing';
+        this._isBufferingHandshake = false;
+      } else if (data.status === 'paused') {
+        this._roomStatus = 'paused';
+        this._isBufferingHandshake = false;
+      }
+
       let expectedSeconds = baseOffset;
-      if (isRemotePlaying) {
-        const elapsed = Math.max(0, (now - serverTime) / 1000);
+      if (isRemotePlaying && data.status === 'playing') {
+        const elapsed = Math.max(0, (hostNow - serverTime) / 1000);
         expectedSeconds = baseOffset + elapsed;
       }
 
-      this.isPlaying = isRemotePlaying;
+      this.isPlaying = isRemotePlaying && data.status === 'playing';
       this.trackOffset = baseOffset;
       this.serverTimestamp = serverTime;
 
@@ -603,12 +733,13 @@ window.AetherJam = {
 
       // 2. Track Change Execution (Universal for Host & all Guests)
       if (isDifferentSong || (isInitial && remoteSong)) {
-        console.log('[AetherJam] Remote track change to:', remoteSong.title, 'at', expectedSeconds, 'isRemotePlaying:', isRemotePlaying);
+        console.log('[AetherJam] Remote track change to:', remoteSong.title, 'at', expectedSeconds, 'status:', data.status);
         this.currentSong = remoteSong;
         this._isAudioReadyForCurrentTrack = false;
+        this._myAudioReady = false;
 
         const qIndex = (typeof data.currentQueueIndex === 'number') ? data.currentQueueIndex : 0;
-        if (!isRemotePlaying) {
+        if (data.status === 'paused' || !isRemotePlaying) {
           // Host is paused: load track in paused state and do NOT start playing
           if (window.AetherPlayer && typeof window.AetherPlayer.loadPausedTrack === 'function') {
             window.AetherPlayer.loadPausedTrack(remoteSong, qIndex, expectedSeconds);
@@ -618,6 +749,12 @@ window.AetherJam = {
           }
           this._showSyncToast(`Paused: ${remoteSong.title}`);
           return;
+        }
+
+        // Room is buffering or playing: load track to buffer
+        if (data.status === 'buffering') {
+          this._roomStatus = 'buffering';
+          this._isBufferingHandshake = true;
         }
 
         if (window.AetherPlayer && typeof window.AetherPlayer.playTrack === 'function') {
@@ -640,25 +777,31 @@ window.AetherJam = {
       // 3. Play / Pause Synchronization
       const isLocalPlaying = typeof state !== 'undefined' ? !!state.isPlaying : false;
 
-      if (isRemotePlaying && !isLocalPlaying) {
-        console.log('[AetherJam] Remote resumed playback at', expectedSeconds);
-        if (data.scheduledStartTime && data.scheduledStartTime > now) {
-          this.schedulePlaybackStart(data.scheduledStartTime);
-        } else {
-          this.executeSeek(expectedSeconds);
-          this.executePlaybackResume();
+      // Check if scheduled start is pending
+      if (data.status === 'playing' && data.scheduledStartTime) {
+        const localScheduled = this.toLocalTime(data.scheduledStartTime);
+        if (localScheduled > now) {
+          this.schedulePlaybackStart(localScheduled);
+          this._showSyncToast('Synced playback started');
+          return;
         }
+      }
+
+      if (isRemotePlaying && !isLocalPlaying && data.status === 'playing') {
+        console.log('[AetherJam] Remote resumed playback at', expectedSeconds);
+        this.executeSeek(expectedSeconds);
+        this.executePlaybackResume();
         this._showSyncToast('Playback resumed');
       } else if (!isRemotePlaying && isLocalPlaying) {
         console.log('[AetherJam] Remote paused playback at', expectedSeconds);
         this.executeSeek(expectedSeconds);
         this.executePlaybackPause();
         this._showSyncToast('Playback paused');
-      } else if (isRemotePlaying && isLocalPlaying && !this.isHost) {
+      } else if (isRemotePlaying && isLocalPlaying && !this.isHost && data.status === 'playing') {
         // Guest clock drift check
         const currentLocalSec = typeof state !== 'undefined' ? (state.playbackPosition || 0) : 0;
         const drift = Math.abs(currentLocalSec - expectedSeconds);
-        if (drift > 2.0 && typeof state !== 'undefined' && state.duration && expectedSeconds < state.duration - 2) {
+        if (drift > 0.6 && typeof state !== 'undefined' && state.duration && expectedSeconds < state.duration - 1) {
           console.log(`[AetherJam] Correcting drift (${drift.toFixed(2)}s) -> seeking to ${expectedSeconds.toFixed(2)}s`);
           this.executeSeek(expectedSeconds);
         }
@@ -682,11 +825,14 @@ window.AetherJam = {
     this.currentSong = sanitizedSong;
     this.trackOffset = 0;
     this.serverTimestamp = now;
+    this._roomStatus = 'buffering';
+    this._isBufferingHandshake = true;
+    this._myAudioReady = false;
 
-    // Reset readiness on participants
+    // Reset readiness on ALL participants so everyone handshakes!
     const updatedParticipants = (this.participants || []).map(p => ({
       ...p,
-      ready: (p.id === this._myParticipantId)
+      ready: false
     }));
 
     const rawQueue = (typeof state !== 'undefined' && Array.isArray(state.playQueue)) ? state.playQueue : [];
@@ -699,7 +845,7 @@ window.AetherJam = {
         currentQueueIndex: queueIndex || 0,
         playQueue: sanitizedQueue,
         status: 'buffering',
-        isPlaying: true,
+        isPlaying: false,
         trackOffset: 0,
         serverTimestamp: now,
         scheduledStartTime: null,
@@ -708,9 +854,9 @@ window.AetherJam = {
         lastUpdatedBy: this._myParticipantId,
         lastAction: 'track_change'
       });
-      console.log('[AetherJam] Broadcast track change:', sanitizedSong.title);
+      console.log('[AetherJam] Broadcast track change (buffering):', sanitizedSong.title);
 
-      // Host safety timeout: force playback after 2.5s if a slow guest hasn't responded
+      // Host safety timeout: force playback after 3.5s if a slow guest hasn't responded
       if (this.isHost) {
         clearTimeout(this._handshakeTimer);
         this._handshakeTimer = setTimeout(async () => {
@@ -733,7 +879,7 @@ window.AetherJam = {
               }
             } catch (e) {}
           }
-        }, 2500);
+        }, 3500);
       }
     } catch (err) {
       console.warn('[AetherJam] Broadcast track change error:', err);
@@ -954,17 +1100,21 @@ window.AetherJam = {
   startDriftCorrection() {
     this.stopDriftCorrection();
     this._driftCheckTimer = setInterval(() => {
-      if (!this.isActive || this.isHost || !this.isPlaying || typeof state === 'undefined' || !state.isPlaying) return;
+      if (!this.isActive || this.isHost || !this.isPlaying || this._roomStatus === 'buffering' || this._isBufferingHandshake) return;
+      if (typeof state === 'undefined' || !state.isPlaying) return;
+
       const now = Date.now();
-      const elapsed = (now - this.serverTimestamp) / 1000;
-      const expected = this.trackOffset + Math.max(0, elapsed);
+      const hostNow = now - (this._clockOffset || 0);
+      const elapsed = Math.max(0, (hostNow - this.serverTimestamp) / 1000);
+      const expected = this.trackOffset + elapsed;
       const current = state.playbackPosition || 0;
       const drift = Math.abs(current - expected);
-      if (drift > 2.0 && state.duration && expected < state.duration - 2) {
-        console.log(`[AetherJam] Drift timer check (${drift.toFixed(2)}s) -> seeking to ${expected.toFixed(2)}s`);
+
+      if (drift > 0.6 && state.duration && expected < state.duration - 1) {
+        console.log(`[AetherJam] Drift timer check (${drift.toFixed(2)}s drift) -> seeking to ${expected.toFixed(2)}s`);
         this.executeSeek(expected);
       }
-    }, 4000);
+    }, 1500);
   },
 
   stopDriftCorrection() {
@@ -982,6 +1132,10 @@ window.AetherJam = {
     const controlSelector = '#playerPlayPause, #btnPlayPause, #playPauseBtn, #btnNext, #btnPrev, #mobileNpPlayPause, #mobileNpNext, #mobileNpPrev, #playerTimeline, #mobileNpTimeline, #btnShuffle, #btnRepeat';
 
     document.addEventListener('click', (e) => {
+      if (this.isActive) {
+        this._lastUserClickTime = Date.now();
+        this._isNaturalTrackEnd = false;
+      }
       if (!this.isActive || this.canControl()) return;
 
       const trackEl = e.target.closest(trackSelector);
@@ -1009,6 +1163,9 @@ window.AetherJam = {
 
     // Intercept timeline scrubbing in capture phase
     document.addEventListener('input', (e) => {
+      if (this.isActive) {
+        this._lastUserClickTime = Date.now();
+      }
       if (!this.isActive || this.canControl()) return;
       if (e.target && (e.target.id === 'playerTimeline' || e.target.id === 'mobileNpTimeline')) {
         e.preventDefault();
@@ -1022,6 +1179,9 @@ window.AetherJam = {
 
     // Intercept spacebar hotkey for play/pause toggle
     document.addEventListener('keydown', (e) => {
+      if (this.isActive) {
+        this._lastUserClickTime = Date.now();
+      }
       if (!this.isActive || this.canControl()) return;
       if (e.code === 'Space' && (e.target === document.body || e.target.id === 'app')) {
         e.preventDefault();
