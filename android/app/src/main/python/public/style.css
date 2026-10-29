@@ -8010,4 +8010,499 @@ input:checked + .slider:before {
   filter: none !important;
 }
 
+/* ==========================================================================
+   AETHER JAM COLLABORATIVE LISTENING STYLES (v2.5.0)
+   ========================================================================== */
+
+/* Header Jam Pill Button */
+.btn-jam-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--text-color, #ffffff);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  letter-spacing: 0.3px;
+}
+
+.btn-jam-pill:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--accent-color, #a78bfa);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.btn-jam-pill .jam-btn-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.btn-jam-pill .jam-pulse-dot {
+  display: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+}
+
+.btn-jam-pill.jam-active {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: #10b981;
+  color: #34d399;
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.35);
+}
+
+.btn-jam-pill.jam-active .jam-pulse-dot {
+  display: inline-block;
+  animation: jamPulseAnim 1.6s ease-in-out infinite;
+}
+
+@keyframes jamPulseAnim {
+  0% { transform: scale(0.9); opacity: 0.7; box-shadow: 0 0 4px #10b981; }
+  50% { transform: scale(1.35); opacity: 1; box-shadow: 0 0 12px #34d399; }
+  100% { transform: scale(0.9); opacity: 0.7; box-shadow: 0 0 4px #10b981; }
+}
+
+/* Player Bar Jam Badge */
+.player-jam-indicator {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: 999px;
+  color: #34d399;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-right: 6px;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
+}
+
+/* Aether Jam Modal Container */
+.jam-modal-card {
+  max-width: 480px !important;
+  border-radius: 22px !important;
+  background: rgba(15, 12, 28, 0.92) !important;
+  backdrop-filter: blur(28px) !important;
+  -webkit-backdrop-filter: blur(28px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.65), 0 0 35px rgba(124, 58, 237, 0.2) !important;
+  overflow: hidden;
+}
+
+.jam-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.jam-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.jam-logo-glow {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #7c3aed 0%, #10b981 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  box-shadow: 0 4px 16px rgba(124, 58, 237, 0.4);
+}
+
+.jam-logo-glow svg {
+  width: 22px;
+  height: 22px;
+}
+
+.jam-modal-title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 0.2px;
+}
+
+.jam-modal-subtitle {
+  margin: 2px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-secondary, #94a3b8);
+}
+
+.btn-close-jam {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: var(--text-secondary, #94a3b8);
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.btn-close-jam:hover {
+  color: #ffffff;
+}
+
+/* Modal Body */
+.jam-modal-body {
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+/* Idle View Hero */
+.jam-hero-banner {
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.2) 0%, rgba(16, 185, 129, 0.12) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 22px 18px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.jam-hero-sparkle {
+  font-size: 1.8rem;
+  margin-bottom: -4px;
+}
+
+.jam-hero-banner h4 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.jam-hero-banner p {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--text-secondary, #cbd5e1);
+  line-height: 1.45;
+  max-width: 380px;
+}
+
+.jam-btn-glow {
+  background: linear-gradient(135deg, #7c3aed 0%, #10b981 100%) !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 999px !important;
+  padding: 10px 24px !important;
+  font-size: 0.92rem !important;
+  font-weight: 700 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  box-shadow: 0 4px 20px rgba(16, 185, 129, 0.35) !important;
+  transition: all 0.25s ease !important;
+  margin-top: 6px;
+  cursor: pointer;
+}
+
+.jam-btn-glow:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 8px 25px rgba(16, 185, 129, 0.5) !important;
+}
+
+.jam-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  color: var(--text-secondary, #64748b);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.jam-divider::before,
+.jam-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.jam-divider span {
+  padding: 0 12px;
+}
+
+/* Join Card */
+.jam-join-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.jam-join-input-group {
+  display: flex;
+  gap: 8px;
+}
+
+.jam-join-input-group input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  padding: 10px 14px;
+  color: #ffffff;
+  font-size: 0.95rem;
+  font-family: 'Space Grotesk', monospace;
+  font-weight: 600;
+  text-transform: uppercase;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.jam-join-input-group input:focus {
+  border-color: #10b981;
+}
+
+/* Active Jam Room View */
+.jam-active-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 4px;
+}
+
+.jam-live-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #34d399;
+  font-size: 0.86rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.live-dot-pulse {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 10px #10b981;
+  animation: jamPulseAnim 1.4s ease-in-out infinite;
+}
+
+.jam-badge {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  color: var(--text-secondary, #cbd5e1);
+  font-weight: 600;
+}
+
+/* Room Code Card */
+.jam-code-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.jam-code-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  color: var(--text-secondary, #94a3b8);
+  font-weight: 700;
+  letter-spacing: 0.8px;
+}
+
+.jam-code-display-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.jam-code-text {
+  font-family: 'Space Grotesk', monospace;
+  font-size: 1.45rem;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--accent-color, #a78bfa);
+}
+
+.jam-invite-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+/* QR Code Card */
+.jam-qr-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0 6px;
+}
+
+.jam-qr-box {
+  background: #ffffff;
+  padding: 14px;
+  border-radius: 16px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 160px;
+  min-height: 160px;
+}
+
+.jam-qr-hint {
+  font-size: 0.78rem;
+  color: var(--text-secondary, #94a3b8);
+  text-align: center;
+  max-width: 300px;
+}
+
+/* Settings Strip */
+.jam-settings-strip {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.jam-setting-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.jam-setting-title {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.jam-setting-desc {
+  font-size: 0.72rem;
+  color: var(--text-secondary, #94a3b8);
+}
+
+/* Listeners Section */
+.jam-listeners-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.jam-listeners-section h5 {
+  margin: 0;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  color: var(--text-secondary, #94a3b8);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.jam-participants-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.jam-participant-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.jam-participant-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.jam-participant-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: rgba(124, 58, 237, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.jam-participant-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.jam-avatar-letter {
+  font-weight: 700;
+  color: #c084fc;
+  font-size: 0.95rem;
+}
+
+.jam-participant-name {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #ffffff;
+  display: block;
+}
+
+.jam-participant-role {
+  font-size: 0.72rem;
+  color: var(--text-secondary, #94a3b8);
+}
+
+.jam-ready-tag {
+  font-weight: 600;
+}
+
+/* Active Footer */
+.jam-active-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.jam-active-footer button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+
 
